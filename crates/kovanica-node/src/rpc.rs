@@ -27,7 +27,7 @@ use crate::node::Node;
 pub const HELP: &str = "commands: help | genesis <k> <subsidy> <amount> <seed> | \
 address <seed> | balance <seed|addr-hex> | send <from-seed> <amount> <to-seed> | \
 pool <from-seed> <amount> <to-seed> | produce | pending | tips | tip | len | \
-save <path> | load <path>";
+save <path> | load <path> | sync <peer-addr>";
 
 /// Run one command line against `node`, returning the response line. Never
 /// panics on bad input; malformed commands produce an `err ...` response.
@@ -125,6 +125,44 @@ fn run(node: &mut Node, line: &str) -> Result<String, String> {
             let [path] = fixed::<1>(&args)?;
             node.load(path).map_err(|e| e.to_string())?;
             Ok("loaded".to_string())
+        }
+
+        "sync" => {
+            let [peer] = fixed::<1>(&args)?;
+            let tip_before = node.selected_tip().ok();
+            let count_before = node.block_count().unwrap_or(0);
+            use crate::net::{sync_headers_first, pull_blocks_timeout};
+            use std::time::Duration;
+            match sync_headers_first(peer, node, Duration::from_secs(10)) {
+                Ok(stats) => {
+                    let tip_after = node.selected_tip().ok();
+                    let count_after = node.block_count().unwrap_or(0);
+                    Ok(format!(
+                        "sync from {peer}: headers={} applied={} errors={} tip={:?}->{:?} blocks={}->{}",
+                        stats.headers_received,
+                        stats.bodies_applied,
+                        stats.errors,
+                        tip_before,
+                        tip_after,
+                        count_before,
+                        count_after
+                    ))
+                }
+                Err(e) => {
+                    // Fall back to full dump
+                    match pull_blocks_timeout(peer, node, Duration::from_secs(10)) {
+                        Ok(k) => {
+                            let tip_after = node.selected_tip().ok();
+                            let count_after = node.block_count().unwrap_or(0);
+                            Ok(format!(
+                                "sync from {peer} (full dump): pulled={} tip={:?}->{:?} blocks={}->{}",
+                                k, tip_before, tip_after, count_before, count_after
+                            ))
+                        }
+                        Err(e2) => Err(format!("sync failed: headers-first={e}, full-dump={e2}")),
+                    }
+                }
+            }
         }
 
         other => Err(format!("unknown command '{other}' (try help)")),
