@@ -953,7 +953,7 @@ impl Ledger {
         ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
 
         // Replay remaining blocks (skip genesis which is already inserted)
-        for i in 1..block_count {
+        for _ in 1..block_count {
             if pos >= bytes.len() {
                 return Err(LedgerCheckpointError::UnexpectedEof);
             }
