@@ -855,17 +855,14 @@ impl Ledger {
             return Err(LedgerCheckpointError::FinalityNotActive);
         }
 
-        // Find the block at the finality boundary: the highest block whose
-        // blue score is >= finality_score but whose selected parent (if any) is
-        // below it. This is the "checkpoint block" whose state we'll store.
+        // Find the checkpoint block: the highest block whose blue score is
+        // >= finality_score but whose selected parent (if any) is below it.
         let order = self.dag.linearize();
         let mut checkpoint_block = self.genesis;
         for id in &order {
             let gd = self.dag.ghostdag(id).unwrap();
             if gd.blue_score >= finality_score {
                 checkpoint_block = *id;
-            } else {
-                break;
             }
         }
 
