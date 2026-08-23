@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use kovanica_state::{verify, Address, KeyPair};
+use kovanica_state::{verify, KeyPair};
 
 pub use kovanica_state::Address;
 
