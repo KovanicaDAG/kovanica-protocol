@@ -42,7 +42,7 @@ pub mod relay;
 pub mod rpc;
 
 pub use explorer::serve as serve_explorer;
-pub use mempool::Mempool;
+pub use mempool::{Mempool, MempoolV2, MempoolConfig, Added, MempoolError};
 pub use net::{
     decode_bodies, decode_getbodies, decode_getheaders, decode_headers, decode_inventory,
     encode_bodies, encode_getbodies, encode_getheaders, encode_headers, encode_inventory,
