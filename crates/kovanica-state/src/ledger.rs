@@ -887,9 +887,11 @@ impl Ledger {
         buf.extend_from_slice(&self.payload_pruning_depth.to_le_bytes());
         buf.extend_from_slice(checkpoint_block.as_bytes());
         buf.extend_from_slice(&checkpoint_state.encode());
-        // Store all blocks using snapshot encoding (which handles pruned payloads correctly)
+        // Store all blocks with their IDs for deterministic roundtrips
+        // Format: block_id (32 bytes) + block_data (from kovanica_dag::encode_block)
         buf.extend_from_slice(&(all_blocks.len() as u64).to_le_bytes());
         for block in &all_blocks {
+            buf.extend_from_slice(block.id().as_bytes());
             kovanica_dag::encode_block(block, &mut buf);
         }
         Ok(buf)
@@ -939,14 +941,21 @@ impl Ledger {
 
         let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
-        // Manually decode each block (they're stored using kovanica_dag::encode_block format)
+        // Manually decode each block with its stored ID
+        // Format: block_id (32 bytes) + block_data (from kovanica_dag::encode_block)
         let mut blocks = Vec::with_capacity(block_count);
         let mut block_pos = pos;
         for _ in 0..block_count {
-            if block_pos >= bytes.len() {
+            if block_pos + 32 > bytes.len() {
                 return Err(LedgerCheckpointError::UnexpectedEof);
             }
+            let stored_id =
+                BlockId::from_bytes(bytes[block_pos..block_pos + 32].try_into().unwrap());
+            block_pos += 32;
             let (block, consumed) = decode_checkpoint_block(&bytes[block_pos..])?;
+            if block.id() != stored_id {
+                return Err(LedgerCheckpointError::TrailingBytes);
+            }
             blocks.push(block);
             block_pos += consumed;
         }
