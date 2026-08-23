@@ -7,7 +7,7 @@ use clap::{Parser, Subcommand};
 use serde_json::Value;
 
 use api::Client;
-use wallet::{sign_transfer, Address};
+use wallet::sign_transfer;
 
 #[derive(Parser)]
 #[command(name = "kovanica", version, about = "Kovanica (KVNC) BlockDAG CLI")]
