@@ -18,6 +18,7 @@ pub struct Wallet {
     seed: [u8; 32],
 }
 
+#[allow(dead_code)]
 impl Wallet {
     /// Generate a fresh wallet from operating-system randomness.
     pub fn generate() -> Result<Self> {
