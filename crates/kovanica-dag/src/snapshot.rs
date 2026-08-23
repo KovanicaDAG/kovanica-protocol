@@ -257,9 +257,7 @@ impl<'a> Reader<'a> {
         Ok(out)
     }
 
-    fn read_block(&mut self) -> Result<Block, SnapshotError> {
-        // Read the original block id (stored explicitly for pruned blocks).
-        let stored_id = BlockId::from_bytes(self.read_array::<32>()?);
+    fn read_block_with_stored_id(&mut self, stored_id: BlockId) -> Result<Block, SnapshotError> {
         let n_parents = self.read_count(32)?; // each parent id is 32 bytes
         let mut parents = Vec::with_capacity(n_parents);
         for _ in 0..n_parents {
@@ -289,8 +287,14 @@ impl<'a> Reader<'a> {
     /// Read a block and return both the block and its stored id.
     fn read_block_with_id(&mut self) -> Result<(Block, BlockId), SnapshotError> {
         let stored_id = BlockId::from_bytes(self.read_array::<32>()?);
-        let block = self.read_block()?;
+        let block = self.read_block_with_stored_id(stored_id)?;
         Ok((block, stored_id))
+    }
+
+    /// Read a block without a pre-read stored id (for v3 and earlier snapshots).
+    fn read_block(&mut self) -> Result<Block, SnapshotError> {
+        let stored_id = BlockId::from_bytes(self.read_array::<32>()?);
+        self.read_block_with_stored_id(stored_id)
     }
 }
 
