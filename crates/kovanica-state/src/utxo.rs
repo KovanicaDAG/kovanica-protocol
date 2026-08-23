@@ -94,8 +94,9 @@ impl UtxoSet {
         8 + self.map.len() * (32 + 4 + 8 + 32)
     }
 
-    /// Decode a UTXO set from a checkpoint encoding produced by [`UtxoSet::encode`].
-    pub fn decode(bytes: &[u8]) -> Result<Self, UtxoDecodeError> {
+    /// Decode a UTXO set from a checkpoint encoding, advancing `bytes` past the
+    /// consumed data so the caller can continue parsing.
+    pub fn decode(bytes: &mut &[u8]) -> Result<Self, UtxoDecodeError> {
         let mut reader = CheckpointReader::new(bytes);
         let count = reader.read_u64()? as usize;
         let mut map = HashMap::with_capacity(count);
@@ -106,9 +107,7 @@ impl UtxoSet {
             let owner = Address::from_bytes(reader.read_array::<32>()?);
             map.insert(OutPoint::new(tx, index), TxOutput::new(value, owner));
         }
-        if reader.remaining() != 0 {
-            return Err(UtxoDecodeError::TrailingBytes);
-        }
+        *bytes = &bytes[reader.pos..];
         Ok(Self { map })
     }
 }
@@ -180,7 +179,8 @@ mod tests {
         );
 
         let bytes = set.encode();
-        let restored = UtxoSet::decode(&bytes).unwrap();
+        let mut slice = &bytes[..];
+        let restored = UtxoSet::decode(&mut slice).unwrap();
 
         assert_eq!(restored.len(), 2);
         assert_eq!(restored.get(&op), Some(&TxOutput::new(10, owner)));
@@ -191,7 +191,8 @@ mod tests {
     fn empty_utxo_set_roundtrips() {
         let set = UtxoSet::new();
         let bytes = set.encode();
-        let restored = UtxoSet::decode(&bytes).unwrap();
+        let mut slice = &bytes[..];
+        let restored = UtxoSet::decode(&mut slice).unwrap();
         assert!(restored.is_empty());
     }
 

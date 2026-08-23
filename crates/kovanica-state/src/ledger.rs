@@ -940,10 +940,10 @@ impl Ledger {
         let checkpoint_block = BlockId::from_bytes(bytes[pos..pos + 32].try_into().unwrap());
         pos += 32;
 
-        let checkpoint_state = UtxoSet::decode(&bytes[pos..])
+        let mut remaining = &bytes[pos..];
+        let checkpoint_state = UtxoSet::decode(&mut remaining)
             .map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
-        let state_bytes_len = checkpoint_state.encoded_len();
-        pos += state_bytes_len;
+        pos = bytes.len() - remaining.len();
 
         if bytes.len() < pos + 8 {
             return Err(LedgerCheckpointError::UnexpectedEof);
