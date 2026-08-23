@@ -76,11 +76,14 @@ impl UtxoSet {
     }
 
     /// Serialise the UTXO set for checkpoint persistence. Returns a
-    /// self-contained byte encoding: count followed by (outpoint, output) pairs.
+    /// self-contained byte encoding: count followed by (outpoint, output) pairs,
+    /// sorted by outpoint for deterministic encoding.
     pub fn encode(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&(self.map.len() as u64).to_le_bytes());
-        for (op, output) in &self.map {
+        let mut entries: Vec<_> = self.map.iter().collect();
+        entries.sort_by_key(|(op, _)| *op);
+        for (op, output) in entries {
             buf.extend_from_slice(op.tx.as_bytes());
             buf.extend_from_slice(&op.index.to_le_bytes());
             buf.extend_from_slice(&output.value.to_le_bytes());
