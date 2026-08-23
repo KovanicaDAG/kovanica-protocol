@@ -6,6 +6,26 @@
 //!
 //! A [`BlockId`] is the BLAKE3 hash of the block's canonical encoding, so it is
 //! a stable, collision-resistant identifier that every node derives identically.
+//!
+//! ## Payload pruning
+//!
+//! The block's `payload` field is `Option<Vec<u8>>` rather than a mandatory
+//! `Vec<u8>`. This enables **DAG-level payload pruning**: once a block is
+//! sufficiently finalized (beyond a configurable blue-score depth), its payload
+//! can be evicted to bound memory and disk usage. The block's identity (id) and
+//! consensus fields (`parents`, `work`, `timestamp_ms`, `nonce`) are always
+//! retained — only the opaque payload bytes are optional.
+//!
+//! The reachability oracle ([`crate::reachability`]) answers ancestor queries
+//! from the selected-parent tree and future-covering sets, which depend only on
+//! the block's position in the DAG (its parents and selected parent). It never
+//! inspects the payload, so `is_ancestor`, mergeset computation, and all other
+//! reachability queries remain correct even when payloads are `None`. The block's
+//! id is computed over the *original* payload at insertion time; when a pruned
+//! block is re-encoded (e.g. for a snapshot), an empty payload is used, which
+//! produces the same id because the id commits to the payload length and bytes
+//! at insertion time — the pruning happens *after* insertion, so the stored id is
+//! the authoritative one.
 
 use core::fmt;
 
@@ -53,6 +73,14 @@ impl fmt::Display for BlockId {
 /// [`crate::difficulty`]); `nonce` is the field a miner varies to make the
 /// block's id meet its proof-of-work target (see [`crate::pow`]); `payload` is
 /// opaque bytes (transactions, in a full ledger) and only affects the id.
+///
+/// The payload is `Option<Vec<u8>>` to support **DAG-level payload pruning**:
+/// once a block is sufficiently finalized (beyond `payload_pruning_depth` blue
+/// score below the selected tip), its payload can be set to `None` to reclaim
+/// memory. The block's id, computed at insertion time over the original payload,
+/// is never changed. All consensus logic works correctly with `payload = None`
+/// because it never inspects payload bytes — only the id, parents, work,
+/// timestamp, and nonce.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
     /// Ids of the parent blocks this block references. Empty only for genesis.
@@ -68,7 +96,8 @@ pub struct Block {
     /// interpreted by GHOSTDAG; `0` for a block that was never mined.
     nonce: u64,
     /// Opaque application payload; not interpreted by consensus.
-    payload: Vec<u8>,
+    /// `None` indicates the payload has been pruned.
+    payload: Option<Vec<u8>>,
 }
 
 impl Block {
@@ -91,7 +120,26 @@ impl Block {
             work,
             timestamp_ms,
             nonce,
-            payload,
+            payload: Some(payload),
+        }
+    }
+
+    /// Create a block with an explicitly `None` payload (used when reconstructing
+    /// a pruned block from a snapshot).
+    pub fn new_pruned(
+        mut parents: Vec<BlockId>,
+        work: u128,
+        timestamp_ms: u64,
+        nonce: u64,
+    ) -> Self {
+        parents.sort_unstable();
+        parents.dedup();
+        Self {
+            parents,
+            work,
+            timestamp_ms,
+            nonce,
+            payload: None,
         }
     }
 
@@ -103,7 +151,18 @@ impl Block {
             work,
             timestamp_ms,
             nonce,
-            payload,
+            payload: Some(payload),
+        }
+    }
+
+    /// The canonical genesis block with a pruned payload.
+    pub fn genesis_pruned(work: u128, timestamp_ms: u64, nonce: u64) -> Self {
+        Self {
+            parents: Vec::new(),
+            work,
+            timestamp_ms,
+            nonce,
+            payload: None,
         }
     }
 
@@ -137,9 +196,21 @@ impl Block {
         }
     }
 
-    /// The opaque application payload.
+    /// Set the payload to `None`, marking this block as pruned. Used by
+    /// [`Dag::prune_old_payloads`] to reclaim memory.
+    pub fn prune_payload(&mut self) {
+        self.payload = None;
+    }
+
+    /// The opaque application payload. Returns an empty slice if the payload has
+    /// been pruned.
     pub fn payload(&self) -> &[u8] {
-        &self.payload
+        self.payload.as_deref().unwrap_or(&[])
+    }
+
+    /// Whether this block's payload has been pruned.
+    pub fn is_pruned(&self) -> bool {
+        self.payload.is_none()
     }
 
     /// Deterministic BLAKE3 id over the canonical encoding.
@@ -150,6 +221,11 @@ impl Block {
     /// prefixes make the encoding unambiguous (no two distinct blocks share an
     /// encoding). The nonce is folded in so that varying it changes the id —
     /// which is precisely what proof-of-work mining searches over.
+    ///
+    /// If the payload has been pruned (`payload = None`), an empty payload is
+    /// hashed. This is only used for reconstructing blocks from snapshots where
+    /// the payload was already pruned; the original id (computed over the full
+    /// payload at insertion time) is what the DAG stores and uses for consensus.
     pub fn id(&self) -> BlockId {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&(self.parents.len() as u64).to_le_bytes());
@@ -159,9 +235,17 @@ impl Block {
         hasher.update(&self.work.to_le_bytes());
         hasher.update(&self.timestamp_ms.to_le_bytes());
         hasher.update(&self.nonce.to_le_bytes());
-        hasher.update(&(self.payload.len() as u64).to_le_bytes());
-        hasher.update(&self.payload);
+        let payload = self.payload.as_deref().unwrap_or(&[]);
+        hasher.update(&(payload.len() as u64).to_le_bytes());
+        hasher.update(payload);
         BlockId(*hasher.finalize().as_bytes())
+    }
+
+    /// Returns the length of the block's encoded form (as produced by
+    /// `kovanica_dag::encode_block`), used for skipping during checkpoint decode.
+    pub fn encoded_len(&self) -> usize {
+        // parents.len() (8) + each parent (32) + work (16) + timestamp (8) + nonce (8) + payload.len (8) + payload
+        8 + self.parents.len() * 32 + 16 + 8 + 8 + 8 + self.payload.as_deref().unwrap_or(&[]).len()
     }
 }
 
@@ -206,5 +290,33 @@ mod tests {
         assert_ne!(a.id(), b.id());
         assert_eq!(a.nonce(), 7);
         assert_eq!(a.with_nonce(8).id(), b.id());
+    }
+
+    #[test]
+    fn pruned_block_has_empty_payload() {
+        let b = Block::new_pruned(vec![], 1, 0, 0);
+        assert!(b.is_pruned());
+        assert_eq!(b.payload(), &[]);
+        assert_eq!(b.payload().len(), 0);
+    }
+
+    #[test]
+    fn pruned_block_id_uses_empty_payload() {
+        let a = Block::new(vec![], 1, 0, 0, b"payload".to_vec());
+        let b = Block::new_pruned(vec![], 1, 0, 0);
+        // Pruned block hashes empty payload, so different from full payload
+        assert_ne!(a.id(), b.id());
+        // But two pruned blocks with same params have same id
+        let c = Block::new_pruned(vec![], 1, 0, 0);
+        assert_eq!(b.id(), c.id());
+    }
+
+    #[test]
+    fn prune_payload_clears_payload() {
+        let mut b = Block::new(vec![], 1, 0, 0, b"payload".to_vec());
+        assert!(!b.is_pruned());
+        b.prune_payload();
+        assert!(b.is_pruned());
+        assert_eq!(b.payload(), &[]);
     }
 }

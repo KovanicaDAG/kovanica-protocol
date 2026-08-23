@@ -407,9 +407,24 @@ and disk that do not grow forever.
 - [x] Headers-first sync: peers exchange tips/headers first, then fetch
       block bodies by hash on demand — replaces whole-dump exchange as the
       default catch-up path.
-- [ ] DAG-level pruning behind the reachability oracle (the item its
+- [x] DAG-level pruning behind the reachability oracle (the item its
       incremental maintenance unlocked): bounded ancestor state, append-only
       DAG with prunable payloads.
+      - `Block.payload` is now `Option<Vec<u8>>`; `None` means pruned
+      - `Dag::set_payload_pruning_depth(depth)` evicts payloads of blocks
+        more than `depth` blue score below the selected tip
+      - `Dag::prune_old_payloads()` called automatically on insert
+      - Reachability queries (`is_ancestor`, mergeset, GHOSTDAG colouring,
+        linearization) work correctly on pruned blocks — the oracle never
+        inspects payloads
+      - Snapshots encode pruned blocks with empty payload; load reconstructs
+        `payload = None`
+      - `Ledger::with_payload_pruning()` and `Ledger::with_finality_and_payload_pruning()`
+        thread the depth through the state layer
+      - `Node::genesis_with_finality()` and `Node::set_payload_pruning_depth()`
+        expose it at the node layer
+      - `Node::receive_block` rejects blocks whose selected parent has a
+        pruned payload (mirrors finality check but uses payload pruning depth)
 - [ ] Finality checkpointing: persist the UTXO set at finality depth so a
       restart replays only post-checkpoint blocks instead of all history.
 - [ ] Reachability interval-reindex amortisation tuning (open from Stage 0).

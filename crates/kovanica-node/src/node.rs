@@ -294,6 +294,31 @@ impl Node {
         amount: u64,
         founder_seed: u64,
     ) -> Result<(BlockId, Address), NodeError> {
+        self.genesis_with_finality(k, subsidy, amount, founder_seed, u64::MAX, u64::MAX)
+    }
+
+    /// Like [`Node::genesis`], but with configurable finality depth and payload
+    /// pruning depth for the ledger.
+    ///
+    /// - `finality_depth`: blocks more than this many blue score below the selected
+    ///   tip become final (their UTXO state is pruned and they cannot be built on).
+    ///   `u64::MAX` (the default) disables finality pruning.
+    /// - `payload_pruning_depth`: blocks more than this many blue score below the
+    ///   selected tip have their payloads evicted in the underlying DAG.
+    ///   `u64::MAX` (the default) disables payload pruning.
+    ///
+    /// Typically `payload_pruning_depth >= finality_depth` so that a node can
+    /// serve block bodies for blocks that are final but no longer needed for
+    /// validation.
+    pub fn genesis_with_finality(
+        &mut self,
+        k: u16,
+        subsidy: u64,
+        amount: u64,
+        founder_seed: u64,
+        finality_depth: u64,
+        payload_pruning_depth: u64,
+    ) -> Result<(BlockId, Address), NodeError> {
         if self.ledger.is_some() {
             return Err(NodeError::AlreadyInitialized);
         }
@@ -301,11 +326,54 @@ impl Node {
         let coinbase =
             Transaction::coinbase(vec![TxOutput::new(amount, founder)], b"genesis".to_vec());
         let schedule = HalvingSchedule::new(subsidy, DEFAULT_HALVING_ERA);
-        let ledger = Ledger::new(k, schedule, &[coinbase]).map_err(NodeError::Ledger)?;
+        let ledger = if finality_depth == u64::MAX && payload_pruning_depth == u64::MAX {
+            Ledger::new(k, schedule, &[coinbase]).map_err(NodeError::Ledger)?
+        } else if finality_depth != u64::MAX && payload_pruning_depth == u64::MAX {
+            Ledger::with_finality(k, schedule, &[coinbase], finality_depth)
+                .map_err(NodeError::Ledger)?
+        } else if finality_depth == u64::MAX && payload_pruning_depth != u64::MAX {
+            Ledger::with_payload_pruning(k, schedule, &[coinbase], payload_pruning_depth)
+                .map_err(NodeError::Ledger)?
+        } else {
+            Ledger::with_finality_and_payload_pruning(
+                k,
+                schedule,
+                &[coinbase],
+                finality_depth,
+                payload_pruning_depth,
+            )
+            .map_err(NodeError::Ledger)?
+        };
         let genesis = ledger.genesis();
         self.ledger = Some(ledger);
         self.miner = Some(founder);
         Ok((genesis, founder))
+    }
+
+    /// Enable (or disable) payload pruning on the underlying DAG. Returns an
+    /// error if the node is not initialised.
+    pub fn set_payload_pruning_depth(&mut self, depth: u64) -> Result<(), NodeError> {
+        self.ledger
+            .as_mut()
+            .ok_or(NodeError::NotInitialized)?
+            .set_payload_pruning_depth(depth);
+        Ok(())
+    }
+
+    /// The current payload pruning depth, or `u64::MAX` if disabled.
+    pub fn payload_pruning_depth(&self) -> u64 {
+        self.ledger
+            .as_ref()
+            .map(|l| l.payload_pruning_depth())
+            .unwrap_or(u64::MAX)
+    }
+
+    /// The blue-score threshold below which blocks' payloads are pruned.
+    pub fn payload_pruning_score(&self) -> u64 {
+        self.ledger
+            .as_ref()
+            .map(|l| l.payload_pruning_score())
+            .unwrap_or(0)
     }
 
     /// Who receives the native-token (KVNC) subsidy on produced blocks.
@@ -777,6 +845,33 @@ impl Node {
             });
         }
         let ledger = self.ledger.as_mut().ok_or(NodeError::NotInitialized)?;
+
+        // Reject blocks built on pruned history: if the selected parent's payload
+        // has been evicted, we cannot serve its body and the block is effectively
+        // building on history we no longer have. This mirrors the finality check
+        // but uses the payload pruning depth instead.
+        let preview = match ledger.dag().preview(&Block::new(
+            record.parents.clone(),
+            record.work,
+            record.timestamp_ms,
+            record.nonce,
+            encode_block_payload(&record.txs),
+        )) {
+            Ok(p) => p,
+            Err(e) => return Err(NodeError::Insert(LedgerInsertError::Dag(e))),
+        };
+        if let Some(sp_block) = ledger.dag().block(&preview.selected_parent) {
+            if sp_block.is_pruned() {
+                return Err(NodeError::Insert(LedgerInsertError::Finality {
+                    parent_score: ledger
+                        .dag()
+                        .ghostdag(&preview.selected_parent)
+                        .map_or(0, |g| g.blue_score),
+                    finality_score: ledger.payload_pruning_score(),
+                }));
+            }
+        }
+
         match ledger.insert(
             record.parents,
             record.work,
@@ -799,6 +894,14 @@ impl Node {
         fs::write(path, bytes).map_err(|e| NodeError::Io(e.to_string()))
     }
 
+    /// Write a finality checkpoint to `path`. Fails if finality is disabled or
+    /// not yet active.
+    pub fn save_checkpoint(&self, path: &str) -> Result<(), NodeError> {
+        let bytes = self.ledger()?.write_checkpoint()
+            .map_err(|e| NodeError::Io(e.to_string()))?;
+        fs::write(path, bytes).map_err(|e| NodeError::Io(e.to_string()))
+    }
+
     /// Replace the node's ledger with one loaded from the snapshot at `path`.
     pub fn load(&mut self, path: &str) -> Result<(), NodeError> {
         let bytes = fs::read(path).map_err(|e| NodeError::Io(e.to_string()))?;
@@ -808,9 +911,25 @@ impl Node {
         Ok(())
     }
 
+    /// Replace the node's ledger with one loaded from a finality checkpoint at
+    /// `path`. This is faster than a full snapshot load when the DAG is deep,
+    /// as it only replays blocks above the finality boundary.
+    pub fn load_checkpoint(&mut self, path: &str) -> Result<(), NodeError> {
+        let bytes = fs::read(path).map_err(|e| NodeError::Io(e.to_string()))?;
+        let ledger =
+            Ledger::read_checkpoint(&bytes).map_err(|e| NodeError::Snapshot(e.to_string()))?;
+        self.ledger = Some(ledger);
+        Ok(())
+    }
+
     /// Write an incremental append-only log of this node's ledger at `path`.
     pub fn create_log(&self, path: &str) -> Result<LedgerStore, NodeError> {
         LedgerStore::create(path, self.ledger()?).map_err(|e| NodeError::Io(e.to_string()))
+    }
+
+    /// Write a finality checkpoint to `path` using the LedgerStore.
+    pub fn create_checkpoint(&self, path: &str) -> Result<(), NodeError> {
+        LedgerStore::create_checkpoint(path, self.ledger()?).map_err(|e| NodeError::Io(e.to_string()))
     }
 
     /// Rebuild the node from an incremental log at `path`. The store is
@@ -828,6 +947,17 @@ impl Node {
             },
             store,
         ))
+    }
+
+    /// Rebuild the node from a finality checkpoint at `path`.
+    pub fn load_checkpoint_log(path: &str) -> Result<Self, NodeError> {
+        let ledger = LedgerStore::open_checkpoint(path).map_err(|e| NodeError::Snapshot(e.to_string()))?;
+        Ok(Self {
+            ledger: Some(ledger),
+            mempool: Mempool::new(),
+            clock: Clock::default(),
+            miner: None,
+        })
     }
 
     /// Append `id`'s block to an open log. No-op-level error if the block is

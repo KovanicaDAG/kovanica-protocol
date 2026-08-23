@@ -1,0 +1,26 @@
+kovanica explorer on http://0.0.0.0:8080
+kovanica p2p listen 0.0.0.0:9000
+kovanica p2p listen [::]:9000
+kovanica p2p listen=0.0.0.0:9000,[::]:9000 peers=["145.223.116.178:9000"]
+kovanica p2p headers-first sync from 145.223.116.178:9000: 43 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 41 headers, 1 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 40 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 38 headers, 1 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 37 headers, 1 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 36 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 34 headers, 3 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 31 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 29 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 27 headers, 1 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 26 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 24 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 22 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 20 headers, 1 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 19 headers, 3 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 16 headers, 1 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 15 headers, 1 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 14 headers, 1 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 13 headers, 3 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 10 headers, 3 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 7 headers, 2 bodies applied
+kovanica p2p headers-first sync from 145.223.116.178:9000: 5 headers, 1 bodies applied

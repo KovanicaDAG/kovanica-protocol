@@ -15,6 +15,58 @@
 //! oracle is maintained **incrementally**: each insert folds in just the one new
 //! block (Kaspa reachability / interval reindexing) rather than rebuilding from
 //! scratch (see [`crate::reachability`]).
+//!
+//! ## Payload pruning
+//!
+//! The DAG supports **payload pruning** to bound memory and disk usage. Each
+//! [`Block`] carries an `Option<Vec<u8>>` payload — `Some(payload)` when the
+//! block is recent, `None` once it is sufficiently finalized. A block is
+//! considered **prunable** when its blue score is more than
+//! `payload_pruning_depth` below the selected tip's blue score.
+//!
+//! ### Why the reachability oracle makes pruning safe
+//!
+//! The [`Reachability`] oracle answers `is_ancestor` and computes mergesets from
+//! the **selected-parent tree** (interval labels) and **future-covering sets**,
+//! which depend *only* on the DAG's topology (each block's parents and its
+//! GHOSTDAG selected parent). It never inspects block payloads. Therefore,
+//! evicting a block's payload does not affect any reachability query:
+//! `is_ancestor`, `in_anticone`, `mergeset_ordered`, and the GHOSTDAG colouring
+//! all continue to work correctly on pruned blocks.
+//!
+//! ### Pruning strategy
+//!
+//! - `payload_pruning_depth` is a parameter on [`Dag`] (default: `u64::MAX`,
+//!   meaning pruning disabled).
+//! - After each insert, [`Dag::prune_old_payloads`] is called. It computes the
+//!   pruning threshold as `selected_tip.blue_score.saturating_sub(payload_pruning_depth)`.
+//! - Any block with `blue_score < threshold` has its payload set to `None` via
+//!   [`Block::prune_payload`].
+//! - Genesis is never pruned (its blue score is 0, but it's the root).
+//! - Pruning is idempotent: once `payload = None`, it stays `None`.
+//!
+//! ### Interaction with `Ledger::with_finality`
+//!
+//! The ledger layer has its own `finality_depth` ([`Ledger::with_finality`])
+//! which prunes *per-block UTXO state* and rejects blocks built on final
+//! history. The DAG's `payload_pruning_depth` is a separate (typically larger)
+//! threshold that only evicts the opaque payload bytes. The two depths are
+//! independent:
+//! - `finality_depth` bounds the *state* the ledger must keep to validate new
+//!   blocks.
+//! - `payload_pruning_depth` bounds the *payloads* the DAG keeps for sync/serving.
+//!
+//! A typical configuration sets `payload_pruning_depth > finality_depth` so that
+//! a node can still serve block bodies for blocks that are final (and thus
+//! immutable) but no longer needed for validation.
+//!
+//! ### Snapshots
+//!
+//! When writing a snapshot ([`Dag::write_snapshot`]), pruned blocks are encoded
+//! with an empty payload. On load ([`Dag::read_snapshot`]), they are
+//! reconstructed with `payload = None` via [`Block::new_pruned`]. The block's
+//! id (computed at insertion time over the original payload) is preserved in the
+//! DAG's `nodes` map, so consensus integrity is maintained.
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
@@ -166,6 +218,10 @@ pub struct Dag {
     /// requires every non-genesis block's id to meet its `work` target (see
     /// [`crate::pow`] and [`Dag::set_proof_of_work`]). Off by default.
     require_pow: bool,
+    /// Payload pruning depth: blocks more than this many blue score units below
+    /// the selected tip have their payloads evicted (`payload = None`).
+    /// `u64::MAX` means pruning is disabled (the default).
+    payload_pruning_depth: u64,
 }
 
 impl Dag {
@@ -200,6 +256,7 @@ impl Dag {
             validator: None,
             difficulty: None,
             require_pow: false,
+            payload_pruning_depth: u64::MAX,
         };
         dag.reach = Reachability::build(&dag);
         dag
@@ -272,6 +329,58 @@ impl Dag {
     /// [`Dag::set_proof_of_work`]).
     pub fn proof_of_work_enabled(&self) -> bool {
         self.require_pow
+    }
+
+    /// Set the payload pruning depth: blocks more than `depth` blue score units
+    /// below the selected tip will have their payloads evicted on the next insert
+    /// (or when [`Dag::prune_old_payloads`] is called explicitly). `u64::MAX`
+    /// (the default) disables payload pruning.
+    ///
+    /// The pruning threshold is computed as `selected_tip.blue_score.saturating_sub(depth)`.
+    /// Any block with `blue_score < threshold` has its payload set to `None`.
+    /// Genesis is never pruned.
+    pub fn set_payload_pruning_depth(&mut self, depth: u64) {
+        self.payload_pruning_depth = depth;
+    }
+
+    /// The current payload pruning depth. `u64::MAX` means pruning is disabled.
+    pub fn payload_pruning_depth(&self) -> u64 {
+        self.payload_pruning_depth
+    }
+
+    /// The blue-score threshold below which blocks are prunable: blocks with a
+    /// blue score `< payload_pruning_score()` have their payloads evicted.
+    /// Returns `0` when pruning is disabled or the DAG is not yet deep enough.
+    pub fn payload_pruning_score(&self) -> u64 {
+        if self.payload_pruning_depth == u64::MAX {
+            return 0;
+        }
+        let tip = self.selected_tip();
+        let max = self.ghostdag(&tip).map_or(0, |g| g.blue_score);
+        max.saturating_sub(self.payload_pruning_depth)
+    }
+
+    /// Evict payloads of all blocks whose blue score is below the pruning
+    /// threshold ([`Dag::payload_pruning_score`]). Idempotent: blocks already
+    /// pruned stay pruned. Genesis is never pruned.
+    ///
+    /// This is called automatically at the end of [`Dag::insert`] when
+    /// `payload_pruning_depth` is finite, but can also be invoked manually
+    /// (e.g. after loading a snapshot or changing the pruning depth).
+    pub fn prune_old_payloads(&mut self) {
+        let threshold = self.payload_pruning_score();
+        if threshold == 0 {
+            return;
+        }
+        for node in self.nodes.values_mut() {
+            // Never prune genesis (blue_score == 0, but it's the root)
+            if node.ghostdag.blue_score == 0 {
+                continue;
+            }
+            if node.ghostdag.blue_score < threshold && !node.block.is_pruned() {
+                node.block.prune_payload();
+            }
+        }
     }
 
     /// The `work` a new block built on `parents` must carry to satisfy the
@@ -555,6 +664,12 @@ impl Dag {
         // Fold the one new block into the reachability oracle incrementally
         // (Kaspa reachability / interval reindexing), rather than rebuilding it.
         self.reach.add_block(id, sp, &mergeset);
+
+        // Evict payloads of blocks that are now beyond the pruning depth.
+        if self.payload_pruning_depth != u64::MAX {
+            self.prune_old_payloads();
+        }
+
         Ok(id)
     }
 }

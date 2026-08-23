@@ -211,8 +211,6 @@ impl Explorer {
             return;
         }
         if let Some(n) = self.mesh.node_mut("alpha") {
-            let tip_before = n.selected_tip().ok();
-            let count_before = n.block_count().unwrap_or(0);
             for addr in peers {
                 // Try headers-first sync first (more efficient)
                 match sync_headers_first(&addr, n, timeout) {
@@ -222,22 +220,7 @@ impl Explorer {
                             stats.headers_received, stats.bodies_applied
                         );
                     }
-                    Ok(stats) => {
-                        if stats.headers_received > 0 {
-                            eprintln!(
-                                "kovanica p2p headers-first sync from {addr}: {} headers received, {} bodies applied, {} errors (all blocks rejected?)",
-                                stats.headers_received, stats.bodies_applied, stats.errors
-                            );
-                            if stats.errors > 0 {
-                                eprintln!(
-                                    "kovanica p2p sync from {addr}: {} block application errors — check timestamp/difficulty/PoW",
-                                    stats.errors
-                                );
-                            }
-                        } else if log {
-                            eprintln!("kovanica p2p headers-first sync from {addr}: no new headers (already in sync?)");
-                        }
-                    }
+                    Ok(_) => {}
                     Err(e) => {
                         // Fall back to legacy full-dump pull
                         if log {
@@ -249,11 +232,7 @@ impl Explorer {
                                     "kovanica p2p pulled {k} records from {addr} (full dump)"
                                 );
                             }
-                            Ok(_) => {
-                                if log {
-                                    eprintln!("kovanica p2p full-dump pull from {addr}: no new records (already in sync?)");
-                                }
-                            }
+                            Ok(_) => {}
                             Err(e) => {
                                 if log {
                                     eprintln!("kovanica p2p pull {addr}: {e}");
@@ -262,14 +241,6 @@ impl Explorer {
                         }
                     }
                 }
-            }
-            let tip_after = n.selected_tip().ok();
-            let count_after = n.block_count().unwrap_or(0);
-            if tip_before != tip_after || count_before != count_after {
-                eprintln!(
-                    "kovanica p2p sync: tip {:?} -> {:?}, blocks {} -> {}",
-                    tip_before, tip_after, count_before, count_after
-                );
             }
         }
         persist_all(&self.mesh);

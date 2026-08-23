@@ -3,7 +3,7 @@
 //! state, and every block's view state — is identical to the original.
 
 use kovanica_state::{
-    Address, HalvingSchedule, KeyPair, Ledger, LedgerSnapshotError, OutPoint, Transaction,
+    Address, HalvingSchedule, KeyPair, Ledger, LedgerSnapshotError, LedgerCheckpointError, OutPoint, Transaction,
     TxOutput, UtxoSet, DEFAULT_HALVING_ERA,
 };
 
@@ -117,4 +117,126 @@ fn bad_magic_is_rejected() {
 fn truncated_snapshot_is_rejected() {
     let bytes = build_ledger().write_snapshot();
     assert!(Ledger::read_snapshot(&bytes[..bytes.len() - 1]).is_err());
+}
+
+/// Build a ledger with finality depth and enough blocks to activate finality.
+fn build_ledger_with_finality(finality_depth: u64) -> Ledger {
+    let alice = KeyPair::from_u64(1);
+    let bob = KeyPair::from_u64(2);
+    let carol = KeyPair::from_u64(3);
+
+    let coinbase = Transaction::coinbase(
+        vec![TxOutput::new(500, alice.address())],
+        b"genesis".to_vec(),
+    );
+    let coin = OutPoint::new(coinbase.id(), 0);
+    let mut ledger = Ledger::with_finality(K, SCHEDULE, &[coinbase], finality_depth).unwrap();
+    let genesis = ledger.genesis();
+
+    // Build a chain of blocks to activate finality
+    let mut tip = genesis;
+    for i in 0..20 {
+        let tx = if i == 0 {
+            // First block: alice → bob
+            let a_to_b = Transaction::signed(
+                &[(coin, &alice)],
+                vec![
+                    TxOutput::new(300, bob.address()),
+                    TxOutput::new(200, alice.address()),
+                ],
+                Vec::new(),
+            );
+            let _bob_coin = OutPoint::new(a_to_b.id(), 0);
+            let _alice_change = OutPoint::new(a_to_b.id(), 1);
+            a_to_b
+        } else {
+            Transaction::coinbase(vec![TxOutput::new(SUBSIDY, carol.address())], format!("block{i}").into_bytes())
+        };
+        tip = ledger.insert(vec![tip], 1, i as u64, 0, &[tx]).unwrap();
+    }
+    ledger
+}
+
+#[test]
+fn checkpoint_roundtrips() {
+    // Build a ledger with finality depth 3, enough blocks to activate finality
+    let ledger = build_ledger_with_finality(3);
+    assert!(ledger.finality_score() > 0, "finality should be active");
+
+    // Write checkpoint
+    let bytes = ledger.write_checkpoint().expect("checkpoint writes");
+
+    // Read checkpoint
+    let restored = Ledger::read_checkpoint(&bytes).expect("checkpoint decodes");
+
+    // Same DAG shape and order
+    assert_eq!(restored.dag().linearize(), ledger.dag().linearize());
+    assert_eq!(restored.dag().tips(), ledger.dag().tips());
+    assert_eq!(restored.genesis(), ledger.genesis());
+    assert_eq!(restored.subsidy(), ledger.subsidy());
+    assert_eq!(restored.finality_depth(), ledger.finality_depth());
+    assert_eq!(restored.payload_pruning_depth(), ledger.payload_pruning_depth());
+
+    // Same full ledger state
+    assert_eq!(
+        snapshot(&restored.ledger_state()),
+        snapshot(&ledger.ledger_state())
+    );
+
+    // Same per-block view state for every block
+    for id in ledger.dag().linearize() {
+        assert_eq!(
+            snapshot(restored.state(&id).unwrap()),
+            snapshot(ledger.state(&id).unwrap()),
+            "per-block state differs for {id}"
+        );
+    }
+}
+
+#[test]
+fn checkpoint_is_stable_across_second_roundtrip() {
+    let ledger = build_ledger_with_finality(3);
+    let bytes1 = ledger.write_checkpoint().unwrap();
+    let restored = Ledger::read_checkpoint(&bytes1).unwrap();
+    let bytes2 = restored.write_checkpoint().unwrap();
+    assert_eq!(bytes1, bytes2);
+}
+
+#[test]
+fn checkpoint_rejects_unbounded_finality() {
+    let ledger = build_ledger(); // no finality
+    let err = ledger.write_checkpoint().unwrap_err();
+    assert!(matches!(err, LedgerCheckpointError::FinalityDisabled));
+}
+
+#[test]
+fn checkpoint_rejects_insufficient_depth() {
+    // Finality depth 100 but only a few blocks
+    let alice = KeyPair::from_u64(1);
+    let coinbase = Transaction::coinbase(
+        vec![TxOutput::new(500, alice.address())],
+        b"genesis".to_vec(),
+    );
+    let mut ledger = Ledger::with_finality(K, SCHEDULE, &[coinbase], 100).unwrap();
+    let genesis = ledger.genesis();
+    ledger.insert(vec![genesis], 1, 1, 0, &[]).unwrap();
+    ledger.insert(vec![genesis], 1, 2, 0, &[]).unwrap();
+
+    let err = ledger.write_checkpoint().unwrap_err();
+    assert!(matches!(err, LedgerCheckpointError::FinalityNotActive));
+}
+
+#[test]
+fn bad_magic_checkpoint_rejected() {
+    assert!(matches!(
+        Ledger::read_checkpoint(b"not a checkpoint"),
+        Err(LedgerCheckpointError::BadMagic)
+    ));
+}
+
+#[test]
+fn truncated_checkpoint_rejected() {
+    let ledger = build_ledger_with_finality(3);
+    let bytes = ledger.write_checkpoint().unwrap();
+    assert!(Ledger::read_checkpoint(&bytes[..bytes.len() - 1]).is_err());
 }

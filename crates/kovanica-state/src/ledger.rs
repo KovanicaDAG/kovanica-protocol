@@ -428,6 +428,16 @@ impl std::error::Error for LedgerInsertError {}
 /// always follows the current selected tip, so a heavier branch takes over with no
 /// explicit revert. [`Ledger::new`] uses an unbounded depth — it never prunes and
 /// never rejects on finality.
+///
+/// ## Payload pruning
+///
+/// Independently of the ledger's finality pruning, the underlying [`Dag`]
+/// supports **payload pruning** via [`Dag::set_payload_pruning_depth`]. This
+/// evicts the opaque transaction payloads of blocks whose blue score is more than
+/// `payload_pruning_depth` below the selected tip. The payload pruning depth is
+/// typically set larger than the finality depth so that a node can serve block
+/// bodies for blocks that are final (and thus immutable) but no longer needed for
+/// validation. See [`kovanica_dag::Dag`] for details.
 pub struct Ledger {
     dag: Dag,
     schedule: HalvingSchedule,
@@ -435,6 +445,9 @@ pub struct Ledger {
     /// Blocks this far in blue score below the selected tip are final; their
     /// state is pruned and they cannot be built on. `u64::MAX` = never.
     finality_depth: u64,
+    /// Payload pruning depth for the underlying DAG: blocks this far in blue
+    /// score below the selected tip have their payloads evicted. `u64::MAX` = never.
+    payload_pruning_depth: u64,
     /// Per-block view UTXO state: `states[&b]` is the ledger state in `b`'s view.
     /// Final blocks (below the finality point) are pruned from this map.
     states: HashMap<BlockId, UtxoSet>,
@@ -459,7 +472,8 @@ impl Ledger {
 
         let genesis = Block::genesis(1, 0, 0, encode_block_payload(genesis_txs));
         let genesis_id = genesis.id();
-        let dag = Dag::with_validator(k, genesis, Box::new(TxStructureValidator));
+        let mut dag = Dag::with_validator(k, genesis, Box::new(TxStructureValidator));
+        dag.set_payload_pruning_depth(u64::MAX);
 
         let mut states = HashMap::new();
         states.insert(genesis_id, state);
@@ -470,6 +484,7 @@ impl Ledger {
             schedule,
             genesis: genesis_id,
             finality_depth: u64::MAX,
+            payload_pruning_depth: u64::MAX,
             states,
             heights,
         })
@@ -486,6 +501,40 @@ impl Ledger {
     ) -> Result<Self, LedgerError> {
         let mut ledger = Self::new(k, schedule, genesis_txs)?;
         ledger.finality_depth = finality_depth;
+        Ok(ledger)
+    }
+
+    /// Like [`Ledger::new`], but with a finite payload pruning depth for the
+    /// underlying DAG: blocks more than `payload_pruning_depth` blue score below
+    /// the selected tip have their payloads evicted. This is independent of the
+    /// ledger's finality pruning (which prunes per-block UTXO state and rejects
+    /// blocks built on final history). Typically `payload_pruning_depth >=
+    /// finality_depth` so that final blocks' bodies can still be served for sync.
+    pub fn with_payload_pruning(
+        k: KParam,
+        schedule: HalvingSchedule,
+        genesis_txs: &[Transaction],
+        payload_pruning_depth: u64,
+    ) -> Result<Self, LedgerError> {
+        let mut ledger = Self::new(k, schedule, genesis_txs)?;
+        ledger.payload_pruning_depth = payload_pruning_depth;
+        ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
+        Ok(ledger)
+    }
+
+    /// Like [`Ledger::with_finality`], but with both finality depth and payload
+    /// pruning depth specified.
+    pub fn with_finality_and_payload_pruning(
+        k: KParam,
+        schedule: HalvingSchedule,
+        genesis_txs: &[Transaction],
+        finality_depth: u64,
+        payload_pruning_depth: u64,
+    ) -> Result<Self, LedgerError> {
+        let mut ledger = Self::new(k, schedule, genesis_txs)?;
+        ledger.finality_depth = finality_depth;
+        ledger.payload_pruning_depth = payload_pruning_depth;
+        ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
         Ok(ledger)
     }
 
@@ -528,6 +577,25 @@ impl Ledger {
         let tip = self.dag.selected_tip();
         let max = self.dag.ghostdag(&tip).map_or(0, |g| g.blue_score);
         max.saturating_sub(self.finality_depth)
+    }
+
+    /// The payload pruning depth for the underlying DAG. `u64::MAX` means pruning
+    /// is disabled.
+    pub fn payload_pruning_depth(&self) -> u64 {
+        self.payload_pruning_depth
+    }
+
+    /// The blue-score threshold below which blocks' payloads are pruned in the
+    /// underlying DAG. Returns `0` when pruning is disabled or the DAG is not yet
+    /// deep enough. See [`Dag::payload_pruning_score`].
+    pub fn payload_pruning_score(&self) -> u64 {
+        self.dag.payload_pruning_score()
+    }
+
+    /// Set the payload pruning depth on the underlying DAG.
+    pub fn set_payload_pruning_depth(&mut self, depth: u64) {
+        self.payload_pruning_depth = depth;
+        self.dag.set_payload_pruning_depth(depth);
     }
 
     /// The genesis block id.
@@ -702,12 +770,17 @@ impl Ledger {
     /// underlying DAG's replay log (see [`Dag::write_snapshot`]). Per-block UTXO
     /// state is *not* stored — it is recomputed on load by replaying blocks
     /// through [`Ledger::insert`], so nothing derived is trusted from disk.
+    ///
+    /// The snapshot also stores the runtime `finality_depth` and `payload_pruning_depth`
+    /// so they are restored automatically.
     pub fn write_snapshot(&self) -> Vec<u8> {
         let mut buf = Vec::new();
         buf.extend_from_slice(&LEDGER_MAGIC);
         buf.extend_from_slice(&LEDGER_VERSION.to_le_bytes());
         buf.extend_from_slice(&self.schedule.genesis_subsidy.to_le_bytes());
         buf.extend_from_slice(&self.schedule.halving_era.to_le_bytes());
+        buf.extend_from_slice(&self.finality_depth.to_le_bytes());
+        buf.extend_from_slice(&self.payload_pruning_depth.to_le_bytes());
         buf.extend_from_slice(&self.dag.write_snapshot());
         buf
     }
@@ -721,7 +794,8 @@ impl Ledger {
         if bytes.len() < 4 || bytes[..4] != LEDGER_MAGIC {
             return Err(LedgerSnapshotError::BadMagic);
         }
-        if bytes.len() < 22 {
+        if bytes.len() < 38 {
+            // magic(4) + version(2) + genesis_subsidy(8) + halving_era(8) + finality_depth(8) + payload_pruning_depth(8) = 38
             return Err(LedgerSnapshotError::Dag(SnapshotError::UnexpectedEof));
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
@@ -731,15 +805,22 @@ impl Ledger {
         let genesis_subsidy =
             u64::from_le_bytes(bytes[6..14].try_into().expect("14 - 6 == 8 bytes"));
         let halving_era = u64::from_le_bytes(bytes[14..22].try_into().expect("22 - 14 == 8 bytes"));
+        let finality_depth =
+            u64::from_le_bytes(bytes[22..30].try_into().expect("30 - 22 == 8 bytes"));
+        let payload_pruning_depth =
+            u64::from_le_bytes(bytes[30..38].try_into().expect("38 - 30 == 8 bytes"));
         let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
-        let snapshot = decode_snapshot(&bytes[22..]).map_err(LedgerSnapshotError::Dag)?;
+        let snapshot = decode_snapshot(&bytes[38..]).map_err(LedgerSnapshotError::Dag)?;
         let mut blocks = snapshot.blocks.into_iter();
         let genesis = blocks.next().ok_or(LedgerSnapshotError::Empty)?;
         let genesis_txs =
             decode_block_payload(genesis.payload()).map_err(LedgerSnapshotError::Payload)?;
         let mut ledger = Ledger::new(snapshot.k, schedule, &genesis_txs)
             .map_err(LedgerSnapshotError::Genesis)?;
+        ledger.finality_depth = finality_depth;
+        ledger.payload_pruning_depth = payload_pruning_depth;
+        ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
         for block in blocks {
             let txs =
                 decode_block_payload(block.payload()).map_err(LedgerSnapshotError::Payload)?;
@@ -755,12 +836,263 @@ impl Ledger {
         }
         Ok(ledger)
     }
+
+    /// Serialise a **finality checkpoint**: the UTXO set at the finality boundary
+    /// plus the blocks above it (the "tip segment"). On load, the checkpoint UTXO
+    /// set is applied directly and only the tip segment is replayed, avoiding a
+    /// full replay from genesis.
+    ///
+    /// The checkpoint is only meaningful when `finality_depth` is finite. If
+    /// finality is disabled (`finality_depth == u64::MAX`), this returns an error.
+    /// The checkpoint also stores the runtime `finality_depth` and
+    /// `payload_pruning_depth` so they are restored automatically.
+    pub fn write_checkpoint(&self) -> Result<Vec<u8>, LedgerCheckpointError> {
+        if self.finality_depth == u64::MAX {
+            return Err(LedgerCheckpointError::FinalityDisabled);
+        }
+        let finality_score = self.finality_score();
+        if finality_score == 0 {
+            return Err(LedgerCheckpointError::FinalityNotActive);
+        }
+
+        // Find the block at the finality boundary: the highest block whose
+        // blue score is >= finality_score but whose selected parent (if any) is
+        // below it. This is the "checkpoint block" whose state we'll store.
+        let order = self.dag.linearize();
+        let mut checkpoint_block = self.genesis;
+        for id in &order {
+            let gd = self.dag.ghostdag(id).unwrap();
+            if gd.blue_score >= finality_score {
+                checkpoint_block = *id;
+            } else {
+                break;
+            }
+        }
+
+        // The checkpoint UTXO set is the state in the checkpoint block's view.
+        let checkpoint_state = self
+            .states
+            .get(&checkpoint_block)
+            .ok_or(LedgerCheckpointError::MissingCheckpointState)?;
+
+        // The tip segment: blocks in linearized order whose blue score is
+        // strictly above the finality score (i.e. not final). These are the
+        // blocks we'll replay on load.
+        let mut tip_segment = Vec::new();
+        for id in &order {
+            let gd = self.dag.ghostdag(id).unwrap();
+            if gd.blue_score > finality_score {
+                let block = self.dag.block(id).expect("linearized id is present");
+                tip_segment.push(block);
+            }
+        }
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&CHECKPOINT_MAGIC);
+        buf.extend_from_slice(&CHECKPOINT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&self.dag.k().to_le_bytes());
+        buf.extend_from_slice(&self.schedule.genesis_subsidy.to_le_bytes());
+        buf.extend_from_slice(&self.schedule.halving_era.to_le_bytes());
+        buf.extend_from_slice(&self.finality_depth.to_le_bytes());
+        buf.extend_from_slice(&self.payload_pruning_depth.to_le_bytes());
+        buf.extend_from_slice(checkpoint_block.as_bytes());
+        buf.extend_from_slice(&checkpoint_state.encode());
+        // Genesis transactions (needed to reconstruct the ledger on load).
+        let genesis_block = self.dag.block(&self.genesis).expect("genesis exists");
+        let genesis_txs =
+            decode_block_payload(genesis_block.payload()).map_err(LedgerCheckpointError::Payload)?;
+        let genesis_payload = encode_block_payload(&genesis_txs);
+        buf.extend_from_slice(&(genesis_payload.len() as u64).to_le_bytes());
+        buf.extend_from_slice(&genesis_payload);
+        // Tip segment
+        buf.extend_from_slice(&(tip_segment.len() as u64).to_le_bytes());
+        for block in &tip_segment {
+            kovanica_dag::encode_block(block, &mut buf);
+        }
+        Ok(buf)
+    }
+
+    /// Rebuild a ledger from a finality checkpoint. Applies the checkpoint UTXO
+    /// set directly, then replays only the tip segment blocks (those above the
+    /// finality boundary). Returns the restored ledger with the same
+    /// `finality_depth` and `payload_pruning_depth` as when the checkpoint was
+    /// written.
+    pub fn read_checkpoint(bytes: &[u8]) -> Result<Ledger, LedgerCheckpointError> {
+        if bytes.len() < 4 || bytes[..4] != CHECKPOINT_MAGIC {
+            return Err(LedgerCheckpointError::BadMagic);
+        }
+        let min_header = 4 + 2 + 2 + 8 + 8 + 8 + 8 + 32; // magic + version + k + 4*u64 + blockid
+        if bytes.len() < min_header {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        let version = u16::from_le_bytes([bytes[4], bytes[5]]);
+        if version != CHECKPOINT_VERSION {
+            return Err(LedgerCheckpointError::UnsupportedVersion(version));
+        }
+        let mut pos = 6;
+        let k = u16::from_le_bytes(bytes[pos..pos + 2].try_into().unwrap());
+        pos += 2;
+        let genesis_subsidy = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let halving_era = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let finality_depth = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let payload_pruning_depth = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+        let checkpoint_block = BlockId::from_bytes(bytes[pos..pos + 32].try_into().unwrap());
+        pos += 32;
+
+        let checkpoint_state = UtxoSet::decode(&bytes[pos..]).map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
+        let state_bytes_len = checkpoint_state.encoded_len();
+        pos += state_bytes_len;
+
+        if bytes.len() < pos + 8 {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        let genesis_payload_len = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
+        pos += 8;
+        if bytes.len() < pos + genesis_payload_len {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        let genesis_txs = decode_block_payload(&bytes[pos..pos + genesis_payload_len])
+            .map_err(LedgerCheckpointError::Payload)?;
+        pos += genesis_payload_len;
+
+        if bytes.len() < pos + 8 {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        let tip_count = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
+        pos += 8;
+
+        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
+
+        // Create ledger from genesis
+        let mut ledger = Ledger::new(k, schedule, &genesis_txs)
+            .map_err(LedgerCheckpointError::Genesis)?;
+        ledger.finality_depth = finality_depth;
+        ledger.payload_pruning_depth = payload_pruning_depth;
+        ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
+
+        // Override the genesis state with the checkpoint state
+        ledger.states.insert(checkpoint_block, checkpoint_state);
+        ledger.heights.insert(checkpoint_block, 0); // Will be corrected during replay
+
+        // Replay tip segment
+        for _ in 0..tip_count {
+            if pos >= bytes.len() {
+                return Err(LedgerCheckpointError::UnexpectedEof);
+            }
+            let block = kovanica_dag::decode_block(&bytes[pos..]).map_err(LedgerCheckpointError::Dag)?;
+            pos += block.encoded_len();
+            let txs = decode_block_payload(block.payload()).map_err(LedgerCheckpointError::Payload)?;
+            ledger
+                .insert(
+                    block.parents().to_vec(),
+                    block.work(),
+                    block.timestamp_ms(),
+                    block.nonce(),
+                    &txs,
+                )
+                .map_err(LedgerCheckpointError::Rebuild)?;
+        }
+
+        if pos != bytes.len() {
+            return Err(LedgerCheckpointError::TrailingBytes);
+        }
+
+        Ok(ledger)
+    }
+}
+
+/// Magic prefix identifying a Kovanica ledger checkpoint (`"KVCP"`).
+const CHECKPOINT_MAGIC: [u8; 4] = *b"KVCP";
+/// Checkpoint format version.
+const CHECKPOINT_VERSION: u16 = 1;
+
+/// Why a ledger checkpoint could not be encoded or decoded.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LedgerCheckpointError {
+    /// The bytes did not start with the expected magic prefix.
+    BadMagic,
+    /// The checkpoint version is not supported by this build.
+    UnsupportedVersion(u16),
+    /// The input ended before a fully-formed value could be read.
+    UnexpectedEof,
+    /// Bytes remained after the declared number of entries.
+    TrailingBytes,
+    /// Finality is disabled (unbounded), so no checkpoint can be written.
+    FinalityDisabled,
+    /// Finality depth is set but the DAG isn't deep enough yet.
+    FinalityNotActive,
+    /// The checkpoint block's state is missing (should not happen).
+    MissingCheckpointState,
+    /// A block's payload was not valid transaction encoding.
+    Payload(DecodeError),
+    /// The embedded DAG block could not be decoded.
+    Dag(SnapshotError),
+    /// Applying the genesis transactions failed.
+    Genesis(LedgerError),
+    /// Replaying a block through `insert` failed.
+    Rebuild(LedgerInsertError),
+}
+
+impl core::fmt::Display for LedgerCheckpointError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            LedgerCheckpointError::BadMagic => f.write_str("not a kovanica ledger checkpoint"),
+            LedgerCheckpointError::UnsupportedVersion(v) => {
+                write!(f, "unsupported checkpoint version {v}")
+            }
+            LedgerCheckpointError::UnexpectedEof => f.write_str("unexpected end of checkpoint"),
+            LedgerCheckpointError::TrailingBytes => f.write_str("trailing bytes after checkpoint"),
+            LedgerCheckpointError::FinalityDisabled => {
+                f.write_str("cannot checkpoint: finality is disabled (unbounded)")
+            }
+            LedgerCheckpointError::FinalityNotActive => {
+                f.write_str("cannot checkpoint: DAG not deep enough for finality")
+            }
+            LedgerCheckpointError::MissingCheckpointState => {
+                f.write_str("checkpoint block state missing")
+            }
+            LedgerCheckpointError::Payload(e) => write!(f, "payload decode: {e}"),
+            LedgerCheckpointError::Dag(e) => write!(f, "dag block: {e}"),
+            LedgerCheckpointError::Genesis(e) => write!(f, "genesis: {e}"),
+            LedgerCheckpointError::Rebuild(e) => write!(f, "replaying block: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for LedgerCheckpointError {}
+
+impl From<DecodeError> for LedgerCheckpointError {
+    fn from(e: DecodeError) -> Self {
+        LedgerCheckpointError::Payload(e)
+    }
+}
+
+impl From<SnapshotError> for LedgerCheckpointError {
+    fn from(e: SnapshotError) -> Self {
+        LedgerCheckpointError::Dag(e)
+    }
+}
+
+impl From<LedgerError> for LedgerCheckpointError {
+    fn from(e: LedgerError) -> Self {
+        LedgerCheckpointError::Genesis(e)
+    }
+}
+
+impl From<LedgerInsertError> for LedgerCheckpointError {
+    fn from(e: LedgerInsertError) -> Self {
+        LedgerCheckpointError::Rebuild(e)
+    }
 }
 
 /// Magic prefix identifying a Kovanica ledger snapshot (`"KVLG"`).
 const LEDGER_MAGIC: [u8; 4] = *b"KVLG";
-/// Ledger snapshot format version.
-const LEDGER_VERSION: u16 = 1;
+/// Ledger snapshot format version. v2 added `finality_depth` and `payload_pruning_depth`.
+const LEDGER_VERSION: u16 = 2;
 
 /// Why a ledger snapshot could not be decoded or replayed.
 #[derive(Clone, Debug, PartialEq, Eq)]

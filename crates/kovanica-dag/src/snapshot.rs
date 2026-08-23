@@ -135,6 +135,10 @@ pub fn decode_snapshot(bytes: &[u8]) -> Result<DagSnapshot, SnapshotError> {
 /// payload (length-prefixed, little-endian). Not the id encoding — this is what
 /// rebuilds the `Block`. Used by the whole-DAG snapshot and the incremental
 /// append-only log.
+///
+/// If the block's payload has been pruned (`payload = None`), an empty payload
+/// is encoded (length 0). On decode, a zero-length payload reconstructs a pruned
+/// block via [`Block::new_pruned`].
 pub fn encode_block(block: &Block, buf: &mut Vec<u8>) {
     buf.extend_from_slice(&(block.parents().len() as u64).to_le_bytes());
     for parent in block.parents() {
@@ -143,8 +147,9 @@ pub fn encode_block(block: &Block, buf: &mut Vec<u8>) {
     buf.extend_from_slice(&block.work().to_le_bytes());
     buf.extend_from_slice(&block.timestamp_ms().to_le_bytes());
     buf.extend_from_slice(&block.nonce().to_le_bytes());
-    buf.extend_from_slice(&(block.payload().len() as u64).to_le_bytes());
-    buf.extend_from_slice(block.payload());
+    let payload = block.payload();
+    buf.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+    buf.extend_from_slice(payload);
 }
 
 /// Decode one block from the stored (snapshot / log) encoding.
@@ -223,6 +228,10 @@ impl<'a> Reader<'a> {
         let timestamp_ms = self.read_u64()?;
         let nonce = self.read_u64()?;
         let payload_len = self.read_count(1)?;
+        if payload_len == 0 {
+            // Pruned block: payload was evicted, reconstruct with None payload.
+            return Ok(Block::new_pruned(parents, work, timestamp_ms, nonce));
+        }
         let payload = self.read_bytes(payload_len)?;
         // Block::new de-duplicates and sorts parents; the stored ids already are,
         // so the reconstructed block's id matches the original.
@@ -303,5 +312,50 @@ mod tests {
             Dag::read_snapshot(&bytes),
             Err(SnapshotError::TrailingBytes)
         ));
+    }
+
+    #[test]
+    fn pruned_payload_roundtrip() {
+        let genesis = Block::genesis(1, 0, 0, b"kovanica-genesis".to_vec());
+        let mut dag = Dag::new(2, genesis);
+        let g = dag.genesis();
+        let a = dag
+            .insert(Block::new(vec![g], 1, 1, 0, b"a".to_vec()))
+            .unwrap();
+        let b = dag
+            .insert(Block::new(vec![g], 1, 1, 0, b"b".to_vec()))
+            .unwrap();
+        let _m = dag
+            .insert(Block::new(vec![a, b], 3, 2, 0, b"m".to_vec()))
+            .unwrap();
+
+        // Prune payloads manually
+        dag.set_payload_pruning_depth(0); // prune everything below tip
+        dag.prune_old_payloads();
+
+        // Verify payloads are pruned
+        assert!(dag.block(&a).unwrap().is_pruned());
+        assert!(dag.block(&b).unwrap().is_pruned());
+        // Tip should not be pruned (or could be, depending on depth)
+        let tip = dag.selected_tip();
+        if dag.ghostdag(&tip).unwrap().blue_score < dag.payload_pruning_score() {
+            assert!(dag.block(&tip).unwrap().is_pruned());
+        }
+
+        // Snapshot and restore
+        let bytes = dag.write_snapshot();
+        let restored = Dag::read_snapshot(&bytes).unwrap();
+
+        // Restored DAG should have pruned payloads
+        assert!(restored.block(&a).unwrap().is_pruned());
+        assert!(restored.block(&b).unwrap().is_pruned());
+        assert_eq!(restored.linearize(), dag.linearize());
+        for id in dag.linearize() {
+            let orig_gd = dag.ghostdag(&id).unwrap();
+            let rest_gd = restored.ghostdag(&id).unwrap();
+            assert_eq!(orig_gd.blue_score, rest_gd.blue_score);
+            assert_eq!(orig_gd.blue_work, rest_gd.blue_work);
+            assert_eq!(orig_gd.selected_parent, rest_gd.selected_parent);
+        }
     }
 }
