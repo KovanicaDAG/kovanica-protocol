@@ -4,3 +4,4 @@ Cargo.lock.orig
 
 # Explorer runtime state (taps, origins, network marker)
 data/
+explorer.log
