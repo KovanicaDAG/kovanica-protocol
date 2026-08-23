@@ -272,7 +272,13 @@ impl<'a> Reader<'a> {
             // The stored id is the authoritative one (computed at insertion time
             // over the original payload). We create a block with the same fields
             // using the stored id.
-            return Ok(Block::new_pruned(parents, work, timestamp_ms, nonce, stored_id));
+            return Ok(Block::new_pruned(
+                parents,
+                work,
+                timestamp_ms,
+                nonce,
+                stored_id,
+            ));
         }
         let payload = self.read_bytes(payload_len)?;
         // For non-pruned blocks, verify the computed id matches the stored id.

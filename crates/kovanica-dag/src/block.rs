@@ -255,7 +255,13 @@ impl Block {
     /// `kovanica_dag::encode_block`), used for skipping during checkpoint decode.
     pub fn encoded_len(&self) -> usize {
         // id (32) + parents.len() (8) + each parent (32) + work (16) + timestamp (8) + nonce (8) + payload.len (8) + payload
-        32 + 8 + self.parents.len() * 32 + 16 + 8 + 8 + 8 + self.payload.as_deref().unwrap_or(&[]).len()
+        32 + 8
+            + self.parents.len() * 32
+            + 16
+            + 8
+            + 8
+            + 8
+            + self.payload.as_deref().unwrap_or(&[]).len()
     }
 }
 
