@@ -13,7 +13,7 @@ use crate::tx::{OutPoint, TxId, TxOutput};
 
 /// The set of unspent transaction outputs — the full ledger state at a point in
 /// the linearized order.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UtxoSet {
     map: HashMap<OutPoint, TxOutput>,
 }
