@@ -62,4 +62,4 @@ pub use pow::{meets_target, mine};
 pub use reachability::Reachability;
 pub use snapshot::{decode_block, decode_snapshot, encode_block, DagSnapshot, SnapshotError};
 pub use validation::BlockValidator;
-pub use vrf::{VrfEvaluation, VrfOutput, VrfProof, VrfPublicKey, VrfSecretKey, vrf_generate_keypair, vrf_keypair_from_seed, vrf_prove, vrf_verify, Scalar};
+pub use spv::{BlockHeader, BlockFilter, MerkleProof, SpvClient, SpvError, generate_merkle_proof, merkle_root};
