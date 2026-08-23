@@ -10,6 +10,8 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 use kovanica_state::{verify, Address, KeyPair};
 
+pub use kovanica_state::Address;
+
 /// A loaded wallet: the raw Ed25519 seed plus its derived keypair.
 pub struct Wallet {
     seed: [u8; 32],

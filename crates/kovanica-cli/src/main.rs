@@ -3,7 +3,6 @@
 mod api;
 mod wallet;
 
-use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
 use serde_json::Value;
 
@@ -58,7 +57,7 @@ enum Commands {
     WalletSign { seed: u64, sighash: String },
 }
 
-fn main() -> Result<()> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     match cli.command {
         Commands::Head { url } => {
