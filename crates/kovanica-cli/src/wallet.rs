@@ -13,6 +13,7 @@ use kovanica_state::{verify, KeyPair};
 pub use kovanica_state::Address;
 
 /// A loaded wallet: the raw Ed25519 seed plus its derived keypair.
+#[allow(dead_code)]
 pub struct Wallet {
     seed: [u8; 32],
 }

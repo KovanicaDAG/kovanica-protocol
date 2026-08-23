@@ -71,6 +71,7 @@ impl Client {
     }
 
     /// The block DAG, pulled out of the full state snapshot.
+    #[allow(dead_code)]
     pub fn blocks(&self) -> Result<Value> {
         let mut state = self.state()?;
         match state.get_mut("node").and_then(|n| n.get_mut("dag")) {
@@ -98,6 +99,7 @@ impl Client {
 }
 
 /// Pretty-print a JSON value to stdout.
+#[allow(dead_code)]
 pub fn print_json(value: &Value) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
