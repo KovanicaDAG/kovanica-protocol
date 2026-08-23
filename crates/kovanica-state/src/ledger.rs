@@ -959,9 +959,6 @@ impl Ledger {
         Ok(ledger)
     }
 }
-
-/// Magic prefix identifying a Kovanica ledger checkpoint (`"KVCP"`).
-
 /// Magic prefix identifying a Kovanica ledger checkpoint (`"KVCP"`).
 const CHECKPOINT_MAGIC: [u8; 4] = *b"KVCP";
 /// Checkpoint format version.
