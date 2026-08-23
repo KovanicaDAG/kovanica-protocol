@@ -12,7 +12,7 @@
 use std::fs;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use kovanica_dag::{pow, Block, BlockId, Dag, DagError};
+use kovanica_dag::{pow, Block, BlockId, Dag};
 use kovanica_state::{
     apply_block, decode_block_payload, encode_block_payload, verify, Address, HalvingSchedule,
     KeyPair, Ledger, LedgerError, LedgerInsertError, LedgerStore, OutPoint, Sig, Transaction, TxId,
@@ -850,6 +850,21 @@ impl Node {
         // has been evicted, we cannot serve its body and the block is effectively
         // building on history we no longer have. This mirrors the finality check
         // but uses the payload pruning depth instead.
+        // Check if block already exists (idempotent receive)
+        let block_id = {
+            let block = Block::new(
+                record.parents.clone(),
+                record.work,
+                record.timestamp_ms,
+                record.nonce,
+                encode_block_payload(&record.txs),
+            );
+            block.id()
+        };
+        if ledger.dag().contains(&block_id) {
+            return Ok(block_id);
+        }
+
         let preview = match ledger.dag().preview(&Block::new(
             record.parents.clone(),
             record.work,
@@ -883,7 +898,6 @@ impl Node {
                 self.evict_mempool();
                 Ok(id)
             }
-            Err(LedgerInsertError::Dag(DagError::DuplicateBlock(id))) => Ok(id),
             Err(e) => Err(NodeError::Insert(e)),
         }
     }
