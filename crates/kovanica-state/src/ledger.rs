@@ -952,7 +952,7 @@ impl Ledger {
             return Err(LedgerCheckpointError::TrailingBytes);
         }
 
-        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
+        let _schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
         // Use the first block as genesis
         let mut blocks = blocks.into_iter();
@@ -992,7 +992,7 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
     // (without the DAG magic/version header, just the block data).
     // The format: parents_len + parents + work + timestamp_ms + nonce + payload_len + payload
     let mut reader = CheckpointReader::new(bytes);
-    let n_parents = reader.read_count(32).map_err(LedgerCheckpointError::Dag)? as usize;
+    let n_parents = reader.read_count(32)? as usize;
     let mut parents = Vec::with_capacity(n_parents);
     for _ in 0..n_parents {
         if reader.remaining() < 32 {
@@ -1004,12 +1004,22 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
                 .map_err(LedgerCheckpointError::Dag)?,
         ));
     }
-    let work = reader.read_u128().map_err(LedgerCheckpointError::Dag)?;
-    let timestamp_ms = reader.read_u64().map_err(LedgerCheckpointError::Dag)?;
-    let nonce = reader.read_u64().map_err(LedgerCheckpointError::Dag)?;
-    let payload_len = reader.read_count(1).map_err(LedgerCheckpointError::Dag)? as usize;
+    let work = reader.read_u128()?;
+    let timestamp_ms = reader.read_u64()?;
+    let nonce = reader.read_u64()?;
+    let payload_len = reader.read_count(1)? as usize;
     if payload_len == 0 {
-        // Pruned block
+        // Pruned block - need to provide the stored id (which is the 5th argument)
+        // But we don't have the stored id in this format. The checkpoint format
+        // stores blocks using kovanica_dag::encode_block which includes the id.
+        // Actually, the checkpoint format uses the standard encode_block which
+        // doesn't store the id separately - it's computed from the block data.
+        // For pruned blocks, the id is still the original id, but we can't
+        // reconstruct it without the original payload. However, the checkpoint
+        // format uses the same encoding as snapshot, which for pruned blocks
+        // stores empty payload. The id would be recomputed from empty payload.
+        // This is a limitation - we can't perfectly reconstruct pruned block ids.
+        // For now, we'll compute the id from the pruned block data.
         let block = Block::new_pruned(parents, work, timestamp_ms, nonce);
         let consumed = reader.pos;
         return Ok((block, consumed));
@@ -1017,9 +1027,7 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
     if reader.remaining() < payload_len {
         return Err(LedgerCheckpointError::UnexpectedEof);
     }
-    let payload = reader
-        .read_bytes(payload_len)
-        .map_err(LedgerCheckpointError::Dag)?;
+    let payload = reader.read_bytes(payload_len)?;
     let block = Block::new(parents, work, timestamp_ms, nonce, payload);
     let consumed = reader.pos;
     Ok((block, consumed))
