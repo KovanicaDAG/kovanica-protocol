@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-Guidance for AI assistants (and humans) working in the **kovanica-ledger** repository.
+Guidance for AI assistants (and humans) working in the **kovanica-protocol** repository.
 
 > **Status: early implementation.** Three vertical slices exist, build, and are
 > tested: the block DAG and GHOSTDAG consensus core (`crates/kovanica-dag`); the
@@ -29,7 +29,7 @@ Guidance for AI assistants (and humans) working in the **kovanica-ledger** repos
 
 ## 1. What this project is
 
-**kovanica-ledger** is a **DAG-based distributed ledger** — a high-throughput,
+**kovanica-protocol** is a **DAG-based distributed ledger** — a high-throughput,
 parallel-block cryptocurrency/ledger protocol built on a **Directed Acyclic Graph**
 (BlockDAG) rather than a single linear chain. The name *kovanica* is
 Serbo-Croatian for "coin / mint." Blocks reference **multiple parents**, so many
@@ -428,8 +428,18 @@ and disk that do not grow forever.
         expose it at the node layer
       - `Node::receive_block` rejects blocks whose selected parent has a
         pruned payload (mirrors finality check but uses payload pruning depth)
-- [ ] Finality checkpointing: persist the UTXO set at finality depth so a
+- [x] Finality checkpointing: persist the UTXO set at finality depth so a
       restart replays only post-checkpoint blocks instead of all history.
+      - `Ledger::write_checkpoint()` / `read_checkpoint()` serialise the UTXO
+        set at the finality boundary plus the tip segment (non-final blocks).
+      - `LedgerStore::create_checkpoint()` / `open_checkpoint()` for file I/O.
+      - `Node::save_checkpoint()` / `load_checkpoint()` and RPC commands
+        `checkpoint` / `load_checkpoint` for node-level operations.
+      - Checkpoint format v2 stores checkpoint block height for correct subsidy
+        calculation on restore. The checkpoint block is included in the tip
+        segment and reconstructed with its original ID via `Block::new_pruned`.
+      - Restored ledger applies checkpoint UTXO set directly and replays only
+        the tip segment, avoiding full history replay.
 - [x] Reachability interval-reindex amortisation tuning (open from Stage 0):
       cap each freshly-allocated child interval at `CHILD_RESERVE` so a wide fan
       no longer exhausts its parent's interval every ~log2(width) children —
