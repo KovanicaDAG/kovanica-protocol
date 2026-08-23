@@ -1018,7 +1018,11 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
         if reader.remaining() < 32 {
             return Err(LedgerCheckpointError::UnexpectedEof);
         }
-        parents.push(BlockId::from_bytes(reader.read_array::<32>().map_err(LedgerCheckpointError::Dag)?));
+        parents.push(BlockId::from_bytes(
+            reader
+                .read_array::<32>()
+                .map_err(LedgerCheckpointError::Dag)?,
+        ));
     }
     let work = reader.read_u128().map_err(LedgerCheckpointError::Dag)?;
     let timestamp_ms = reader.read_u64().map_err(LedgerCheckpointError::Dag)?;
@@ -1032,7 +1036,9 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
     if reader.remaining() < payload_len {
         return Err(LedgerCheckpointError::UnexpectedEof);
     }
-    let payload = reader.read_bytes(payload_len).map_err(LedgerCheckpointError::Dag)?;
+    let payload = reader
+        .read_bytes(payload_len)
+        .map_err(LedgerCheckpointError::Dag)?;
     let block = Block::new(parents, work, timestamp_ms, nonce, payload);
     if block.id() != stored_id {
         return Err(LedgerCheckpointError::TrailingBytes);
