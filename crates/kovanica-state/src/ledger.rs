@@ -887,13 +887,9 @@ impl Ledger {
         buf.extend_from_slice(&self.payload_pruning_depth.to_le_bytes());
         buf.extend_from_slice(checkpoint_block.as_bytes());
         buf.extend_from_slice(&checkpoint_state.encode());
-        // Store all blocks with their IDs for deterministic roundtrips
-        // Format: block_id (32 bytes) + block_data (from kovanica_dag::encode_block)
-        buf.extend_from_slice(&(all_blocks.len() as u64).to_le_bytes());
-        for block in &all_blocks {
-            buf.extend_from_slice(block.id().as_bytes());
-            kovanica_dag::encode_block(block, &mut buf);
-        }
+        // Store a full snapshot of the DAG for reliable decoding
+        let snapshot_bytes = self.dag.write_snapshot();
+        buf.extend_from_slice(&snapshot_bytes);
         Ok(buf)
     }
 
@@ -933,44 +929,17 @@ impl Ledger {
             .map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
         pos = bytes.len() - remaining.len();
 
-        if bytes.len() < pos + 8 {
-            return Err(LedgerCheckpointError::UnexpectedEof);
-        }
-        let block_count = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
-        pos += 8;
+        // The rest of the bytes is a full DAG snapshot (magic + version + k + count + blocks)
+        // Use the standard snapshot decoding which handles all edge cases correctly.
+        let snapshot =
+            kovanica_dag::decode_snapshot(&bytes[pos..]).map_err(LedgerCheckpointError::Dag)?;
 
-        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
-
-        // Manually decode each block with its stored ID
-        // Format: block_id (32 bytes) + block_data (from kovanica_dag::encode_block)
-        let mut blocks = Vec::with_capacity(block_count);
-        let mut block_pos = pos;
-        for _ in 0..block_count {
-            if block_pos + 32 > bytes.len() {
-                return Err(LedgerCheckpointError::UnexpectedEof);
-            }
-            let stored_id =
-                BlockId::from_bytes(bytes[block_pos..block_pos + 32].try_into().unwrap());
-            block_pos += 32;
-            let (block, consumed) = decode_checkpoint_block(&bytes[block_pos..])?;
-            if block.id() != stored_id {
-                return Err(LedgerCheckpointError::TrailingBytes);
-            }
-            blocks.push(block);
-            block_pos += consumed;
-        }
-        if block_pos != bytes.len() {
-            return Err(LedgerCheckpointError::TrailingBytes);
-        }
-
-        let _schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
-
-        // Use the first block as genesis
-        let mut blocks = blocks.into_iter();
+        let mut blocks = snapshot.blocks.into_iter();
         let genesis = blocks.next().ok_or(LedgerCheckpointError::UnexpectedEof)?;
         let genesis_txs =
             decode_block_payload(genesis.payload()).map_err(LedgerCheckpointError::Payload)?;
 
+        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
         let mut ledger =
             Ledger::new(k, schedule, &genesis_txs).map_err(LedgerCheckpointError::Genesis)?;
         ledger.finality_depth = finality_depth;

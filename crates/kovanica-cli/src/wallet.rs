@@ -1,24 +1,20 @@
 //! Local wallet: an Ed25519 key stored as a 32-byte seed on disk.
 //!
 //! Key generation, the `kvnc…dag` address encoding, and signing are all
-//! delegated to `kovanica-state` (the protocol's own crate) so the CLI can never
+//! delegated to `kovanica-state` (the node's own crate) so the CLI can never
 //! disagree with the ledger about what an address is or how a spend is signed.
 
 use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use kovanica_state::{verify, KeyPair};
-
-pub use kovanica_state::Address;
+use kovanica_state::{Address, KeyPair};
 
 /// A loaded wallet: the raw Ed25519 seed plus its derived keypair.
-#[allow(dead_code)]
 pub struct Wallet {
     seed: [u8; 32],
 }
 
-#[allow(dead_code)]
 impl Wallet {
     /// Generate a fresh wallet from operating-system randomness.
     pub fn generate() -> Result<Self> {
@@ -78,7 +74,6 @@ impl Wallet {
 }
 
 #[cfg(unix)]
-#[allow(dead_code)]
 fn set_owner_only(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
@@ -86,49 +81,9 @@ fn set_owner_only(path: &Path) -> Result<()> {
 }
 
 #[cfg(not(unix))]
-#[allow(dead_code)]
 fn set_owner_only(_path: &Path) -> Result<()> {
     // On non-unix platforms the file is created with the user's default ACL.
     Ok(())
-}
-
-/// Generate a new 32-byte seed from OS randomness.
-pub fn generate_seed() -> u64 {
-    let mut seed = [0u8; 32];
-    getrandom::getrandom(&mut seed).unwrap();
-    u64::from_le_bytes(seed[..8].try_into().unwrap())
-}
-
-/// Create an Address from a seed u64 (for CLI simplicity).
-pub fn address_from_seed(seed: u64) -> Address {
-    KeyPair::from_u64(seed).address()
-}
-
-/// Sign a transfer's sighash with a seed u64.
-/// Returns 128 lowercase hex chars.
-pub fn sign_transfer(seed: u64, sighash_hex: &str) -> Result<String> {
-    let sighash = hex::decode(sighash_hex).with_context(|| "sighash must be hex")?;
-    let keypair = KeyPair::from_u64(seed);
-    let sig = keypair.sign(&sighash);
-    Ok(hex::encode(sig))
-}
-
-/// Verify a signature against an address and sighash.
-#[allow(dead_code)]
-pub fn verify_sig(address: &Address, sighash_hex: &str, sig_hex: &str) -> bool {
-    let sighash = match hex::decode(sighash_hex) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-    let sig_bytes = match hex::decode(sig_hex) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-    let sig: [u8; 64] = match sig_bytes.try_into() {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    verify(address, &sighash, &sig)
 }
 
 #[cfg(test)]
