@@ -1,0 +1,168 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme {
+  --font-display: "Fraunces", ui-serif, Georgia, "Times New Roman", serif;
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --color-bg: #09090b;
+  --color-surface: #121214;
+  --color-surface-2: #1a1a1e;
+  --color-fg: #f2f1ee;
+  --color-muted: #9a9aa3;
+  --color-subtle: #6b6b74;
+  --color-border: #2a2a30;
+  --color-accent: #d8d4cc;
+  --color-accent-fg: #0a0a0b;
+  --color-blue: #8aa0b4;
+  --color-red: #b08980;
+  --color-ok: #7d9a7a;
+  --color-danger: #c45c4a;
+  --color-chain: #e8e4dc;
+  --color-ocean: #08090b;
+  --color-land: #1c232c;
+  --color-ring: #8aa0b4;
+  --color-chloro-0: #1c2e36;
+  --color-chloro-1: #1a4f54;
+  --color-chloro-2: #1c7c72;
+  --color-chloro-3: #2fbaa4;
+  --color-chloro-4: #7ee8d0;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --radius: 12px;
+
+  --shadow-border: 0 0 0 1px rgb(255 255 255 / 0.08);
+  --shadow-border-hover: 0 0 0 1px rgb(255 255 255 / 0.14);
+
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --tracking-brand: 0.22em;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  html,
+  body,
+  #app {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+  }
+
+  h1,
+  h2,
+  h3 {
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-blue) 40%, transparent);
+    color: var(--color-fg);
+  }
+}
+
+.map-land {
+  stroke: var(--color-ocean);
+  stroke-width: 0.5px;
+  transition:
+    fill 250ms var(--ease-smooth-out),
+    filter 150ms var(--ease-out);
+}
+
+.map-land:hover {
+  filter: brightness(1.28);
+  stroke: var(--color-accent);
+  stroke-width: 0.9px;
+}
+
+.map-land.is-selected,
+.map-land.is-selected:hover {
+  filter: brightness(1.12);
+  stroke: var(--color-accent);
+  stroke-width: 1.4px;
+}
+
+.origin-pulse-dot {
+  fill: var(--color-chloro-4);
+}
+
+.origin-pulse-ring {
+  fill: none;
+  stroke: var(--color-chloro-3);
+  stroke-width: 1.4;
+  transform-origin: center;
+  transform-box: fill-box;
+  animation: origin-pulse 2.2s var(--ease-out) infinite;
+}
+
+@keyframes origin-pulse {
+  0% {
+    transform: scale(0.4);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+@keyframes coin-idle {
+  0% {
+    transform: rotateY(-8deg) rotateZ(-2deg);
+  }
+  50% {
+    transform: rotateY(8deg) rotateZ(2deg);
+  }
+  100% {
+    transform: rotateY(-8deg) rotateZ(-2deg);
+  }
+}
+
+@keyframes tap-float {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -36px);
+  }
+}
+
+.coin-spin {
+  animation: coin-idle 8s var(--ease-smooth-out) infinite;
+  transform-style: preserve-3d;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .map-land {
+    transition: none;
+  }
+
+  .origin-pulse-ring {
+    animation: none;
+    opacity: 0.5;
+  }
+
+  .coin-spin {
+    animation: none;
+  }
+}
