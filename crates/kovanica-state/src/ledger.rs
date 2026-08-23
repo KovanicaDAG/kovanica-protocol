@@ -982,9 +982,8 @@ impl Ledger {
             if pos >= bytes.len() {
                 return Err(LedgerCheckpointError::UnexpectedEof);
             }
-            let block =
-                kovanica_dag::decode_block(&bytes[pos..]).map_err(LedgerCheckpointError::Dag)?;
-            pos += block.encoded_len();
+            let (block, consumed) = decode_checkpoint_block(&bytes[pos..])?;
+            pos += consumed;
             let txs =
                 decode_block_payload(block.payload()).map_err(LedgerCheckpointError::Payload)?;
             ledger
@@ -1003,6 +1002,87 @@ impl Ledger {
         }
 
         Ok(ledger)
+    }
+}
+
+/// Decode a v4-format block (with stored ID) from bytes, returning the block and bytes consumed.
+fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpointError> {
+    if bytes.len() < 32 {
+        return Err(LedgerCheckpointError::UnexpectedEof);
+    }
+    let stored_id = BlockId::from_bytes(bytes[..32].try_into().unwrap());
+    let mut reader = CheckpointReader::new(&bytes[32..]);
+    let n_parents = reader.read_count(32).map_err(LedgerCheckpointError::Dag)? as usize;
+    let mut parents = Vec::with_capacity(n_parents);
+    for _ in 0..n_parents {
+        if reader.remaining() < 32 {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        parents.push(BlockId::from_bytes(reader.read_array::<32>().map_err(LedgerCheckpointError::Dag)?));
+    }
+    let work = reader.read_u128().map_err(LedgerCheckpointError::Dag)?;
+    let timestamp_ms = reader.read_u64().map_err(LedgerCheckpointError::Dag)?;
+    let nonce = reader.read_u64().map_err(LedgerCheckpointError::Dag)?;
+    let payload_len = reader.read_count(1).map_err(LedgerCheckpointError::Dag)? as usize;
+    if payload_len == 0 {
+        let block = Block::new_pruned(parents, work, timestamp_ms, nonce, stored_id);
+        let consumed = 32 + reader.pos;
+        return Ok((block, consumed));
+    }
+    if reader.remaining() < payload_len {
+        return Err(LedgerCheckpointError::UnexpectedEof);
+    }
+    let payload = reader.read_bytes(payload_len).map_err(LedgerCheckpointError::Dag)?;
+    let block = Block::new(parents, work, timestamp_ms, nonce, payload);
+    if block.id() != stored_id {
+        return Err(LedgerCheckpointError::TrailingBytes);
+    }
+    let consumed = 32 + reader.pos;
+    Ok((block, consumed))
+}
+
+/// Local reader for checkpoint block decoding (v4 format with stored ID).
+struct CheckpointReader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> CheckpointReader<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+    fn remaining(&self) -> usize {
+        self.buf.len() - self.pos
+    }
+    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], SnapshotError> {
+        if self.remaining() < N {
+            return Err(SnapshotError::UnexpectedEof);
+        }
+        let mut out = [0u8; N];
+        out.copy_from_slice(&self.buf[self.pos..self.pos + N]);
+        self.pos += N;
+        Ok(out)
+    }
+    fn read_u64(&mut self) -> Result<u64, SnapshotError> {
+        Ok(u64::from_le_bytes(self.read_array::<8>()?))
+    }
+    fn read_u128(&mut self) -> Result<u128, SnapshotError> {
+        Ok(u128::from_le_bytes(self.read_array::<16>()?))
+    }
+    fn read_count(&mut self, min_element_bytes: usize) -> Result<u64, SnapshotError> {
+        let n = self.read_u64()? as usize;
+        if min_element_bytes > 0 && n > self.remaining() / min_element_bytes {
+            return Err(SnapshotError::UnexpectedEof);
+        }
+        Ok(n as u64)
+    }
+    fn read_bytes(&mut self, len: usize) -> Result<Vec<u8>, SnapshotError> {
+        if self.remaining() < len {
+            return Err(SnapshotError::UnexpectedEof);
+        }
+        let out = self.buf[self.pos..self.pos + len].to_vec();
+        self.pos += len;
+        Ok(out)
     }
 }
 
