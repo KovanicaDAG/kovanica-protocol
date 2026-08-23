@@ -74,6 +74,7 @@ use crate::block::{Block, BlockId};
 use crate::difficulty::{Retarget, TimedWork};
 use crate::reachability::Reachability;
 use crate::validation::BlockValidator;
+use crate::vrf::{vrf_verify, VrfError, VrfOutput, VrfPublicKey, VrfProof};
 
 /// Errors returned when inserting a block into the [`Dag`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,6 +106,12 @@ pub enum DagError {
     /// Proof-of-work is enforced (see [`Dag::set_proof_of_work`]) and the block's
     /// id does not meet its `work` target — it was not adequately mined.
     InsufficientProofOfWork { id: BlockId, work: u128 },
+    /// VRF is enforced (see [`Dag::set_vrf`]) and the block's VRF proof is invalid
+    /// or the VRF output does not meet the leader eligibility threshold.
+    InvalidVrf {
+        id: BlockId,
+        reason: String,
+    },
 }
 
 impl core::fmt::Display for DagError {
@@ -136,6 +143,10 @@ impl core::fmt::Display for DagError {
             DagError::InsufficientProofOfWork { id, work } => write!(
                 f,
                 "block {id} does not meet its proof-of-work target for work {work}"
+            ),
+            DagError::InvalidVrf { id, reason } => write!(
+                f,
+                "block {id} has invalid VRF: {reason}"
             ),
         }
     }
@@ -222,6 +233,23 @@ pub struct Dag {
     /// the selected tip have their payloads evicted (`payload = None`).
     /// `u64::MAX` means pruning is disabled (the default).
     payload_pruning_depth: u64,
+    /// Consensus-enforced VRF policy. When `Some(threshold)`, each [`Dag::insert`]
+    /// of a non-genesis block requires:
+    /// - A valid VRF proof (`vrf_public_key`, `vrf_proof`, `vrf_output`)
+    /// - The VRF output to be less than `threshold` (leader eligibility).
+    ///   A threshold of `u64::MAX` means all valid VRF outputs are eligible.
+    ///   The threshold is interpreted as a big-endian u64 from the VRF output.
+    /// Off by default (`None`).
+    vrf_config: Option<VrfConfig>,
+}
+
+/// VRF consensus enforcement configuration.
+#[derive(Clone, Copy, Debug)]
+pub struct VrfConfig {
+    /// Eligibility threshold: blocks with VRF output < threshold are eligible
+    /// to produce a block. Interpreted as big-endian u64 from VRF output.
+    /// `u64::MAX` = all valid outputs eligible.
+    pub threshold: u64,
 }
 
 impl Dag {
@@ -257,6 +285,7 @@ impl Dag {
             difficulty: None,
             require_pow: false,
             payload_pruning_depth: u64::MAX,
+            vrf_config: None,
         };
         dag.reach = Reachability::build(&dag);
         dag
@@ -329,6 +358,40 @@ impl Dag {
     /// [`Dag::set_proof_of_work`]).
     pub fn proof_of_work_enabled(&self) -> bool {
         self.require_pow
+    }
+
+    /// Enable consensus-enforced VRF leader selection.
+    ///
+    /// Once enabled, every subsequent [`Dag::insert`] of a non-genesis block
+    /// must satisfy:
+    /// - **Valid VRF proof.** The block must carry `vrf_public_key`, `vrf_proof`,
+    ///   and `vrf_output` fields, and the proof must verify correctly against
+    ///   the VRF input (derived from the block's parent tips).
+    /// - **Leader eligibility.** The VRF output (interpreted as big-endian u64)
+    ///   must be less than the configured `threshold`. A threshold of `u64::MAX`
+    ///   means any valid VRF output is eligible (useful for randomness beacon
+    ///   without leader selection).
+    ///
+    /// The VRF input is derived from the block's parent tips: `H(tip1 || tip2 || ...)`.
+    /// This ties leader eligibility to the DAG state, making it unpredictable
+    /// until the parents are known, but verifiable by anyone.
+    ///
+    /// Genesis is exempt. VRF enforcement is **off by default** (`None`), so a
+    /// DAG built without this call accepts blocks without VRF fields, exactly as
+    /// before. It composes with [`Dag::set_difficulty`] and
+    /// [`Dag::set_proof_of_work`]: all three can be enabled independently.
+    pub fn set_vrf(&mut self, threshold: u64) {
+        self.vrf_config = Some(VrfConfig { threshold });
+    }
+
+    /// Disable consensus-enforced VRF (blocks no longer need VRF fields).
+    pub fn disable_vrf(&mut self) {
+        self.vrf_config = None;
+    }
+
+    /// The current VRF enforcement config, if any.
+    pub fn vrf_config(&self) -> Option<VrfConfig> {
+        self.vrf_config
     }
 
     /// Set the payload pruning depth: blocks more than `depth` blue score units
@@ -532,6 +595,69 @@ impl Dag {
         Ok(())
     }
 
+    /// Enforce VRF rules on a prospective block.
+    fn check_vrf(
+        &self,
+        block: &Block,
+        id: BlockId,
+        ghostdag: &GhostdagData,
+        threshold: u64,
+    ) -> Result<(), DagError> {
+        // VRF input is derived from the block's parent tips (deterministic from parents)
+        let vrf_input = Self::vrf_input(block.parents());
+
+        // Block must have VRF fields
+        let pk = block.vrf_public_key().ok_or_else(|| DagError::InvalidVrf {
+            id,
+            reason: "missing VRF public key".to_string(),
+        })?;
+        let proof = block.vrf_proof().ok_or_else(|| DagError::InvalidVrf {
+            id,
+            reason: "missing VRF proof".to_string(),
+        })?;
+        let output = block.vrf_output().ok_or_else(|| DagError::InvalidVrf {
+            id,
+            reason: "missing VRF output".to_string(),
+        })?;
+
+        // Verify the VRF proof
+        let verified_output = vrf_verify(pk, &vrf_input, proof).map_err(|e| DagError::InvalidVrf {
+            id,
+            reason: format!("VRF verification failed: {e}"),
+        })?;
+
+        // Check output matches
+        if verified_output != *output {
+            return Err(DagError::InvalidVrf {
+                id,
+                reason: "VRF output does not match proof".to_string(),
+            });
+        }
+
+        // Check leader eligibility: output (as u64) < threshold
+        let output_u64 = output.as_u64();
+        if output_u64 >= threshold {
+            return Err(DagError::InvalidVrf {
+                id,
+                reason: format!("VRF output {output_u64} not eligible (threshold {threshold})"),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Compute the VRF input from a block's parents.
+    /// Hash of concatenated parent IDs, domain-separated.
+    pub fn vrf_input(parents: &[BlockId]) -> Vec<u8> {
+        use blake3::Hasher;
+        let mut hasher = Hasher::new();
+        hasher.update(b"KOVANICA_VRF_INPUT_v1");
+        for parent in parents {
+            hasher.update(parent.as_bytes());
+        }
+        hasher.finalize().as_bytes().to_vec()
+    }
+
     /// The last `window + 1` blocks of the selected-parent chain ending at `tip`
     /// (inclusive), oldest first, as difficulty-retarget samples. This is the
     /// window [`Retarget::next_work`] scores to set the *next* block's work.
@@ -652,6 +778,12 @@ impl Dag {
                 work: block.work(),
             });
         }
+
+        // Consensus-enforced VRF leader selection, if enabled.
+        if let Some(vrf_config) = self.vrf_config {
+            self.check_vrf(&block, id, &ghostdag, vrf_config.threshold)?;
+        }
+
         let past_size = self.nodes[&sp].past_size
             + 1
             + (ghostdag.mergeset_blues.len() + ghostdag.mergeset_reds.len()) as u64;
