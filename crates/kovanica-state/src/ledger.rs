@@ -899,8 +899,8 @@ impl Ledger {
         buf.extend_from_slice(&checkpoint_state.encode());
         // Genesis transactions (needed to reconstruct the ledger on load).
         let genesis_block = self.dag.block(&self.genesis).expect("genesis exists");
-        let genesis_txs =
-            decode_block_payload(genesis_block.payload()).map_err(LedgerCheckpointError::Payload)?;
+        let genesis_txs = decode_block_payload(genesis_block.payload())
+            .map_err(LedgerCheckpointError::Payload)?;
         let genesis_payload = encode_block_payload(&genesis_txs);
         buf.extend_from_slice(&(genesis_payload.len() as u64).to_le_bytes());
         buf.extend_from_slice(&genesis_payload);
@@ -943,14 +943,16 @@ impl Ledger {
         let checkpoint_block = BlockId::from_bytes(bytes[pos..pos + 32].try_into().unwrap());
         pos += 32;
 
-        let checkpoint_state = UtxoSet::decode(&bytes[pos..]).map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
+        let checkpoint_state = UtxoSet::decode(&bytes[pos..])
+            .map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
         let state_bytes_len = checkpoint_state.encoded_len();
         pos += state_bytes_len;
 
         if bytes.len() < pos + 8 {
             return Err(LedgerCheckpointError::UnexpectedEof);
         }
-        let genesis_payload_len = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
+        let genesis_payload_len =
+            u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
         pos += 8;
         if bytes.len() < pos + genesis_payload_len {
             return Err(LedgerCheckpointError::UnexpectedEof);
@@ -968,8 +970,8 @@ impl Ledger {
         let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
         // Create ledger from genesis
-        let mut ledger = Ledger::new(k, schedule, &genesis_txs)
-            .map_err(LedgerCheckpointError::Genesis)?;
+        let mut ledger =
+            Ledger::new(k, schedule, &genesis_txs).map_err(LedgerCheckpointError::Genesis)?;
         ledger.finality_depth = finality_depth;
         ledger.payload_pruning_depth = payload_pruning_depth;
         ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
@@ -983,9 +985,11 @@ impl Ledger {
             if pos >= bytes.len() {
                 return Err(LedgerCheckpointError::UnexpectedEof);
             }
-            let block = kovanica_dag::decode_block(&bytes[pos..]).map_err(LedgerCheckpointError::Dag)?;
+            let block =
+                kovanica_dag::decode_block(&bytes[pos..]).map_err(LedgerCheckpointError::Dag)?;
             pos += block.encoded_len();
-            let txs = decode_block_payload(block.payload()).map_err(LedgerCheckpointError::Payload)?;
+            let txs =
+                decode_block_payload(block.payload()).map_err(LedgerCheckpointError::Payload)?;
             ledger
                 .insert(
                     block.parents().to_vec(),

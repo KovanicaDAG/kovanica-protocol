@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use crate::keys::Address;
-use crate::tx::{OutPoint, TxOutput, TxId};
+use crate::tx::{OutPoint, TxId, TxOutput};
 
 /// The set of unspent transaction outputs — the full ledger state at a point in
 /// the linearized order.
@@ -174,7 +174,10 @@ mod tests {
         let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let mut set = UtxoSet::new();
         set.insert(op, TxOutput::new(10, owner));
-        set.insert(OutPoint::new(TxId::from_bytes([2u8; 32]), 1), TxOutput::new(20, owner));
+        set.insert(
+            OutPoint::new(TxId::from_bytes([2u8; 32]), 1),
+            TxOutput::new(20, owner),
+        );
 
         let bytes = set.encode();
         let restored = UtxoSet::decode(&bytes).unwrap();

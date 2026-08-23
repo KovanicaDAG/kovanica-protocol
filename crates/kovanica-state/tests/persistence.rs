@@ -3,8 +3,8 @@
 //! state, and every block's view state — is identical to the original.
 
 use kovanica_state::{
-    Address, HalvingSchedule, KeyPair, Ledger, LedgerSnapshotError, LedgerCheckpointError, OutPoint, Transaction,
-    TxOutput, UtxoSet, DEFAULT_HALVING_ERA,
+    Address, HalvingSchedule, KeyPair, Ledger, LedgerCheckpointError, LedgerSnapshotError,
+    OutPoint, Transaction, TxOutput, UtxoSet, DEFAULT_HALVING_ERA,
 };
 
 const K: u16 = 3;
@@ -150,7 +150,10 @@ fn build_ledger_with_finality(finality_depth: u64) -> Ledger {
             let _alice_change = OutPoint::new(a_to_b.id(), 1);
             a_to_b
         } else {
-            Transaction::coinbase(vec![TxOutput::new(SUBSIDY, carol.address())], format!("block{i}").into_bytes())
+            Transaction::coinbase(
+                vec![TxOutput::new(SUBSIDY, carol.address())],
+                format!("block{i}").into_bytes(),
+            )
         };
         tip = ledger.insert(vec![tip], 1, i as u64, 0, &[tx]).unwrap();
     }
@@ -175,7 +178,10 @@ fn checkpoint_roundtrips() {
     assert_eq!(restored.genesis(), ledger.genesis());
     assert_eq!(restored.subsidy(), ledger.subsidy());
     assert_eq!(restored.finality_depth(), ledger.finality_depth());
-    assert_eq!(restored.payload_pruning_depth(), ledger.payload_pruning_depth());
+    assert_eq!(
+        restored.payload_pruning_depth(),
+        ledger.payload_pruning_depth()
+    );
 
     // Same full ledger state
     assert_eq!(

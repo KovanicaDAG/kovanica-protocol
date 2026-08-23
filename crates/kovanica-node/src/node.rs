@@ -897,7 +897,9 @@ impl Node {
     /// Write a finality checkpoint to `path`. Fails if finality is disabled or
     /// not yet active.
     pub fn save_checkpoint(&self, path: &str) -> Result<(), NodeError> {
-        let bytes = self.ledger()?.write_checkpoint()
+        let bytes = self
+            .ledger()?
+            .write_checkpoint()
             .map_err(|e| NodeError::Io(e.to_string()))?;
         fs::write(path, bytes).map_err(|e| NodeError::Io(e.to_string()))
     }
@@ -929,7 +931,8 @@ impl Node {
 
     /// Write a finality checkpoint to `path` using the LedgerStore.
     pub fn create_checkpoint(&self, path: &str) -> Result<(), NodeError> {
-        LedgerStore::create_checkpoint(path, self.ledger()?).map_err(|e| NodeError::Io(e.to_string()))
+        LedgerStore::create_checkpoint(path, self.ledger()?)
+            .map_err(|e| NodeError::Io(e.to_string()))
     }
 
     /// Rebuild the node from an incremental log at `path`. The store is
@@ -951,7 +954,8 @@ impl Node {
 
     /// Rebuild the node from a finality checkpoint at `path`.
     pub fn load_checkpoint_log(path: &str) -> Result<Self, NodeError> {
-        let ledger = LedgerStore::open_checkpoint(path).map_err(|e| NodeError::Snapshot(e.to_string()))?;
+        let ledger =
+            LedgerStore::open_checkpoint(path).map_err(|e| NodeError::Snapshot(e.to_string()))?;
         Ok(Self {
             ledger: Some(ledger),
             mempool: Mempool::new(),

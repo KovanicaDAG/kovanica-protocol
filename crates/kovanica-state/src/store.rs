@@ -148,7 +148,9 @@ impl LedgerStore {
     /// Write a finality checkpoint to `path`. This writes the checkpoint
     /// directly to a file (not appended to the log).
     pub fn create_checkpoint(path: impl AsRef<Path>, ledger: &Ledger) -> Result<(), StoreError> {
-        let bytes = ledger.write_checkpoint().map_err(|e| StoreError::Io(e.to_string()))?;
+        let bytes = ledger
+            .write_checkpoint()
+            .map_err(|e| StoreError::Io(e.to_string()))?;
         std::fs::write(path, bytes).map_err(|e| StoreError::Io(e.to_string()))
     }
 
