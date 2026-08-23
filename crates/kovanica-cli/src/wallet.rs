@@ -142,9 +142,13 @@ pub fn verify_sig(address: &Address, sighash_hex: &str, sig_hex: &str) -> bool {
         Ok(b) => b,
         Err(_) => return false,
     };
-    let sig = match hex::decode(sig_hex) {
+    let sig_bytes = match hex::decode(sig_hex) {
         Ok(b) => b,
         Err(_) => return false,
     };
-    verify(address, &sighash.try_into().unwrap(), &sig)
+    let sig: [u8; 64] = match sig_bytes.try_into() {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    verify(address, &sighash, &sig)
 }
