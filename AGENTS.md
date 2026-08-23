@@ -490,3 +490,33 @@ deterministic + adversarial tests per the conventions above.
 Ideas parked until Stages 1–3 close: light clients / SPV-style proofs over
 the linearized chain, multi-seed discovery (DNS seeds / DHT), and anything
 the testnet teaches us it needs.
+
+### Post-Stage 3 — Production hardening (suggested order)
+
+1. ~~**Light clients / SPV proofs** — verify payments without full sync:~~ ✅
+   - Header chain (linearized selected chain only)
+   - Merkle proof of transaction inclusion in block payload
+   - Compact block filters (Golomb-Rice) for address-watching
+   - `SpvClient` state machine: checkpoint → header chain → Merkle proofs
+   - Wire protocol: `getheaders`/`getblocks` with proof verification (next)
+
+2. **Multi-seed discovery** — decentralize bootstrap:
+   - DNS seed records (A/AAAA for bootstrap nodes)
+   - DHT (Kademlia) for peer discovery
+   - Fallback to hardcoded seeds only
+
+3. **Observability & reliability** — production readiness:
+   - Prometheus metrics: block rate, peer count, mempool size, reorg depth, sync latency
+   - Structured logging (JSON) + tracing
+   - Alerting on: peer count < 2, block rate drop > 50%, reorg depth > finality
+   - Fuzzing: block validation, tx encoding, snapshot roundtrip
+
+4. **Testnet soak & parameter tuning** — run for weeks:
+   - 24/7 testnet with multiple independent seed operators
+   - Measure: orphan rate, propagation latency, fork rate, disk growth
+   - Tune: `k`, finality depth, payload pruning depth, difficulty window
+
+5. **Wallet & explorer polish** — end-user UX:
+   - Hardware wallet (Ledger/Trezor) via HWI
+   - BIP39/BIP44 derivation, transaction history, fee estimation
+   - Explorer: real-time DAG viz, address analytics, token support

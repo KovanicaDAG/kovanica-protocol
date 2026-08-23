@@ -71,6 +71,7 @@
 
 pub mod keys;
 pub mod ledger;
+pub mod spv;
 pub mod store;
 pub mod tx;
 pub mod utxo;
@@ -87,6 +88,7 @@ pub use tx::{
     TxInput, TxOutput,
 };
 pub use utxo::UtxoSet;
+pub use spv::{BlockHeader, BlockFilter, MerkleProof, SpvClient, SpvError, generate_merkle_proof, merkle_root};
 pub use validation::{
     validate_block_payload, BlockValidationError, TxStructureValidator, MAX_BLOCK_PAYLOAD_SIZE,
     MAX_TXS_PER_BLOCK, MAX_TX_SIZE,
