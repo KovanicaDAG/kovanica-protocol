@@ -472,10 +472,18 @@ deterministic + adversarial tests per the conventions above.
   - Duplicate suppression: track known blocks/txs per peer, penalize resends
   - Peer scoring: reward valid blocks/txs (+1), penalize duplicates (-5/-2), heavy penalty for invalid (-20/-10)
   - Auto-ban when score <= threshold (default -50); manual ban/unban API
-  - Integration: rate limits checked on `Mesh::enqueue`, duplicates checked on `deliver`
+  - Integration: rate limits checked on `Mesh::enqueue`, duplicates checked on `Mesh::deliver`
   - Stats: `Mesh::peer_stats` / `all_peer_stats` for monitoring
   - Tests: rate limit enforcement, duplicate penalties, ban prevents relay, stats
-- [ ] Mempool policy upgrades: orphan-tx handling, fee-based eviction order.
+- [x] Mempool policy upgrades: orphan-tx handling, fee-based eviction order.
+  - `kovanica-node::mempool_v2`: enhanced mempool with orphan pool and fee-based eviction
+  - Orphan pool: txs with missing inputs held separately, auto-promoted when block adds inputs
+  - Fee-based eviction: lowest fee-rate txs evicted first when capacity exceeded
+  - Capacity limits: configurable max tx count (default 100k) and max bytes (default 100MB)
+  - Minimum fee rate enforcement (default 1 atom/byte)
+  - Orphan auto-expiry after configurable block age (default 100 blocks)
+  - Backward-compatible `Mempool` wrapper for existing code
+  - Tests: orphan promotion, fee ordering, capacity eviction, min fee rate
 
 ### Beyond
 

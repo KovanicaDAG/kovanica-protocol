@@ -19,7 +19,7 @@ use kovanica_state::{
     TxOutput, UtxoSet, DEFAULT_HALVING_ERA,
 };
 
-use crate::mempool::Mempool;
+use crate::mempool::{Mempool, MempoolV2, MempoolConfig};
 
 /// How far ahead of the local wall clock a received block's timestamp may sit
 /// before the node rejects it: two hours, in milliseconds. This is **node
@@ -170,10 +170,9 @@ pub struct BlockHeader {
 }
 
 /// A running node holding the ledger and mempool in memory.
-#[derive(Default)]
 pub struct Node {
     ledger: Option<Ledger>,
-    mempool: Mempool,
+    mempool: MempoolV2,
     clock: Clock,
     /// Address that receives the per-block KVNC subsidy coinbase.
     miner: Option<Address>,
@@ -184,10 +183,31 @@ pub const HALVING_ERA: u64 = 1_000;
 /// Floor: `max(1, subsidy / 500_000)`. On the 50 KVNC testnet that is 0.0001 KVNC.
 pub const MIN_FEE_DIVISOR: u64 = 500_000;
 
+impl Default for Node {
+    fn default() -> Self {
+        Self {
+            ledger: None,
+            mempool: MempoolV2::default(),
+            clock: Clock::default(),
+            miner: None,
+        }
+    }
+}
+
 impl Node {
     /// A fresh node with no ledger yet.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create a node with custom mempool configuration.
+    pub fn with_mempool_config(config: MempoolConfig) -> Self {
+        Self {
+            ledger: None,
+            mempool: MempoolV2::new(config),
+            clock: Clock::default(),
+            miner: None,
+        }
     }
 
     /// The node's current wall-clock time in milliseconds since the UNIX epoch.
@@ -416,7 +436,7 @@ impl Node {
 
     /// Pending mempool transactions in assembly order.
     pub fn pending_txs(&self) -> Vec<Transaction> {
-        self.mempool.ordered()
+        self.mempool.ordered_pending()
     }
 
     /// The spendable balance of `owner` in the current full ledger state.
@@ -441,7 +461,17 @@ impl Node {
 
     /// Number of pending transactions in the mempool.
     pub fn pending_count(&self) -> usize {
-        self.mempool.len()
+        self.mempool.len_pending()
+    }
+
+    /// Number of orphan transactions in the mempool.
+    pub fn orphan_count(&self) -> usize {
+        self.mempool.len_orphans()
+    }
+
+    /// Total bytes of pending transactions.
+    pub fn mempool_bytes(&self) -> usize {
+        self.mempool.total_bytes()
     }
 
     /// Build a signed transfer of `amount` from actor `from_seed` to actor
@@ -593,7 +623,7 @@ impl Node {
     pub fn pool(&mut self, from_seed: u64, amount: u64, to_seed: u64) -> Result<TxId, NodeError> {
         let tx = self.build_transfer(from_seed, amount, to_seed)?;
         let id = tx.id();
-        self.mempool.add(tx);
+        self.mempool.add(tx).map_err(|e| NodeError::Mempool(e.to_string()))?;
         Ok(id)
     }
 
@@ -604,7 +634,7 @@ impl Node {
             return Err(NodeError::UnexpectedCoinbase);
         }
         let id = tx.id();
-        self.mempool.add(tx);
+        self.mempool.add(tx).map_err(|e| NodeError::Mempool(e.to_string()))?;
         Ok(id)
     }
 
@@ -620,7 +650,7 @@ impl Node {
         if self.ledger.is_none() {
             return Err(NodeError::NotInitialized);
         }
-        if self.mempool.is_empty() {
+        if self.mempool.len_pending() == 0 {
             return Ok(None);
         }
 
@@ -634,7 +664,7 @@ impl Node {
         };
         let mut selected = Vec::new();
         let mut selected_ids = Vec::new();
-        for tx in self.mempool.ordered() {
+        for tx in self.mempool.ordered_pending() {
             if apply_block(&mut working, std::slice::from_ref(&tx), subsidy).is_ok() {
                 selected_ids.push(tx.id());
                 selected.push(tx);
@@ -704,7 +734,19 @@ impl Node {
             return;
         };
         let utxo = ledger.ledger_state();
-        self.mempool.evict_invalid(&utxo);
+        self.mempool.revalidate_with_utxo(&utxo);
+    }
+
+    /// Called when a new block is added: promote orphans whose inputs are now available.
+    pub fn promote_orphans(&mut self) -> usize {
+        let Some(ledger) = self.ledger.as_ref() else {
+            return 0;
+        };
+        let utxo = ledger.ledger_state();
+        let height = ledger.dag().selected_tip()
+            .and_then(|tip| ledger.dag().ghostdag(&tip).ok().map(|g| g.blue_score))
+            .unwrap_or(0);
+        self.mempool.on_new_block(&utxo, height)
     }
 
     /// The header for block `id`, if present. The header commits to the payload
