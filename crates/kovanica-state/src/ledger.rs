@@ -872,6 +872,17 @@ impl Ledger {
             .get(&checkpoint_block)
             .ok_or(LedgerCheckpointError::MissingCheckpointState)?;
 
+        // The tip segment: blocks in linearized order whose blue score is
+        // strictly above the finality score (i.e. not final).
+        let mut tip_segment = Vec::new();
+        for id in &order {
+            let gd = self.dag.ghostdag(id).unwrap();
+            if gd.blue_score > finality_score {
+                let block = self.dag.block(id).expect("linearized id is present");
+                tip_segment.push(block);
+            }
+        }
+
         let mut buf = Vec::new();
         buf.extend_from_slice(&CHECKPOINT_MAGIC);
         buf.extend_from_slice(&CHECKPOINT_VERSION.to_le_bytes());
@@ -882,9 +893,11 @@ impl Ledger {
         buf.extend_from_slice(&self.payload_pruning_depth.to_le_bytes());
         buf.extend_from_slice(checkpoint_block.as_bytes());
         buf.extend_from_slice(&checkpoint_state.encode());
-        // Store a full snapshot of the DAG for reliable decoding
-        let snapshot_bytes = self.dag.write_snapshot();
-        buf.extend_from_slice(&snapshot_bytes);
+        // Tip segment (blocks above finality boundary)
+        buf.extend_from_slice(&(tip_segment.len() as u64).to_le_bytes());
+        for block in &tip_segment {
+            kovanica_dag::encode_block(block, &mut buf);
+        }
         Ok(buf)
     }
 
