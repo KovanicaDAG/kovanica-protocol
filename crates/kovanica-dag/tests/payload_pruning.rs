@@ -124,7 +124,8 @@ fn pruned_payloads_do_not_affect_ghostdag_colouring() {
     let gd = dag.ghostdag(&m).unwrap();
     assert_eq!(gd.blue_score, 3); // genesis + a + b
     assert!(gd.mergeset_reds.is_empty());
-    assert_eq!(gd.mergeset_blues.len(), 2); // a and b both blue
+    // mergeset = past(m) \ (past(sp) ∪ {sp}); sp is a or b, so mergeset has 1 element
+    assert_eq!(gd.mergeset_blues.len(), 1);
 }
 
 #[test]
@@ -230,21 +231,23 @@ fn pruning_depth_changes_dynamically() {
     assert!(!dag.block(&b).unwrap().is_pruned()); // blue_score 2, not < 2
     assert!(!dag.block(&c).unwrap().is_pruned());
 
-    // Increase depth to 2
+    // Increase depth to 2 - a is ALREADY pruned (irreversible)
     dag.set_payload_pruning_depth(2);
     dag.prune_old_payloads();
 
-    // Threshold = 3 - 2 = 1
-    // Blocks with blue_score < 1: only genesis(0), which is never pruned
-    assert!(!dag.block(&a).unwrap().is_pruned());
+    // a remains pruned (irreversible), threshold = 3 - 2 = 1
+    // Blocks with blue_score < 1: only genesis(0), never pruned
+    assert!(!dag.block(&genesis).unwrap().is_pruned());
+    assert!(dag.block(&a).unwrap().is_pruned()); // already pruned, stays pruned
     assert!(!dag.block(&b).unwrap().is_pruned());
+    assert!(!dag.block(&c).unwrap().is_pruned());
 
     // Decrease depth back to 0
     dag.set_payload_pruning_depth(0);
     dag.prune_old_payloads();
 
     // Threshold = 3 - 0 = 3
-    // Blocks with blue_score < 3: genesis(0), a(1), b(2)
+    // b has blue_score 2, now gets pruned too
     assert!(!dag.block(&genesis).unwrap().is_pruned());
     assert!(dag.block(&a).unwrap().is_pruned());
     assert!(dag.block(&b).unwrap().is_pruned());
