@@ -872,17 +872,9 @@ impl Ledger {
             .get(&checkpoint_block)
             .ok_or(LedgerCheckpointError::MissingCheckpointState)?;
 
-        // The tip segment: blocks in linearized order whose blue score is
-        // strictly above the finality score (i.e. not final). These are the
-        // blocks we'll replay on load.
-        let mut tip_segment = Vec::new();
-        for id in &order {
-            let gd = self.dag.ghostdag(id).unwrap();
-            if gd.blue_score > finality_score {
-                let block = self.dag.block(id).expect("linearized id is present");
-                tip_segment.push(block);
-            }
-        }
+        // Store ALL blocks in linearized order (like a snapshot) plus the checkpoint state.
+        // On restore, we replay all blocks but can verify state at the checkpoint boundary.
+        let all_blocks: Vec<_> = order.iter().map(|id| self.dag.block(id).unwrap()).collect();
 
         let mut buf = Vec::new();
         buf.extend_from_slice(&CHECKPOINT_MAGIC);
@@ -894,16 +886,8 @@ impl Ledger {
         buf.extend_from_slice(&self.payload_pruning_depth.to_le_bytes());
         buf.extend_from_slice(checkpoint_block.as_bytes());
         buf.extend_from_slice(&checkpoint_state.encode());
-        // Genesis transactions (needed to reconstruct the ledger on load).
-        let genesis_block = self.dag.block(&self.genesis).expect("genesis exists");
-        let genesis_txs = decode_block_payload(genesis_block.payload())
-            .map_err(LedgerCheckpointError::Payload)?;
-        let genesis_payload = encode_block_payload(&genesis_txs);
-        buf.extend_from_slice(&(genesis_payload.len() as u64).to_le_bytes());
-        buf.extend_from_slice(&genesis_payload);
-        // Tip segment
-        buf.extend_from_slice(&(tip_segment.len() as u64).to_le_bytes());
-        for block in &tip_segment {
+        buf.extend_from_slice(&(all_blocks.len() as u64).to_le_bytes());
+        for block in &all_blocks {
             kovanica_dag::encode_block(block, &mut buf);
         }
         Ok(buf)
@@ -948,37 +932,28 @@ impl Ledger {
         if bytes.len() < pos + 8 {
             return Err(LedgerCheckpointError::UnexpectedEof);
         }
-        let genesis_payload_len =
-            u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
-        pos += 8;
-        if bytes.len() < pos + genesis_payload_len {
-            return Err(LedgerCheckpointError::UnexpectedEof);
-        }
-        let genesis_txs = decode_block_payload(&bytes[pos..pos + genesis_payload_len])
-            .map_err(LedgerCheckpointError::Payload)?;
-        pos += genesis_payload_len;
-
-        if bytes.len() < pos + 8 {
-            return Err(LedgerCheckpointError::UnexpectedEof);
-        }
-        let tip_count = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
+        let block_count = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
         pos += 8;
 
         let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
-        // Create ledger from genesis
+        // Read the first block (genesis) to create the ledger
+        if pos >= bytes.len() {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        let (genesis_block, consumed) = decode_checkpoint_block(&bytes[pos..])?;
+        pos += consumed;
+        let genesis_txs = decode_block_payload(genesis_block.payload())
+            .map_err(LedgerCheckpointError::Payload)?;
+
         let mut ledger =
             Ledger::new(k, schedule, &genesis_txs).map_err(LedgerCheckpointError::Genesis)?;
         ledger.finality_depth = finality_depth;
         ledger.payload_pruning_depth = payload_pruning_depth;
         ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
 
-        // Override the genesis state with the checkpoint state
-        ledger.states.insert(checkpoint_block, checkpoint_state);
-        ledger.heights.insert(checkpoint_block, 0); // Will be corrected during replay
-
-        // Replay tip segment
-        for _ in 0..tip_count {
+        // Replay remaining blocks (skip genesis which is already inserted)
+        for i in 1..block_count {
             if pos >= bytes.len() {
                 return Err(LedgerCheckpointError::UnexpectedEof);
             }
@@ -995,6 +970,14 @@ impl Ledger {
                     &txs,
                 )
                 .map_err(LedgerCheckpointError::Rebuild)?;
+
+            // At the checkpoint block, verify the state matches
+            if block.id() == checkpoint_block {
+                let actual_state = ledger.state(&checkpoint_block).unwrap();
+                if *actual_state != checkpoint_state {
+                    return Err(LedgerCheckpointError::StateMismatch);
+                }
+            }
         }
 
         if pos != bytes.len() {
@@ -1122,6 +1105,8 @@ pub enum LedgerCheckpointError {
     Genesis(LedgerError),
     /// Replaying a block through `insert` failed.
     Rebuild(LedgerInsertError),
+    /// The checkpoint state at the boundary does not match the replayed state.
+    StateMismatch,
 }
 
 impl core::fmt::Display for LedgerCheckpointError {
@@ -1146,6 +1131,9 @@ impl core::fmt::Display for LedgerCheckpointError {
             LedgerCheckpointError::Dag(e) => write!(f, "dag block: {e}"),
             LedgerCheckpointError::Genesis(e) => write!(f, "genesis: {e}"),
             LedgerCheckpointError::Rebuild(e) => write!(f, "replaying block: {e}"),
+            LedgerCheckpointError::StateMismatch => {
+                f.write_str("checkpoint state mismatch at boundary")
+            }
         }
     }
 }
