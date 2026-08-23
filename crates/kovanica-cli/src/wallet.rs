@@ -8,7 +8,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use kovanica_state::{Address, KeyPair};
+use kovanica_state::{verify, Address, KeyPair};
 
 /// A loaded wallet: the raw Ed25519 seed plus its derived keypair.
 pub struct Wallet {
@@ -113,4 +113,38 @@ mod tests {
         let b = Wallet::generate().unwrap();
         assert_ne!(a.address(), b.address());
     }
+}
+
+/// Generate a new 32-byte seed from OS randomness.
+pub fn generate_seed() -> u64 {
+    let mut seed = [0u8; 32];
+    getrandom::getrandom(&mut seed).unwrap();
+    u64::from_le_bytes(seed[..8].try_into().unwrap())
+}
+
+/// Create an Address from a seed u64 (for CLI simplicity).
+pub fn address_from_seed(seed: u64) -> Address {
+    KeyPair::from_u64(seed).address()
+}
+
+/// Sign a transfer's sighash with a seed u64.
+/// Returns 128 lowercase hex chars.
+pub fn sign_transfer(seed: u64, sighash_hex: &str) -> Result<String> {
+    let sighash = hex::decode(sighash_hex).with_context(|| "sighash must be hex")?;
+    let keypair = KeyPair::from_u64(seed);
+    let sig = keypair.sign(&sighash);
+    Ok(hex::encode(sig))
+}
+
+/// Verify a signature against an address and sighash.
+pub fn verify_sig(address: &Address, sighash_hex: &str, sig_hex: &str) -> bool {
+    let sighash = match hex::decode(sighash_hex) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    let sig = match hex::decode(sig_hex) {
+        Ok(b) => b,
+        Err(_) => return false,
+    };
+    verify(address, &sighash.try_into().unwrap(), &sig)
 }
