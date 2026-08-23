@@ -949,6 +949,11 @@ impl Ledger {
         let mut blocks = Vec::new();
         let mut block_pos = pos;
         for _ in 0..tip_count {
+            // Skip the 32-byte block ID prefix, then decode the block data
+            if block_pos + 32 > bytes.len() {
+                return Err(LedgerCheckpointError::UnexpectedEof);
+            }
+            block_pos += 32; // skip stored block ID
             let (block, consumed) = decode_checkpoint_block(&bytes[block_pos..])?;
             blocks.push(block);
             block_pos += consumed;
