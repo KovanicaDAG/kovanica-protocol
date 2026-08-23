@@ -493,11 +493,12 @@ the testnet teaches us it needs.
 
 ### Post-Stage 3 — Production hardening (suggested order)
 
-1. **Light clients / SPV proofs** — verify payments without full sync:
+1. ~~**Light clients / SPV proofs** — verify payments without full sync:~~ ✅
    - Header chain (linearized selected chain only)
    - Merkle proof of transaction inclusion in block payload
-   - Compact block filters for address-watching
-   - Wire protocol: `getheaders`/`getblocks` with proof verification
+   - Compact block filters (Golomb-Rice) for address-watching
+   - `SpvClient` state machine: checkpoint → header chain → Merkle proofs
+   - Wire protocol: `getheaders`/`getblocks` with proof verification (next)
 
 2. **Multi-seed discovery** — decentralize bootstrap:
    - DNS seed records (A/AAAA for bootstrap nodes)
