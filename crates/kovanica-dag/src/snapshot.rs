@@ -121,7 +121,8 @@ impl Dag {
             let (genesis, _) = iter.next().ok_or(SnapshotError::UnexpectedEof)?;
             let mut dag = Dag::new(k, genesis);
             for (block, stored_id) in iter {
-                dag.insert_with_id(block, Some(stored_id)).map_err(SnapshotError::Rebuild)?;
+                dag.insert_with_id(block, Some(stored_id))
+                    .map_err(SnapshotError::Rebuild)?;
             }
             Ok(dag)
         } else {
