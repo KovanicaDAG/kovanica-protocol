@@ -872,9 +872,15 @@ impl Ledger {
             .get(&checkpoint_block)
             .ok_or(LedgerCheckpointError::MissingCheckpointState)?;
 
-        // The tip segment: blocks in linearized order whose blue score is
-        // strictly above the finality score (i.e. not final).
+        // The checkpoint block's height in the selected chain (for subsidy calculation).
+        let checkpoint_height = self.heights.get(&checkpoint_block).copied().unwrap_or(0);
+
+        // The tip segment: the checkpoint block plus blocks in linearized order
+        // whose blue score is strictly above the finality score (i.e. not final).
+        // The checkpoint block is included so it can serve as the trusted genesis
+        // on restore, with its original ID preserved via Block::new_pruned.
         let mut tip_segment = Vec::new();
+        tip_segment.push(self.dag.block(&checkpoint_block).expect("checkpoint block is present").clone());
         for id in &order {
             let gd = self.dag.ghostdag(id).unwrap();
             if gd.blue_score > finality_score {
@@ -891,9 +897,9 @@ impl Ledger {
         buf.extend_from_slice(&self.schedule.halving_era.to_le_bytes());
         buf.extend_from_slice(&self.finality_depth.to_le_bytes());
         buf.extend_from_slice(&self.payload_pruning_depth.to_le_bytes());
-        buf.extend_from_slice(checkpoint_block.as_bytes());
+        buf.extend_from_slice(&checkpoint_height.to_le_bytes());
         buf.extend_from_slice(&checkpoint_state.encode());
-        // Tip segment (blocks above finality boundary)
+        // Tip segment (checkpoint block + blocks above finality boundary)
         buf.extend_from_slice(&(tip_segment.len() as u64).to_le_bytes());
         for block in &tip_segment {
             kovanica_dag::encode_block(block, &mut buf);
@@ -910,7 +916,7 @@ impl Ledger {
         if bytes.len() < 4 || bytes[..4] != CHECKPOINT_MAGIC {
             return Err(LedgerCheckpointError::BadMagic);
         }
-        let min_header = 4 + 2 + 2 + 8 + 8 + 8 + 8 + 32; // magic + version + k + 4*u64 + blockid
+        let min_header = 4 + 2 + 2 + 8 + 8 + 8 + 8 + 8; // magic + version + k + 5*u64
         if bytes.len() < min_header {
             return Err(LedgerCheckpointError::UnexpectedEof);
         }
@@ -929,11 +935,12 @@ impl Ledger {
         pos += 8;
         let payload_pruning_depth = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
         pos += 8;
-        let _checkpoint_block = BlockId::from_bytes(bytes[pos..pos + 32].try_into().unwrap());
-        pos += 32;
+        let checkpoint_height = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
+        pos += 8;
 
+        // Decode checkpoint UTXO set
         let mut remaining = &bytes[pos..];
-        let _checkpoint_state = UtxoSet::decode(&mut remaining)
+        let checkpoint_state = UtxoSet::decode(&mut remaining)
             .map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
         pos = bytes.len() - remaining.len();
 
@@ -946,36 +953,60 @@ impl Ledger {
         let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
         // Read tip segment blocks (each encoded with kovanica_dag::encode_block)
+        // The first block is the checkpoint block; we must reconstruct it with
+        // its original ID using Block::new_pruned.
         let mut blocks = Vec::new();
         let mut block_pos = pos;
-        for _ in 0..tip_count {
-            // Skip the 32-byte block ID prefix, then decode the block data
+        for i in 0..tip_count {
             if block_pos + 32 > bytes.len() {
                 return Err(LedgerCheckpointError::UnexpectedEof);
             }
-            block_pos += 32; // skip stored block ID
-            let (block, consumed) = decode_checkpoint_block(&bytes[block_pos..])?;
-            blocks.push(block);
+            // Read the stored block ID (first 32 bytes of encode_block output)
+            let stored_id = BlockId::from_bytes(bytes[block_pos..block_pos + 32].try_into().unwrap());
+            block_pos += 32;
+            let (mut block, consumed) = decode_checkpoint_block(&bytes[block_pos..])?;
             block_pos += consumed;
+
+            // For the first block (checkpoint block), reconstruct with original ID
+            if i == 0 {
+                block = Block::new_pruned(
+                    block.parents().to_vec(),
+                    block.work(),
+                    block.timestamp_ms(),
+                    block.nonce(),
+                    stored_id,
+                );
+            }
+            blocks.push(block);
         }
 
-        let _schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
-
-        // Use the first block as genesis
+        // The first block in tip_segment is the checkpoint block; use it as genesis.
         let mut blocks_iter = blocks.into_iter();
-        let genesis = blocks_iter
+        let checkpoint_block = blocks_iter
             .next()
             .ok_or(LedgerCheckpointError::UnexpectedEof)?;
-        let genesis_txs =
-            decode_block_payload(genesis.payload()).map_err(LedgerCheckpointError::Payload)?;
 
-        let mut ledger =
-            Ledger::new(k, schedule, &genesis_txs).map_err(LedgerCheckpointError::Genesis)?;
-        ledger.finality_depth = finality_depth;
-        ledger.payload_pruning_depth = payload_pruning_depth;
-        ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
+        // Create DAG with checkpoint block as genesis (trusted, bypasses parent check).
+        // The checkpoint block may have parents that don't exist in the restored DAG;
+        // we trust it as the finality boundary.
+        let dag = Dag::with_validator(k, checkpoint_block, Box::new(TxStructureValidator));
+        dag.set_payload_pruning_depth(payload_pruning_depth);
 
-        // Replay remaining blocks
+        // Build ledger with the checkpoint state applied directly.
+        let mut ledger = Ledger {
+            dag,
+            schedule,
+            genesis: checkpoint_block.id(),
+            finality_depth,
+            payload_pruning_depth,
+            states: HashMap::new(),
+            heights: HashMap::new(),
+        };
+        // Apply checkpoint state as the ledger's current state and the checkpoint block's view state.
+        ledger.states.insert(checkpoint_block.id(), checkpoint_state.clone());
+        ledger.heights.insert(checkpoint_block.id(), checkpoint_height);
+
+        // Replay remaining tip segment blocks (those strictly above finality).
         for block in blocks_iter {
             let txs =
                 decode_block_payload(block.payload()).map_err(LedgerCheckpointError::Payload)?;
@@ -1091,8 +1122,8 @@ impl<'a> CheckpointReader<'a> {
 
 /// Magic prefix identifying a Kovanica ledger checkpoint (`"KVCP"`).
 const CHECKPOINT_MAGIC: [u8; 4] = *b"KVCP";
-/// Checkpoint format version.
-const CHECKPOINT_VERSION: u16 = 1;
+/// Checkpoint format version. v2 adds checkpoint block height.
+const CHECKPOINT_VERSION: u16 = 2;
 
 /// Why a ledger checkpoint could not be encoded or decoded.
 #[derive(Clone, Debug, PartialEq, Eq)]

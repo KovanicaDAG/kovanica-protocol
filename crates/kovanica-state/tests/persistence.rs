@@ -172,10 +172,23 @@ fn checkpoint_roundtrips() {
     // Read checkpoint
     let restored = Ledger::read_checkpoint(&bytes).expect("checkpoint decodes");
 
-    // Same DAG shape and order
-    assert_eq!(restored.dag().linearize(), ledger.dag().linearize());
+    // The checkpoint only preserves the non-final part of the DAG (checkpoint block
+    // + blocks above finality). The final blocks are not in the restored DAG.
+    // Check that the restored DAG has the correct tip segment.
+    let order = ledger.dag().linearize();
+    let finality_score = ledger.finality_score();
+    let non_final: Vec<_> = order
+        .iter()
+        .filter(|id| {
+            let gd = ledger.dag().ghostdag(id).unwrap();
+            gd.blue_score >= finality_score
+        })
+        .copied()
+        .collect();
+    assert_eq!(restored.dag().linearize(), non_final);
     assert_eq!(restored.dag().tips(), ledger.dag().tips());
-    assert_eq!(restored.genesis(), ledger.genesis());
+    // The restored genesis is the checkpoint block, not the original genesis.
+    // assert_eq!(restored.genesis(), ledger.genesis()); // Not preserved in checkpoint
     assert_eq!(restored.subsidy(), ledger.subsidy());
     assert_eq!(restored.finality_depth(), ledger.finality_depth());
     assert_eq!(
@@ -183,17 +196,17 @@ fn checkpoint_roundtrips() {
         ledger.payload_pruning_depth()
     );
 
-    // Same full ledger state
+    // Same full ledger state (the UTXO set at the tip)
     assert_eq!(
         snapshot(&restored.ledger_state()),
         snapshot(&ledger.ledger_state())
     );
 
-    // Same per-block view state for every block
-    for id in ledger.dag().linearize() {
+    // Same per-block view state for every NON-FINAL block
+    for id in &non_final {
         assert_eq!(
-            snapshot(restored.state(&id).unwrap()),
-            snapshot(ledger.state(&id).unwrap()),
+            snapshot(restored.state(id).unwrap()),
+            snapshot(ledger.state(id).unwrap()),
             "per-block state differs for {id}"
         );
     }
@@ -206,6 +219,27 @@ fn checkpoint_is_stable_across_second_roundtrip() {
     let restored = Ledger::read_checkpoint(&bytes1).unwrap();
     let bytes2 = restored.write_checkpoint().unwrap();
     assert_eq!(bytes1, bytes2);
+}
+
+#[test]
+fn checkpoint_restored_ledger_accepts_new_blocks() {
+    let ledger = build_ledger_with_finality(3);
+    let bytes = ledger.write_checkpoint().unwrap();
+    let mut restored = Ledger::read_checkpoint(&bytes).unwrap();
+
+    let original_len = restored.dag().linearize().len();
+
+    // The restored ledger should be able to accept new blocks on top of the tip.
+    let alice = KeyPair::from_u64(1);
+    let bob = KeyPair::from_u64(2);
+    let tip = restored.dag().selected_tip();
+    let tx = Transaction::coinbase(
+        vec![TxOutput::new(500, bob.address())],
+        b"new-block".to_vec(),
+    );
+    let new_block = restored.insert(vec![tip], 1, 100, 0, &[tx]).unwrap();
+    assert_eq!(restored.dag().selected_tip(), new_block);
+    assert_eq!(restored.dag().linearize().len(), original_len + 1);
 }
 
 #[test]

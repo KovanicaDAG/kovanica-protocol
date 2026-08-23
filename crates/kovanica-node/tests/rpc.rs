@@ -92,6 +92,41 @@ fn snapshot_roundtrip_through_rpc_preserves_balances() {
 }
 
 #[test]
+fn checkpoint_roundtrip_through_rpc_preserves_balances() {
+    let path = {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("kovanica-node-test-{nanos}.chk"))
+    };
+    let path_str = path.to_str().unwrap();
+
+    let mut node = Node::new();
+    // Use genesis_finality with finality_depth=3 to enable finality
+    run(&mut node, "genesis_finality 3 1000 500 1 3");
+    run(&mut node, "send 1 200 2");
+    run(&mut node, "send 2 50 3");
+    assert_eq!(
+        run(&mut node, &format!("checkpoint {path_str}")),
+        format!("ok checkpoint saved {path_str}")
+    );
+
+    // Fresh node loads the checkpoint and sees the same balances.
+    let mut restored = Node::new();
+    assert_eq!(run(&mut restored, &format!("load_checkpoint {path_str}")), "ok loaded");
+    assert_eq!(run(&mut restored, "balance 1"), "ok 299");
+    assert_eq!(run(&mut restored, "balance 2"), "ok 149");
+    assert_eq!(run(&mut restored, "balance 3"), "ok 50");
+
+    // A restored node keeps working: actor 3 forwards to actor 4.
+    assert!(run(&mut restored, "send 3 40 4").starts_with("ok block "));
+    assert_eq!(run(&mut restored, "balance 4"), "ok 40");
+
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
 fn parallel_sends_from_two_actors_both_land() {
     // Two actors funded from genesis change spend in separate blocks; the DAG
     // grows and both transfers take effect.
