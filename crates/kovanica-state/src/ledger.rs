@@ -956,7 +956,7 @@ impl Ledger {
             block_pos += consumed;
         }
 
-        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
+        let _schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
         // Use the first block as genesis
         let mut blocks_iter = blocks.into_iter();
