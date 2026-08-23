@@ -921,11 +921,11 @@ impl Ledger {
         pos += 8;
         let payload_pruning_depth = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
         pos += 8;
-        let checkpoint_block = BlockId::from_bytes(bytes[pos..pos + 32].try_into().unwrap());
+        let _checkpoint_block = BlockId::from_bytes(bytes[pos..pos + 32].try_into().unwrap());
         pos += 32;
 
         let mut remaining = &bytes[pos..];
-        let checkpoint_state = UtxoSet::decode(&mut remaining)
+        let _checkpoint_state = UtxoSet::decode(&mut remaining)
             .map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
         pos = bytes.len() - remaining.len();
 
