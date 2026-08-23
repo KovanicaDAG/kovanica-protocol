@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Runnable node for the Kovanica DAG ledger: a line RPC over an in-memory Ledger with snapshot persistence."
+description = "Runnable node for the Kovanica Protocol: a line RPC over an in-memory Ledger with snapshot persistence."
 
 [dependencies]
 kovanica-dag = { path = "../kovanica-dag" }
