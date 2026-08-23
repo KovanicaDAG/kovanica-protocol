@@ -270,10 +270,9 @@ impl<'a> Reader<'a> {
         if payload_len == 0 {
             // Pruned block: payload was evicted. Reconstruct with None payload.
             // The stored id is the authoritative one (computed at insertion time
-            // over the original payload). We create a block with the same fields;
-            // its computed id will differ (empty payload), but the DAG's node map
-            // uses the stored_id. This is handled by insert_with_id below.
-            return Ok(Block::new_pruned(parents, work, timestamp_ms, nonce));
+            // over the original payload). We create a block with the same fields
+            // using the stored id.
+            return Ok(Block::new_pruned(parents, work, timestamp_ms, nonce, stored_id));
         }
         let payload = self.read_bytes(payload_len)?;
         // For non-pruned blocks, verify the computed id matches the stored id.
