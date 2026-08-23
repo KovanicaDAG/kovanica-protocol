@@ -15,12 +15,16 @@
 //! Long-lived relay sessions are [`crate::relay`] — tests only, not the
 //! explorer loop.
 
+mod p2p_hardening;
+
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use kovanica_dag::{Block, BlockId};
 use kovanica_state::{encode_block_payload, Address, Transaction, TxId};
 
 use crate::node::{BlockRecord, Node, NodeError};
+
+pub use p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
 
 /// Why a mesh operation failed.
 #[derive(Debug)]
@@ -113,12 +117,25 @@ pub struct Mesh {
     /// Discrete time. Advanced by [`Mesh::tick`].
     now: u64,
     events: Vec<GossipEvent>,
+    /// P2P hardening: rate limiting, duplicate suppression, peer scoring.
+    hardening: P2pHardening,
 }
 
 impl Mesh {
     /// An empty mesh.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            hardening: P2pHardening::new(Default::default()),
+            ..Default::default()
+        }
+    }
+
+    /// Create a mesh with custom P2P hardening config.
+    pub fn with_hardening_config(config: P2pHardeningConfig) -> Self {
+        Self {
+            hardening: P2pHardening::new(config),
+            ..Default::default()
+        }
     }
 
     /// Register `node` under `name`. Replaces any previous node of that name.
@@ -155,6 +172,41 @@ impl Mesh {
         self.nodes.get_mut(name)
     }
 
+    /// Get the P2P hardening manager (for monitoring/stats).
+    pub fn hardening(&self) -> &P2pHardening {
+        &self.hardening
+    }
+
+    /// Get mutable P2P hardening manager (for config changes).
+    pub fn hardening_mut(&mut self) -> &mut P2pHardening {
+        &mut self.hardening
+    }
+
+    /// Check if a peer is banned.
+    pub fn is_peer_banned(&self, peer: &str) -> bool {
+        self.hardening.is_banned(peer)
+    }
+
+    /// Get peer stats.
+    pub fn peer_stats(&self, peer: &str) -> Option<PeerStats> {
+        self.hardening.peer_stats(peer)
+    }
+
+    /// Get all peer stats.
+    pub fn all_peer_stats(&self) -> BTreeMap<String, PeerStats> {
+        self.hardening.all_peer_stats()
+    }
+
+    /// Manually ban a peer.
+    pub fn ban_peer(&mut self, peer: &str) {
+        self.hardening.ban(peer);
+    }
+
+    /// Manually unban a peer.
+    pub fn unban_peer(&mut self, peer: &str) {
+        self.hardening.unban(peer);
+    }
+
     /// Directed overlay edge: `from` will announce blocks/txs/hellos to `to`.
     /// Enqueues a hello so `to` learns about `from` (and `from`'s peers).
     pub fn connect(&mut self, from: &str, to: &str) -> Result<(), P2pError> {
@@ -186,6 +238,7 @@ impl Mesh {
     /// by one. Returns how many envelopes were delivered this tick.
     pub fn tick(&mut self) -> usize {
         self.now = self.now.saturating_add(1);
+        self.hardening.tick();
         let mut due = Vec::new();
         let mut rest = Vec::new();
         for q in self.queue.drain(..) {
@@ -404,6 +457,21 @@ impl Mesh {
         if from == to {
             return;
         }
+        // Estimate bytes for rate limiting
+        let bytes = match &envelope {
+            Envelope::Hello { advertised } => 100 + advertised.len() * 32,
+            Envelope::Block { record } => {
+                // Rough estimate: parents + work + timestamp + nonce + txs
+                100 + record.parents.len() * 32 + record.txs.len() * 200
+            }
+            Envelope::Tx { tx } => 200,
+        };
+
+        // Check rate limit for the sender
+        if !self.hardening.check_rate_limit(from, bytes as u64) {
+            return; // Silently drop - rate limited
+        }
+
         self.queue.push(Queued {
             due: self.now.saturating_add(1),
             from: from.to_string(),
@@ -453,6 +521,14 @@ impl Mesh {
 
     fn on_block(&mut self, to: &str, from: &str, record: BlockRecord) {
         let id = record_id(&record);
+
+        // Check hardening: duplicate tracking and peer scoring
+        let (is_new, banned) = self.hardening.on_block(from, &id, true);
+        if !is_new || banned {
+            // Duplicate or banned - don't process
+            return;
+        }
+
         let seen = self.seen_blocks.entry(to.to_string()).or_default();
         if !seen.insert(id) {
             return;
@@ -484,6 +560,14 @@ impl Mesh {
 
     fn on_tx(&mut self, to: &str, from: &str, tx: Transaction) {
         let id = tx.id();
+
+        // Check hardening: duplicate tracking and peer scoring
+        let (is_new, banned) = self.hardening.on_tx(from, &id, true);
+        if !is_new || banned {
+            // Duplicate or banned - don't process
+            return;
+        }
+
         let seen = self.seen_txs.entry(to.to_string()).or_default();
         if !seen.insert(id) {
             return;

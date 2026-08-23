@@ -465,8 +465,16 @@ deterministic + adversarial tests per the conventions above.
   - Composes with PoW + difficulty (independent opt-in switches)
   - Snapshot format v5 includes VRF fields
   - Tests: eligibility, invalid proof, wrong key, missing fields, composes with PoW, beacon
-- [ ] P2P hardening: per-peer rate limits on framed reads, duplicate-block
+- [x] P2P hardening: per-peer rate limits on framed reads, duplicate-block
       suppression metrics, peer scoring/banning.
+  - `kovanica-node::p2p_hardening`: configurable hardening parameters
+  - Rate limiting: max bytes/messages per peer per time window
+  - Duplicate suppression: track known blocks/txs per peer, penalize resends
+  - Peer scoring: reward valid blocks/txs (+1), penalize duplicates (-5/-2), heavy penalty for invalid (-20/-10)
+  - Auto-ban when score <= threshold (default -50); manual ban/unban API
+  - Integration: rate limits checked on `Mesh::enqueue`, duplicates checked on `deliver`
+  - Stats: `Mesh::peer_stats` / `all_peer_stats` for monitoring
+  - Tests: rate limit enforcement, duplicate penalties, ban prevents relay, stats
 - [ ] Mempool policy upgrades: orphan-tx handling, fee-based eviction order.
 
 ### Beyond
