@@ -937,17 +937,35 @@ impl Ledger {
             .map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
         pos = bytes.len() - remaining.len();
 
-        // The rest of the bytes is a full DAG snapshot (magic + version + k + count + blocks)
-        // Use the standard snapshot decoding which handles all edge cases correctly.
-        let snapshot =
-            kovanica_dag::decode_snapshot(&bytes[pos..]).map_err(LedgerCheckpointError::Dag)?;
+        if bytes.len() < pos + 8 {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        let tip_count = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap()) as usize;
+        pos += 8;
 
-        let mut blocks = snapshot.blocks.into_iter();
-        let genesis = blocks.next().ok_or(LedgerCheckpointError::UnexpectedEof)?;
+        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
+
+        // Read tip segment blocks (each encoded with kovanica_dag::encode_block)
+        let mut blocks = Vec::new();
+        let mut block_pos = pos;
+        for _ in 0..tip_count {
+            let block = kovanica_dag::decode_block(&bytes[block_pos..])
+                .map_err(LedgerCheckpointError::Dag)?;
+            let consumed = block.encoded_len();
+            blocks.push(block);
+            block_pos += consumed;
+        }
+
+        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
+
+        // Use the first block as genesis
+        let mut blocks_iter = blocks.into_iter();
+        let genesis = blocks_iter
+            .next()
+            .ok_or(LedgerCheckpointError::UnexpectedEof)?;
         let genesis_txs =
             decode_block_payload(genesis.payload()).map_err(LedgerCheckpointError::Payload)?;
 
-        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
         let mut ledger =
             Ledger::new(k, schedule, &genesis_txs).map_err(LedgerCheckpointError::Genesis)?;
         ledger.finality_depth = finality_depth;
@@ -955,7 +973,7 @@ impl Ledger {
         ledger.dag.set_payload_pruning_depth(payload_pruning_depth);
 
         // Replay remaining blocks
-        for block in blocks {
+        for block in blocks_iter {
             let txs =
                 decode_block_payload(block.payload()).map_err(LedgerCheckpointError::Payload)?;
             ledger
