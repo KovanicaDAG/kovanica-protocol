@@ -455,7 +455,16 @@ Goal: consensus-level features. Each item needs a written rationale
 naming the reference protocol (GHOSTDAG paper, Kaspa, PHANTOM §…) plus
 deterministic + adversarial tests per the conventions above.
 
-- [ ] VRF for leader selection / a randomness beacon (the standing TODO).
+- [x] VRF for leader selection / a randomness beacon (the standing TODO).
+  - `kovanica-dag::vrf`: ECVRF over Ristretto255 (Ed25519 curve), IRTF CFRG draft
+  - `vrf_prove`/`vrf_verify`: deterministic VRF with Schnorr-style proof `(Γ, c, s)`
+  - Block fields: `vrf_public_key`, `vrf_proof`, `vrf_output` (Option for backward compat)
+  - `Dag::set_vrf(threshold)`: consensus-enforced leader eligibility
+  - VRF input = `H(tip1 || tip2 || ...)` from parent tips
+  - Eligibility: `VRF_output.as_u64() < threshold`; `u64::MAX` = all eligible (randomness beacon)
+  - Composes with PoW + difficulty (independent opt-in switches)
+  - Snapshot format v5 includes VRF fields
+  - Tests: eligibility, invalid proof, wrong key, missing fields, composes with PoW, beacon
 - [ ] P2P hardening: per-peer rate limits on framed reads, duplicate-block
       suppression metrics, peer scoring/banning.
 - [ ] Mempool policy upgrades: orphan-tx handling, fee-based eviction order.

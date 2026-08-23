@@ -28,13 +28,15 @@ use core::fmt;
 
 use crate::block::{Block, BlockId};
 use crate::dag::{Dag, DagError, KParam};
+use crate::vrf::{VrfOutput, VrfProof, VrfPublicKey};
 
 /// Magic prefix identifying a Kovanica DAG snapshot (`"KVDG"`).
 const MAGIC: [u8; 4] = *b"KVDG";
 /// Snapshot format version. Bump on any incompatible framing change.
 /// v2 added the per-block `timestamp_ms` field; v3 added the `nonce` field;
 /// v4 added the per-block `id` field (for pruned payload roundtrips).
-const VERSION: u16 = 4;
+/// v5 added VRF fields (vrf_public_key, vrf_proof, vrf_output).
+const VERSION: u16 = 5;
 
 /// Why a snapshot could not be decoded or replayed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -105,7 +107,9 @@ impl Dag {
             return Err(SnapshotError::UnsupportedVersion(version));
         }
         let k = reader.read_u16()?;
-        let min_block_size = if version >= 4 { 80 } else { 48 };
+        // v4 added block id (32 bytes). v3 and earlier don't have it.
+        // v5 added VRF fields: 1 byte flag + up to 160 bytes (pk+proof+output)
+        let min_block_size = if version >= 5 { 240 } else if version >= 4 { 80 } else { 48 };
         let count = reader.read_count(min_block_size)?;
 
         if version >= 4 {
@@ -158,7 +162,8 @@ pub fn decode_snapshot(bytes: &[u8]) -> Result<DagSnapshot, SnapshotError> {
     }
     let k = reader.read_u16()?;
     // v4 added block id (32 bytes). v3 and earlier don't have it.
-    let min_block_size = if version >= 4 { 80 } else { 48 };
+    // v5 added VRF fields: 1 byte flag + up to 160 bytes (pk+proof+output)
+    let min_block_size = if version >= 5 { 240 } else if version >= 4 { 80 } else { 48 };
     let count = reader.read_count(min_block_size)?;
     let mut blocks = Vec::with_capacity(count);
     for _ in 0..count {
@@ -171,12 +176,14 @@ pub fn decode_snapshot(bytes: &[u8]) -> Result<DagSnapshot, SnapshotError> {
 }
 
 /// Encode a block's reconstruction data: id, parents, work, timestamp, nonce,
-/// payload (length-prefixed, little-endian). Used by the whole-DAG snapshot and
-/// the incremental append-only log.
+/// VRF fields, payload (length-prefixed, little-endian). Used by the whole-DAG
+/// snapshot and the incremental append-only log.
 ///
 /// The block's id is stored explicitly so that pruned blocks (which have empty
 /// payload in the encoding) can be restored with their original id. The id is
 /// verified to match the recomputed id for non-pruned blocks.
+/// VRF fields (version 5+): has_vrf flag (1 byte), then if set: vrf_pk (32),
+/// vrf_proof (96), vrf_output (32).
 pub fn encode_block(block: &Block, buf: &mut Vec<u8>) {
     buf.extend_from_slice(block.id().as_bytes());
     buf.extend_from_slice(&(block.parents().len() as u64).to_le_bytes());
@@ -186,6 +193,21 @@ pub fn encode_block(block: &Block, buf: &mut Vec<u8>) {
     buf.extend_from_slice(&block.work().to_le_bytes());
     buf.extend_from_slice(&block.timestamp_ms().to_le_bytes());
     buf.extend_from_slice(&block.nonce().to_le_bytes());
+
+    // VRF fields (v5+)
+    if let Some(pk) = block.vrf_public_key() {
+        buf.push(1u8); // has_vrf flag
+        buf.extend_from_slice(pk.as_bytes());
+        if let Some(proof) = block.vrf_proof() {
+            buf.extend_from_slice(&proof.to_bytes());
+        }
+        if let Some(output) = block.vrf_output() {
+            buf.extend_from_slice(output.as_bytes());
+        }
+    } else {
+        buf.push(0u8); // no VRF
+    }
+
     let payload = block.payload();
     buf.extend_from_slice(&(payload.len() as u64).to_le_bytes());
     buf.extend_from_slice(payload);
@@ -266,23 +288,62 @@ impl<'a> Reader<'a> {
         let work = self.read_u128()?;
         let timestamp_ms = self.read_u64()?;
         let nonce = self.read_u64()?;
+
+        // VRF fields (v5+)
+        let has_vrf = self.read_u8()?;
+        let vrf_public_key = if has_vrf == 1 {
+            let pk_bytes: [u8; 32] = self.read_array::<32>()?;
+            Some(VrfPublicKey::from_bytes(&pk_bytes))
+        } else {
+            None
+        };
+        let vrf_proof = if has_vrf == 1 {
+            let proof_bytes: [u8; 96] = self.read_array::<96>()?;
+            Some(VrfProof::from_bytes(&proof_bytes).map_err(|_| SnapshotError::UnexpectedEof)?)
+        } else {
+            None
+        };
+        let vrf_output = if has_vrf == 1 {
+            let output_bytes: [u8; 32] = self.read_array::<32>()?;
+            Some(VrfOutput::from_bytes(output_bytes))
+        } else {
+            None
+        };
+
         let payload_len = self.read_count(1)?;
         if payload_len == 0 {
             // Pruned block: payload was evicted. Reconstruct with None payload.
             // The stored id is the authoritative one (computed at insertion time
             // over the original payload). We create a block with the same fields
             // using the stored id.
-            return Ok(Block::new_pruned(
+            return Ok(Block::new_pruned_with_vrf(
                 parents,
                 work,
                 timestamp_ms,
                 nonce,
+                vrf_public_key,
+                vrf_proof,
+                vrf_output,
                 stored_id,
             ));
         }
         let payload = self.read_bytes(payload_len)?;
         // For non-pruned blocks, verify the computed id matches the stored id.
-        let block = Block::new(parents, work, timestamp_ms, nonce, payload);
+        // Handle both legacy blocks (no VRF) and VRF blocks in v5+ format.
+        let block = if let Some(pk) = vrf_public_key {
+            Block::new_with_vrf(
+                parents,
+                work,
+                timestamp_ms,
+                nonce,
+                pk,
+                vrf_proof.unwrap(),
+                vrf_output.unwrap(),
+                payload,
+            )
+        } else {
+            Block::new(parents, work, timestamp_ms, nonce, payload)
+        };
         if block.id() != stored_id {
             return Err(SnapshotError::TrailingBytes); // id mismatch
         }
@@ -300,6 +361,11 @@ impl<'a> Reader<'a> {
     fn read_block(&mut self) -> Result<Block, SnapshotError> {
         let stored_id = BlockId::from_bytes(self.read_array::<32>()?);
         self.read_block_with_stored_id(stored_id)
+    }
+
+    fn read_u8(&mut self) -> Result<u8, SnapshotError> {
+        let b = self.read_array::<1>()?;
+        Ok(b[0])
     }
 }
 

@@ -29,6 +29,8 @@
 
 use core::fmt;
 
+use crate::vrf::{VrfOutput, VrfProof, VrfPublicKey};
+
 /// 32-byte BLAKE3 digest identifying a block.
 ///
 /// Ordering is defined over the raw bytes so that consensus tie-breaks (which
@@ -74,6 +76,12 @@ impl fmt::Display for BlockId {
 /// block's id meet its proof-of-work target (see [`crate::pow`]); `payload` is
 /// opaque bytes (transactions, in a full ledger) and only affects the id.
 ///
+/// **VRF fields** (Stage 3): `vrf_public_key` identifies the block producer;
+/// `vrf_proof` and `vrf_output` constitute a verifiable random function
+/// evaluation over the block's parent tips, providing leader eligibility
+/// (the output determines if this producer was eligible to produce a block
+/// at this height) and a randomness beacon.
+///
 /// The payload is `Option<Vec<u8>>` to support **DAG-level payload pruning**:
 /// once a block is sufficiently finalized (beyond `payload_pruning_depth` blue
 /// score below the selected tip), its payload can be set to `None` to reclaim
@@ -98,6 +106,17 @@ pub struct Block {
     /// changing it changes the hash — which is what mining explores. Not
     /// interpreted by GHOSTDAG; `0` for a block that was never mined.
     nonce: u64,
+    /// VRF public key of the block producer (for VRF proof verification).
+    /// `None` for blocks produced before VRF activation.
+    vrf_public_key: Option<VrfPublicKey>,
+    /// VRF proof: verifiable proof that `vrf_output` was correctly computed
+    /// from `vrf_public_key` and the VRF input (derived from parent tips).
+    /// `None` if VRF is not used for this block.
+    vrf_proof: Option<VrfProof>,
+    /// VRF output: 32 bytes of verifiable randomness derived from the proof.
+    /// Used for leader eligibility (e.g., `output < threshold` means eligible)
+    /// and as a randomness beacon.
+    vrf_output: Option<VrfOutput>,
     /// Opaque application payload; not interpreted by consensus.
     /// `None` indicates the payload has been pruned.
     payload: Option<Vec<u8>>,
@@ -109,6 +128,8 @@ impl Block {
     ///
     /// Parents are de-duplicated and sorted so the id is independent of the
     /// order in which a miner happened to list them.
+    ///
+    /// VRF fields are initialized to `None` (legacy block without VRF).
     pub fn new(
         mut parents: Vec<BlockId>,
         work: u128,
@@ -124,6 +145,37 @@ impl Block {
             work,
             timestamp_ms,
             nonce,
+            vrf_public_key: None,
+            vrf_proof: None,
+            vrf_output: None,
+            payload: Some(payload),
+        };
+        block.id = block.compute_id();
+        block
+    }
+
+    /// Create a block with full VRF fields.
+    pub fn new_with_vrf(
+        mut parents: Vec<BlockId>,
+        work: u128,
+        timestamp_ms: u64,
+        nonce: u64,
+        vrf_public_key: VrfPublicKey,
+        vrf_proof: VrfProof,
+        vrf_output: VrfOutput,
+        payload: Vec<u8>,
+    ) -> Self {
+        parents.sort_unstable();
+        parents.dedup();
+        let mut block = Self {
+            id: BlockId([0; 32]),
+            parents,
+            work,
+            timestamp_ms,
+            nonce,
+            vrf_public_key: Some(vrf_public_key),
+            vrf_proof: Some(vrf_proof),
+            vrf_output: Some(vrf_output),
             payload: Some(payload),
         };
         block.id = block.compute_id();
@@ -148,6 +200,35 @@ impl Block {
             work,
             timestamp_ms,
             nonce,
+            vrf_public_key: None,
+            vrf_proof: None,
+            vrf_output: None,
+            payload: None,
+        }
+    }
+
+    /// Create a pruned block with full VRF fields.
+    pub fn new_pruned_with_vrf(
+        mut parents: Vec<BlockId>,
+        work: u128,
+        timestamp_ms: u64,
+        nonce: u64,
+        vrf_public_key: Option<VrfPublicKey>,
+        vrf_proof: Option<VrfProof>,
+        vrf_output: Option<VrfOutput>,
+        id: BlockId,
+    ) -> Self {
+        parents.sort_unstable();
+        parents.dedup();
+        Self {
+            id,
+            parents,
+            work,
+            timestamp_ms,
+            nonce,
+            vrf_public_key,
+            vrf_proof,
+            vrf_output,
             payload: None,
         }
     }
@@ -161,6 +242,9 @@ impl Block {
             work,
             timestamp_ms,
             nonce,
+            vrf_public_key: None,
+            vrf_proof: None,
+            vrf_output: None,
             payload: Some(payload),
         };
         block.id = block.compute_id();
@@ -175,6 +259,9 @@ impl Block {
             work,
             timestamp_ms,
             nonce,
+            vrf_public_key: None,
+            vrf_proof: None,
+            vrf_output: None,
             payload: None,
         }
     }
@@ -199,6 +286,26 @@ impl Block {
         self.nonce
     }
 
+    /// The VRF public key of the block producer.
+    pub fn vrf_public_key(&self) -> Option<&VrfPublicKey> {
+        self.vrf_public_key.as_ref()
+    }
+
+    /// The VRF proof.
+    pub fn vrf_proof(&self) -> Option<&VrfProof> {
+        self.vrf_proof.as_ref()
+    }
+
+    /// The VRF output (32 bytes of verifiable randomness).
+    pub fn vrf_output(&self) -> Option<&VrfOutput> {
+        self.vrf_output.as_ref()
+    }
+
+    /// Whether this block has VRF fields (produced with VRF enabled).
+    pub fn has_vrf(&self) -> bool {
+        self.vrf_public_key.is_some()
+    }
+
     /// The block's stored BLAKE3 id (computed at creation, never changes).
     pub fn id(&self) -> BlockId {
         self.id
@@ -215,6 +322,19 @@ impl Block {
         hasher.update(&self.work.to_le_bytes());
         hasher.update(&self.timestamp_ms.to_le_bytes());
         hasher.update(&self.nonce.to_le_bytes());
+        // VRF fields (included in id for blocks that have them)
+        if let Some(pk) = &self.vrf_public_key {
+            hasher.update(&[1u8]); // has_vrf flag
+            hasher.update(pk.as_bytes());
+        } else {
+            hasher.update(&[0u8]);
+        }
+        if let Some(proof) = &self.vrf_proof {
+            hasher.update(proof.to_bytes());
+        }
+        if let Some(output) = &self.vrf_output {
+            hasher.update(output.as_bytes());
+        }
         let payload = self.payload.as_deref().unwrap_or(&[]);
         hasher.update(&(payload.len() as u64).to_le_bytes());
         hasher.update(payload);
@@ -254,14 +374,14 @@ impl Block {
     /// Returns the length of the block's encoded form (as produced by
     /// `kovanica_dag::encode_block`), used for skipping during checkpoint decode.
     pub fn encoded_len(&self) -> usize {
-        // id (32) + parents.len() (8) + each parent (32) + work (16) + timestamp (8) + nonce (8) + payload.len (8) + payload
-        32 + 8
-            + self.parents.len() * 32
-            + 16
-            + 8
-            + 8
-            + 8
-            + self.payload.as_deref().unwrap_or(&[]).len()
+        // id (32) + parents.len() (8) + each parent (32) + work (16) + timestamp (8) + nonce (8) +
+        // vrf_has_flag (1) + [vrf_pk (32) + vrf_proof (96) + vrf_output (32)] if has_vrf + payload.len (8) + payload
+        let mut len = 32 + 8 + self.parents.len() * 32 + 16 + 8 + 8 + 1;
+        if self.vrf_public_key.is_some() {
+            len += 32 + 96 + 32; // pk + proof + output
+        }
+        len += 8 + self.payload.as_deref().unwrap_or(&[]).len();
+        len
     }
 }
 
