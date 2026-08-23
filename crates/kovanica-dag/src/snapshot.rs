@@ -95,12 +95,30 @@ impl Dag {
     /// installed on the restored DAG; use [`Dag::set_validator`] afterwards if
     /// insert-time validation is wanted for subsequent blocks.
     pub fn read_snapshot(bytes: &[u8]) -> Result<Dag, SnapshotError> {
-        let snapshot = decode_snapshot(bytes)?;
-        let mut blocks = snapshot.blocks.into_iter();
-        let genesis = blocks.next().ok_or(SnapshotError::UnexpectedEof)?;
-        let mut dag = Dag::new(snapshot.k, genesis);
-        for block in blocks {
-            dag.insert(block).map_err(SnapshotError::Rebuild)?;
+        let mut reader = Reader::new(bytes);
+        if reader.read_array::<4>()? != MAGIC {
+            return Err(SnapshotError::BadMagic);
+        }
+        let version = reader.read_u16()?;
+        if version != VERSION {
+            return Err(SnapshotError::UnsupportedVersion(version));
+        }
+        let k = reader.read_u16()?;
+        let count = reader.read_count(48)?; // min block size (without id)
+        let mut blocks_with_ids = Vec::with_capacity(count);
+        for _ in 0..count {
+            blocks_with_ids.push(reader.read_block_with_id()?);
+        }
+        if reader.remaining() != 0 {
+            return Err(SnapshotError::TrailingBytes);
+        }
+
+        let mut iter = blocks_with_ids.into_iter();
+        let (genesis, _) = iter.next().ok_or(SnapshotError::UnexpectedEof)?;
+        let mut dag = Dag::new(k, genesis);
+        for (block, stored_id) in iter {
+            dag.insert_with_id(block, Some(stored_id))
+                .map_err(SnapshotError::Rebuild)?;
         }
         Ok(dag)
     }
@@ -131,15 +149,15 @@ pub fn decode_snapshot(bytes: &[u8]) -> Result<DagSnapshot, SnapshotError> {
     Ok(DagSnapshot { k, blocks })
 }
 
-/// Encode a block's reconstruction data: parents, work, timestamp, nonce,
-/// payload (length-prefixed, little-endian). Not the id encoding — this is what
-/// rebuilds the `Block`. Used by the whole-DAG snapshot and the incremental
-/// append-only log.
+/// Encode a block's reconstruction data: id, parents, work, timestamp, nonce,
+/// payload (length-prefixed, little-endian). Used by the whole-DAG snapshot and
+/// the incremental append-only log.
 ///
-/// If the block's payload has been pruned (`payload = None`), an empty payload
-/// is encoded (length 0). On decode, a zero-length payload reconstructs a pruned
-/// block via [`Block::new_pruned`].
+/// The block's id is stored explicitly so that pruned blocks (which have empty
+/// payload in the encoding) can be restored with their original id. The id is
+/// verified to match the recomputed id for non-pruned blocks.
 pub fn encode_block(block: &Block, buf: &mut Vec<u8>) {
+    buf.extend_from_slice(block.id().as_bytes());
     buf.extend_from_slice(&(block.parents().len() as u64).to_le_bytes());
     for parent in block.parents() {
         buf.extend_from_slice(parent.as_bytes());
@@ -219,6 +237,8 @@ impl<'a> Reader<'a> {
     }
 
     fn read_block(&mut self) -> Result<Block, SnapshotError> {
+        // Read the original block id (stored explicitly for pruned blocks).
+        let stored_id = BlockId::from_bytes(self.read_array::<32>()?);
         let n_parents = self.read_count(32)?; // each parent id is 32 bytes
         let mut parents = Vec::with_capacity(n_parents);
         for _ in 0..n_parents {
@@ -229,13 +249,27 @@ impl<'a> Reader<'a> {
         let nonce = self.read_u64()?;
         let payload_len = self.read_count(1)?;
         if payload_len == 0 {
-            // Pruned block: payload was evicted, reconstruct with None payload.
+            // Pruned block: payload was evicted. Reconstruct with None payload.
+            // The stored id is the authoritative one (computed at insertion time
+            // over the original payload). We create a block with the same fields;
+            // its computed id will differ (empty payload), but the DAG's node map
+            // uses the stored_id. This is handled by insert_with_id below.
             return Ok(Block::new_pruned(parents, work, timestamp_ms, nonce));
         }
         let payload = self.read_bytes(payload_len)?;
-        // Block::new de-duplicates and sorts parents; the stored ids already are,
-        // so the reconstructed block's id matches the original.
-        Ok(Block::new(parents, work, timestamp_ms, nonce, payload))
+        // For non-pruned blocks, verify the computed id matches the stored id.
+        let block = Block::new(parents, work, timestamp_ms, nonce, payload);
+        if block.id() != stored_id {
+            return Err(SnapshotError::TrailingBytes); // id mismatch
+        }
+        Ok(block)
+    }
+
+    /// Read a block and return both the block and its stored id.
+    fn read_block_with_id(&mut self) -> Result<(Block, BlockId), SnapshotError> {
+        let stored_id = BlockId::from_bytes(self.read_array::<32>()?);
+        let block = self.read_block()?;
+        Ok((block, stored_id))
     }
 }
 

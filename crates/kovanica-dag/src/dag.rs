@@ -582,7 +582,19 @@ impl Dag {
     /// precedes a parent's. The structural DAG checks run first, so a validator
     /// only ever sees a block whose parents are present.
     pub fn insert(&mut self, block: Block) -> Result<BlockId, DagError> {
-        let id = block.id();
+        self.insert_with_id(block, None)
+    }
+
+    /// Insert `block` with an optional pre-computed `id`. If `id` is `Some`,
+    /// it is used instead of `block.id()` — this is needed for restoring
+    /// pruned blocks from snapshots where the block's payload is empty and
+    /// `block.id()` would differ from the original.
+    pub fn insert_with_id(
+        &mut self,
+        block: Block,
+        id: Option<BlockId>,
+    ) -> Result<BlockId, DagError> {
+        let id = id.unwrap_or_else(|| block.id());
         if self.nodes.contains_key(&id) {
             return Err(DagError::DuplicateBlock(id));
         }
