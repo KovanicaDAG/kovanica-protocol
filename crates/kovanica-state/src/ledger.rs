@@ -44,6 +44,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use blake3;
+
 use kovanica_dag::{
     decode_snapshot, Block, BlockId, Dag, DagError, KParam, Retarget, SnapshotError,
 };
@@ -1009,18 +1011,24 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
     let nonce = reader.read_u64()?;
     let payload_len = reader.read_count(1)? as usize;
     if payload_len == 0 {
-        // Pruned block - need to provide the stored id (which is the 5th argument)
-        // But we don't have the stored id in this format. The checkpoint format
-        // stores blocks using kovanica_dag::encode_block which includes the id.
-        // Actually, the checkpoint format uses the standard encode_block which
-        // doesn't store the id separately - it's computed from the block data.
-        // For pruned blocks, the id is still the original id, but we can't
-        // reconstruct it without the original payload. However, the checkpoint
-        // format uses the same encoding as snapshot, which for pruned blocks
-        // stores empty payload. The id would be recomputed from empty payload.
-        // This is a limitation - we can't perfectly reconstruct pruned block ids.
-        // For now, we'll compute the id from the pruned block data.
-        let block = Block::new_pruned(parents, work, timestamp_ms, nonce);
+        // Pruned block - need to provide the id (5th argument).
+        // For pruned blocks in checkpoint, the original id is not stored.
+        // We compute a deterministic id from the available data.
+        // Note: This won't match the original id (which was computed with the original payload),
+        // but it's deterministic and consistent for the checkpoint.
+        let id = {
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&(parents.len() as u64).to_le_bytes());
+            for parent in &parents {
+                hasher.update(parent.as_bytes());
+            }
+            hasher.update(&work.to_le_bytes());
+            hasher.update(&timestamp_ms.to_le_bytes());
+            hasher.update(&nonce.to_le_bytes());
+            hasher.update(&0u64.to_le_bytes()); // empty payload len
+            BlockId(*hasher.finalize().as_bytes())
+        };
+        let block = Block::new_pruned(parents, work, timestamp_ms, nonce, id);
         let consumed = reader.pos;
         return Ok((block, consumed));
     }
