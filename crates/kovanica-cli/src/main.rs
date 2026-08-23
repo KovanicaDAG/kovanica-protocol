@@ -109,7 +109,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::WalletNew => {
             let seed = wallet::generate_seed();
             println!("Seed: {} (keep secret!)", seed);
-            println!("Address: {}", Address::from_seed(seed));
+            println!("Address: {}", wallet::address_from_seed(seed));
         }
         Commands::WalletSign { seed, sighash } => {
             let sig = sign_transfer(seed, &sighash)?;
