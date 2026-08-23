@@ -937,14 +937,25 @@ impl Ledger {
 
         let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
-        // Use existing snapshot decoding to read all blocks
-        let snapshot =
-            kovanica_dag::decode_snapshot(&bytes[pos..]).map_err(LedgerCheckpointError::Dag)?;
-        if snapshot.blocks.len() != block_count {
+        // Manually decode each block (they're stored using kovanica_dag::encode_block format)
+        let mut blocks = Vec::with_capacity(block_count);
+        let mut block_pos = pos;
+        for _ in 0..block_count {
+            if block_pos >= bytes.len() {
+                return Err(LedgerCheckpointError::UnexpectedEof);
+            }
+            let (block, consumed) = decode_checkpoint_block(&bytes[block_pos..])?;
+            blocks.push(block);
+            block_pos += consumed;
+        }
+        if block_pos != bytes.len() {
             return Err(LedgerCheckpointError::TrailingBytes);
         }
 
-        let mut blocks = snapshot.blocks.into_iter();
+        let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
+
+        // Use the first block as genesis
+        let mut blocks = blocks.into_iter();
         let genesis = blocks.next().ok_or(LedgerCheckpointError::UnexpectedEof)?;
         let genesis_txs =
             decode_block_payload(genesis.payload()).map_err(LedgerCheckpointError::Payload)?;
@@ -971,6 +982,91 @@ impl Ledger {
         }
 
         Ok(ledger)
+    }
+}
+
+/// Decode a checkpoint block from bytes (stored using `kovanica_dag::encode_block` format).
+/// Returns the block and the number of bytes consumed.
+fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpointError> {
+    // Blocks in checkpoint are stored using kovanica_dag::encode_block format
+    // (without the DAG magic/version header, just the block data).
+    // The format: parents_len + parents + work + timestamp_ms + nonce + payload_len + payload
+    let mut reader = CheckpointReader::new(bytes);
+    let n_parents = reader.read_count(32).map_err(LedgerCheckpointError::Dag)? as usize;
+    let mut parents = Vec::with_capacity(n_parents);
+    for _ in 0..n_parents {
+        if reader.remaining() < 32 {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        parents.push(BlockId::from_bytes(
+            reader
+                .read_array::<32>()
+                .map_err(LedgerCheckpointError::Dag)?,
+        ));
+    }
+    let work = reader.read_u128().map_err(LedgerCheckpointError::Dag)?;
+    let timestamp_ms = reader.read_u64().map_err(LedgerCheckpointError::Dag)?;
+    let nonce = reader.read_u64().map_err(LedgerCheckpointError::Dag)?;
+    let payload_len = reader.read_count(1).map_err(LedgerCheckpointError::Dag)? as usize;
+    if payload_len == 0 {
+        // Pruned block
+        let block = Block::new_pruned(parents, work, timestamp_ms, nonce);
+        let consumed = reader.pos;
+        return Ok((block, consumed));
+    }
+    if reader.remaining() < payload_len {
+        return Err(LedgerCheckpointError::UnexpectedEof);
+    }
+    let payload = reader
+        .read_bytes(payload_len)
+        .map_err(LedgerCheckpointError::Dag)?;
+    let block = Block::new(parents, work, timestamp_ms, nonce, payload);
+    let consumed = reader.pos;
+    Ok((block, consumed))
+}
+
+/// Local reader for checkpoint block decoding.
+struct CheckpointReader<'a> {
+    buf: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> CheckpointReader<'a> {
+    fn new(buf: &'a [u8]) -> Self {
+        Self { buf, pos: 0 }
+    }
+    fn remaining(&self) -> usize {
+        self.buf.len() - self.pos
+    }
+    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], LedgerCheckpointError> {
+        if self.remaining() < N {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        let mut out = [0u8; N];
+        out.copy_from_slice(&self.buf[self.pos..self.pos + N]);
+        self.pos += N;
+        Ok(out)
+    }
+    fn read_u64(&mut self) -> Result<u64, LedgerCheckpointError> {
+        Ok(u64::from_le_bytes(self.read_array::<8>()?))
+    }
+    fn read_u128(&mut self) -> Result<u128, LedgerCheckpointError> {
+        Ok(u128::from_le_bytes(self.read_array::<16>()?))
+    }
+    fn read_count(&mut self, min_element_bytes: usize) -> Result<u64, LedgerCheckpointError> {
+        let n = self.read_u64()? as usize;
+        if min_element_bytes > 0 && n > self.remaining() / min_element_bytes {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        Ok(n as u64)
+    }
+    fn read_bytes(&mut self, len: usize) -> Result<Vec<u8>, LedgerCheckpointError> {
+        if self.remaining() < len {
+            return Err(LedgerCheckpointError::UnexpectedEof);
+        }
+        let out = self.buf[self.pos..self.pos + len].to_vec();
+        self.pos += len;
+        Ok(out)
     }
 }
 
