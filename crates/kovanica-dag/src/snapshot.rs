@@ -32,8 +32,9 @@ use crate::dag::{Dag, DagError, KParam};
 /// Magic prefix identifying a Kovanica DAG snapshot (`"KVDG"`).
 const MAGIC: [u8; 4] = *b"KVDG";
 /// Snapshot format version. Bump on any incompatible framing change.
-/// v2 added the per-block `timestamp_ms` field; v3 added the `nonce` field.
-const VERSION: u16 = 3;
+/// v2 added the per-block `timestamp_ms` field; v3 added the `nonce` field;
+/// v4 added the per-block `id` field (for pruned payload roundtrips).
+const VERSION: u16 = 4;
 
 /// Why a snapshot could not be decoded or replayed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -100,27 +101,46 @@ impl Dag {
             return Err(SnapshotError::BadMagic);
         }
         let version = reader.read_u16()?;
-        if version != VERSION {
+        if version > VERSION {
             return Err(SnapshotError::UnsupportedVersion(version));
         }
         let k = reader.read_u16()?;
-        let count = reader.read_count(48)?; // min block size (without id)
-        let mut blocks_with_ids = Vec::with_capacity(count);
-        for _ in 0..count {
-            blocks_with_ids.push(reader.read_block_with_id()?);
-        }
-        if reader.remaining() != 0 {
-            return Err(SnapshotError::TrailingBytes);
-        }
+        let min_block_size = if version >= 4 { 80 } else { 48 };
+        let count = reader.read_count(min_block_size)?;
 
-        let mut iter = blocks_with_ids.into_iter();
-        let (genesis, _) = iter.next().ok_or(SnapshotError::UnexpectedEof)?;
-        let mut dag = Dag::new(k, genesis);
-        for (block, stored_id) in iter {
-            dag.insert_with_id(block, Some(stored_id))
-                .map_err(SnapshotError::Rebuild)?;
+        if version >= 4 {
+            // v4+: blocks have stored IDs
+            let mut blocks_with_ids = Vec::with_capacity(count);
+            for _ in 0..count {
+                blocks_with_ids.push(reader.read_block_with_id()?);
+            }
+            if reader.remaining() != 0 {
+                return Err(SnapshotError::TrailingBytes);
+            }
+            let mut iter = blocks_with_ids.into_iter();
+            let (genesis, _) = iter.next().ok_or(SnapshotError::UnexpectedEof)?;
+            let mut dag = Dag::new(k, genesis);
+            for (block, stored_id) in iter {
+                dag.insert_with_id(block, Some(stored_id)).map_err(SnapshotError::Rebuild)?;
+            }
+            Ok(dag)
+        } else {
+            // v3 and earlier: no stored IDs, use computed IDs
+            let mut blocks = Vec::with_capacity(count);
+            for _ in 0..count {
+                blocks.push(reader.read_block()?);
+            }
+            if reader.remaining() != 0 {
+                return Err(SnapshotError::TrailingBytes);
+            }
+            let mut blocks = blocks.into_iter();
+            let genesis = blocks.next().ok_or(SnapshotError::UnexpectedEof)?;
+            let mut dag = Dag::new(k, genesis);
+            for block in blocks {
+                dag.insert(block).map_err(SnapshotError::Rebuild)?;
+            }
+            Ok(dag)
         }
-        Ok(dag)
     }
 }
 
@@ -132,13 +152,13 @@ pub fn decode_snapshot(bytes: &[u8]) -> Result<DagSnapshot, SnapshotError> {
         return Err(SnapshotError::BadMagic);
     }
     let version = reader.read_u16()?;
-    if version != VERSION {
+    if version > VERSION {
         return Err(SnapshotError::UnsupportedVersion(version));
     }
     let k = reader.read_u16()?;
-    // Each block is at least 8 (parents len) + 16 (work) + 8 (timestamp) +
-    // 8 (nonce) + 8 (payload len) = 48.
-    let count = reader.read_count(48)?;
+    // v4 added block id (32 bytes). v3 and earlier don't have it.
+    let min_block_size = if version >= 4 { 80 } else { 48 };
+    let count = reader.read_count(min_block_size)?;
     let mut blocks = Vec::with_capacity(count);
     for _ in 0..count {
         blocks.push(reader.read_block()?);
