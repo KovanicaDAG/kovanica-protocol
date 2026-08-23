@@ -1000,11 +1000,7 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
         if reader.remaining() < 32 {
             return Err(LedgerCheckpointError::UnexpectedEof);
         }
-        parents.push(BlockId::from_bytes(
-            reader
-                .read_array::<32>()
-                .map_err(LedgerCheckpointError::Dag)?,
-        ));
+        parents.push(BlockId::from_bytes(reader.read_array::<32>()?));
     }
     let work = reader.read_u128()?;
     let timestamp_ms = reader.read_u64()?;
@@ -1026,7 +1022,7 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
             hasher.update(&timestamp_ms.to_le_bytes());
             hasher.update(&nonce.to_le_bytes());
             hasher.update(&0u64.to_le_bytes()); // empty payload len
-            BlockId(*hasher.finalize().as_bytes())
+            BlockId::from_bytes(*hasher.finalize().as_bytes())
         };
         let block = Block::new_pruned(parents, work, timestamp_ms, nonce, id);
         let consumed = reader.pos;
