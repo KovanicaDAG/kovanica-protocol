@@ -1,52 +1,50 @@
-# Kovanica Ledger
+# Kovanica Protocol
 
-**Default branch: `vps-live`.** This is the Rust node running on the VPS (`kovanica-testnet`).
+**BlockDAG ledger + node + CLI + web UI** — a GHOSTDAG-based distributed ledger where blocks reference multiple parents for parallel production and consensus.
 
-| Host | Process |
-| --- | --- |
-| `explorer.kovanica.online` | `kovanica-node explorer 127.0.0.1:8080` (this repo) |
-| `kovanica.online` / `wallet` / `map` | [kovanica-web](https://github.com/KovanicaDAG/kovanica-web) on `:3010` |
+**Default branch: `vps-live`.** This is the protocol running on the public VPS (`kovanica-testnet-1`).
 
-```sh
-cargo run -p kovanica-node -- explorer 127.0.0.1:8080
-```
+| Service | Host | Component |
+| --- | --- | --- |
+| Explorer + Node API | `explorer.kovanica.online` | `crates/kovanica-node` (Rust) |
+| Web UI (landing, wallet, map) | `kovanica.online` / `wallet.kovanica.online` / `map.kovanica.online` | `web/` (TypeScript) |
+| CLI wallet + queries | Local binary `kovanica` | `crates/kovanica-cli` (Rust) |
 
-Env on the public node: `KOVANICA_POW=1` `KOVANICA_MINE=0` `KOVANICA_FAUCET=0` `KOVANICA_ALLOW_RESET=0` `KOVANICA_LISTEN=0.0.0.0:9000` `KOVANICA_PEERS=off`.
+## What's in this repo
 
-TCP **:9000** is the only P2P path (libp2p/30333 removed). Clones: `KOVANICA_PEERS=explorer.kovanica.online:9000`. Cloneable tree: [kovanica-node](https://github.com/KovanicaDAG/kovanica-node).
+### Rust (Protocol + Node)
 
-Do **not** rebuild from `claude/claude-md-docs-*` — that line has no HTTP `explorer` mode.
-UI is TypeScript only: [kovanica-web](https://github.com/KovanicaDAG/kovanica-web). GHOSTDAG / UTXO / Ed25519 stay here.
-
-See [`TESTNET.md`](./TESTNET.md) for `kovanica-testnet`.
-
----
-
-A **DAG-based distributed ledger**: a BlockDAG where blocks reference multiple
-parents so they can be produced in parallel and merged, rather than forming a
-single linear chain. Consensus follows **GHOSTDAG** (the PHANTOM/GHOSTDAG
-protocol behind Kaspa).
-
-> Early stage. The block DAG + GHOSTDAG consensus core, a UTXO ledger applied in
-> GHOSTDAG order (with per-block state, snapshot persistence, and an incremental
-> append-only log), and a runnable node binary with a mempool, multi-node gossip,
-> an in-process overlay (`p2p::Mesh`) and a long-lived TCP relay
-> (`relay::RelaySession`) are implemented and tested.
-
-## What's here
-
-`crates/kovanica-dag` — the consensus core:
-
+**`crates/kovanica-dag`** — the consensus core:
 - **Block DAG** with multi-parent blocks and BLAKE3 block ids.
-- **GHOSTDAG**: selected parent, mergeset, and the k-cluster blue/red colouring.
-- **Linearization**: a deterministic total order over the whole DAG.
-- **Proof-of-work** (`pow` + `Dag::set_proof_of_work`): Nakamoto-style hash-target. Opt-in in the library; **on** for the public explorer (`KOVANICA_POW=1`).
-- **Difficulty** (`difficulty::Retarget` + `Dag::set_difficulty`).
-- **Reachability oracle** (`reachability::Reachability`).
+- **GHOSTDAG**: selected parent, mergeset, and k-cluster blue/red colouring.
+- **Linearization**: deterministic total order over the whole DAG.
+- **Proof-of-work** (Nakamoto-style hash-target, opt-in).
+- **Difficulty retargeting**.
+- **Reachability oracle**.
 
-`crates/kovanica-state` — the UTXO ledger (Ed25519 spends, GHOSTDAG-ordered apply, snapshots, finality).
+**`crates/kovanica-state`** — the UTXO ledger:
+- Ed25519 spend signatures.
+- GHOSTDAG-ordered apply, snapshots, finality.
+- Address encoding (`kvnc…dag`).
 
-`crates/kovanica-node` — line RPC (`serve` / `demo`) **and** `explorer [addr]` (JSON API + HTML from this process). Mempool, TCP gossip, `relay::RelaySession`, `LedgerStore`.
+**`crates/kovanica-node`** — the node binary:
+- Line RPC (`serve` / `demo` / REPL).
+- `explorer [addr]`: JSON API + HTML from this process.
+- Mempool, TCP gossip, `relay::RelaySession`, `LedgerStore`.
+
+**`crates/kovanica-cli`** — command-line client:
+- Read-only explorer queries (`head`, `state`, `balance`, etc.).
+- Local Ed25519 wallet (key generation, address derivation).
+- Signed transfers (`keygen`, `send`).
+- Reuses `kovanica-state` for consistency with the ledger.
+
+### TypeScript (Web UI)
+
+**`web/`** — public web UI:
+- Landing page, BlockDAG explorer graph, wallet (create/import/send), origin map.
+- TanStack Start + React + TypeScript.
+- Proxies to the Rust explorer API for live data.
+- VPS: `pm2 kovanica-web` on `127.0.0.1:3010`.
 
 ## Run the node
 
@@ -56,6 +54,7 @@ cargo run -p kovanica-node -- demo
 cargo run -p kovanica-node           # REPL
 ```
 
+Interactive REPL example:
 ```text
 > genesis 3 1000 500 1
 > send 1 200 2
@@ -65,12 +64,68 @@ cargo run -p kovanica-node           # REPL
 > save ledger.snap
 ```
 
+## Run the CLI
+
+```sh
+cargo build --release -p kovanica-cli
+./target/release/kovanica keygen --key alice.key
+./target/release/kovanica balance kvnc…dag
+./target/release/kovanica send --key alice.key --to kvnc…dag --amount 100000000
+```
+
+The CLI defaults to `https://explorer.kovanica.online`; override with `--api` or `KOVANICA_API`.
+
+## Run the web UI (local dev)
+
+```sh
+cd web
+npm ci
+npm run dev
+```
+
+VPS rebuild:
+```sh
+cd web
+npm run build:vps
+# rsync .output and pm2 restart kovanica-web
+```
+
 ## Build & test
 
 ```sh
-cargo build --release -p kovanica-node
+cargo build --release
 cargo test
 ```
+
+## Network
+
+Public testnet: **`kovanica-testnet-1`**
+
+- Bootstrap: `seed.kovanica.online:9000`
+- Explorer: https://explorer.kovanica.online
+- Native token: **KVNC** (8 decimals)
+
+**One P2P path:** plaintext TCP on port **9000** (no libp2p / 30333).
+
+```sh
+export KOVANICA_LISTEN=0.0.0.0:9000
+export KOVANICA_PEERS=seed.kovanica.online:9000
+export KOVANICA_POW=1
+export KOVANICA_MINE=0
+export KOVANICA_DATA="$PWD/data"
+
+cargo run -p kovanica-node -- explorer 127.0.0.1:8080
+```
+
+Open http://127.0.0.1:8080 and verify:
+```sh
+curl -s http://127.0.0.1:8080/api/head
+curl -s https://explorer.kovanica.online/api/head
+```
+
+## Deployment
+
+See [deploy/](./deploy/) for VPS nginx + certbot setup and systemd service configs.
 
 ## License
 
