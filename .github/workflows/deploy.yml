@@ -67,6 +67,16 @@ jobs:
           name: kovanica-node
           path: bin/
 
+      - name: Upload binary to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_PRIVATE_KEY }}
+          port: 22
+          source: "bin/kovanica-node"
+          target: /root/
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
@@ -81,6 +91,7 @@ jobs:
             cd /root/kovanica-protocol
             git pull --ff-only origin main
             # Replace binary with CI-built artifact
+            chmod +x ~/bin/kovanica-node
             cp ~/bin/kovanica-node ./target/release/kovanica-node
             # Restart the seed process pm2 already knows
             command -v pm2 >/dev/null || export PATH="$PATH:/usr/local/bin:/usr/lib/node_modules/.bin"
