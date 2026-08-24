@@ -73,7 +73,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_PRIVATE_KEY }}
-          port: 22
+          port: 2222
           source: "bin/kovanica-node"
           target: /root/
 
@@ -83,7 +83,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_PRIVATE_KEY }}
-          port: 22
+          port: 2222
           script: |
             set -e
             # Non-interactive SSH does not source ~/.profile
