@@ -98,6 +98,12 @@
         <h2>BlockDAG</h2>
         <p class="muted" style="margin:4px 0 0;font-size:12px">Native token <strong>Kovanica (KVNC)</strong> on <span id="net-label">kovanica-testnet</span>. Subsidy halves every 1000 blocks. Engine is the Rust node.</p>
       </div>
+      <div class="row" style="gap: 8px;">
+        <button class="ghost" id="zoom-in" title="Zoom in">+</button>
+        <button class="ghost" id="zoom-out" title="Zoom out">−</button>
+        <button class="ghost" id="zoom-reset" title="Reset zoom/pan">⌂</button>
+        <span class="pill" id="zoom-level">100%</span>
+      </div>
       <ul class="legend">
         <li><i style="background:var(--accent)"></i>Genesis</li>
         <li><i style="background:var(--chain)"></i>Selected chain</li>
@@ -110,7 +116,7 @@
   <nav class="tabs" id="tabs"></nav>
   <section class="panel" id="panel"></section>
 <script>
-const TABS = ["Graph","Wallets","Mesh","Mempool","Order","Blocks","Docs","Console"];
+const TABS = ["Graph","Wallets","Mesh","Mempool","Order","Blocks","Docs","Console","Analytics"];
 const walletHost = location.hostname.indexOf("wallet.") === 0 || location.pathname.indexOf("/wallet") >= 0;
 if (walletHost) document.body.classList.add("wallet-host");
 let tab = walletHost ? "Wallets" : "Graph";
@@ -122,6 +128,12 @@ let walletMsg = "";
 let walletBal = null;
 let walletHist = [];
 let bip39Words = null;
+let ws = null;
+let dagZoom = 1;
+let dagPan = { x: 0, y: 0 };
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+let dagLayout = {};
 
 const $ = (id) => document.getElementById(id);
 const short = (h) => (h || "").slice(0, 8);
@@ -180,6 +192,7 @@ function layout(blocks) {
 function drawDag(s) {
   const blocks = s.node.dag;
   const pos = layout(blocks);
+  dagLayout = pos;
   const sel = selectedBlock || s.node.selected_tip;
   let maxX = 200, maxY = 180;
   const edges = [];
@@ -205,11 +218,88 @@ function drawDag(s) {
   const svg = $("dag");
   svg.setAttribute("width", Math.max(640, maxX));
   svg.setAttribute("height", Math.max(240, maxY));
-  svg.innerHTML = edges.join("") + nodes;
+  svg.innerHTML = `<g class="dag-layer" transform="translate(${dagPan.x}, ${dagPan.y}) scale(${dagZoom})">
+    ${edges.join("")}
+    ${nodes}
+  </g>`;
   svg.querySelectorAll(".blk").forEach((g) => g.addEventListener("click", () => {
     selectedBlock = g.getAttribute("data-id");
     render();
   }));
+}
+
+function setupZoomPan() {
+  const svg = $("dag");
+  const container = svg.parentElement;
+  
+  // Zoom buttons
+  $("zoom-in").onclick = () => { dagZoom = Math.min(5, dagZoom * 1.2); updateZoomPan(); };
+  $("zoom-out").onclick = () => { dagZoom = Math.max(0.2, dagZoom / 1.2); updateZoomPan(); };
+  $("zoom-reset").onclick = () => { dagZoom = 1; dagPan = { x: 0, y: 0 }; updateZoomPan(); };
+  
+  // Wheel zoom
+  container.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    dagZoom = Math.max(0.2, Math.min(5, dagZoom * factor));
+    updateZoomPan();
+  }, { passive: false });
+  
+  // Pan drag
+  let isPanning = false;
+  let panStart = { x: 0, y: 0 };
+  
+  container.addEventListener("mousedown", (e) => {
+    if (e.target.closest(".blk")) return;
+    isPanning = true;
+    panStart = { x: e.clientX - dagPan.x, y: e.clientY - dagPan.y };
+    container.style.cursor = "grabbing";
+  });
+  
+  window.addEventListener("mousemove", (e) => {
+    if (!isPanning) return;
+    dagPan.x = e.clientX - panStart.x;
+    dagPan.y = e.clientY - panStart.y;
+    updateZoomPan();
+  });
+  
+  window.addEventListener("mouseup", () => {
+    if (isPanning) {
+      isPanning = false;
+      container.style.cursor = "";
+    }
+  });
+  
+  // Touch support
+  container.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      if (!e.target.closest(".blk")) {
+        isPanning = true;
+        panStart = { x: touch.clientX - dagPan.x, y: touch.clientY - dagPan.y };
+      }
+    }
+  });
+  
+  window.addEventListener("touchmove", (e) => {
+    if (!isPanning || e.touches.length !== 1) return;
+    e.preventDefault();
+    const touch = e.touches[0];
+    dagPan.x = touch.clientX - panStart.x;
+    dagPan.y = touch.clientY - panStart.y;
+    updateZoomPan();
+  }, { passive: false });
+  
+  window.addEventListener("touchend", () => { isPanning = false; });
+}
+
+function updateZoomPan() {
+  const svg = $("dag");
+  const layer = svg.querySelector(".dag-layer");
+  if (layer) {
+    layer.setAttribute("transform", `translate(${dagPan.x}, ${dagPan.y}) scale(${dagZoom})`);
+  }
+  $("zoom-level").textContent = Math.round(dagZoom * 100) + "%";
 }
 
 function blockCard(s) {
@@ -258,7 +348,7 @@ function walletsPanel(s) {
             <div class="mono">${fmtKvnc(w.balance)}</div>
   </div>`).join("");
   const keys = rec ? `
-    <p class="pill">Account ${rec.index || 0}</p>
+    <p class="pill">BIP44 Path: <span class="mono">${rec.path || `m/44'/${KOVANICA_COIN_TYPE}'/${rec.account || 0}'/${rec.change || 0}/${rec.index || 0}`}</span></p>
     <p class="mono" style="margin:8px 0">${rec.address}</p>
     <p class="muted">Balance ${walletBal === null ? "…" : fmtKvnc(walletBal)}. 1 KVNC = ${atom().toLocaleString()} atoms. Secret stays in this browser.</p>
     <img class="qr" alt="address QR" src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(rec.address)}" />
@@ -270,10 +360,21 @@ function walletsPanel(s) {
       <button type="button" data-wallet="download">Download seed</button>
       <button type="button" data-wallet="forget">Forget</button>
     </div>
-    <label>Account index</label>
-    <div class="row">
-      <input id="acc-index" type="number" min="0" max="20" value="${rec.index || 0}" style="width:80px" />
-      <button type="button" data-wallet="switch">Switch</button>
+    <label>BIP44 Path: m/44'/${KOVANICA_COIN_TYPE}'/account'/change/index</label>
+    <div class="row" style="gap: 8px; flex-wrap: wrap; margin-top: 8px;">
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:10px;color:var(--subtle)">Account</label>
+        <input id="acc-account" type="number" min="0" max="20" value="${rec.account || 0}" style="width:70px" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:10px;color:var(--subtle)">Change (0=ext, 1=int)</label>
+        <input id="acc-change" type="number" min="0" max="1" value="${rec.change || 0}" style="width:70px" />
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <label style="font-size:10px;color:var(--subtle)">Index</label>
+        <input id="acc-index" type="number" min="0" max="20" value="${rec.index || 0}" style="width:70px" />
+      </div>
+      <button type="button" data-wallet="switch" style="align-self:end">Switch</button>
     </div>
     <form id="wallet-send" style="margin-top:16px">
       <label>To (64-hex address)</label>
@@ -364,6 +465,77 @@ function consolePanel(s) {
   return `<div class="log">${pending || "<div>mempool empty</div>"}${ev || "<div>no gossip yet</div>"}</div>`;
 }
 
+function analyticsPanel(s) {
+  const node = s.node;
+  const totalBlocks = node.blocks || 0;
+  const totalTxs = node.tx_count || 0;
+  const avgTxsPerBlock = totalBlocks > 0 ? (totalTxs / totalBlocks).toFixed(2) : 0;
+  const mempoolSize = node.mempool || 0;
+  const mempoolBytes = node.mempool_bytes || 0;
+  const avgFee = node.pending && node.pending.length > 0 
+    ? (node.pending.reduce((sum, t) => sum + (t.fee || 0), 0) / node.pending.length).toFixed(0)
+    : 0;
+  
+  // Calculate block time stats if we have order
+  let avgBlockTime = 0;
+  if (node.order && node.order.length > 1) {
+    // We'd need timestamps for this - placeholder
+    avgBlockTime = "~120s";
+  }
+  
+  return `<div class="grid">
+    <div class="card">
+      <h3>Network Health</h3>
+      <dl class="muted">
+        <div style="display:flex;justify-content:space-between"><dt>Total Blocks</dt><dd>${totalBlocks}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Total Transactions</dt><dd>${totalTxs}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Avg Txs/Block</dt><dd>${avgTxsPerBlock}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Mempool Size</dt><dd>${mempoolSize} txs (${(mempoolBytes/1024).toFixed(1)} KB)</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Avg Fee</dt><dd>${fmtKvnc(avgFee)}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Avg Block Time</dt><dd>${avgBlockTime}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Blue Score</dt><dd>${node.blue_score || 0}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Blue Work</dt><dd>${node.blue_work || 0}</dd></div>
+      </dl>
+    </div>
+    <div class="card">
+      <h3>DAG Structure</h3>
+      <dl class="muted">
+        <div style="display:flex;justify-content:space-between"><dt>Tips</dt><dd>${node.tips ? node.tips.length : 0}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Selected Tip</dt><dd>${short(node.selected_tip || "")}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Blue Score</dt><dd>${node.blue_score || 0}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Blue Work</dt><dd>${node.blue_work || 0}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>k parameter</dt><dd>${node.k || 3}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Chain Length</dt><dd>${node.chain_len || 0}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Genesis</dt><dd>${short(node.genesis || "")}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Total Supply</dt><dd>${fmtKvnc(node.supply || 0)}</dd></div>
+      </dl>
+    </div>
+    <div class="card">
+      <h3>Economics</h3>
+      <dl class="muted">
+        <div style="display:flex;justify-content:space-between"><dt>Subsidy</dt><dd>${fmtKvnc(node.subsidy || 0)}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Issuance</dt><dd>${fmtKvnc(node.issuance || 0)}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Total Supply</dt><dd>${fmtKvnc(node.supply || 0)}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Min Fee</dt><dd>${fmtKvnc(node.min_fee || 0)}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Halving Era</dt><dd>${node.halving_era || 1000} blocks</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>PoW</dt><dd>${node.pow ? "enabled" : "disabled"}</dd></div>
+      </dl>
+    </div>
+    <div class="card">
+      <h3>Mempool Analysis</h3>
+      <dl class="muted">
+        <div style="display:flex;justify-content:space-between"><dt>Pending Txs</dt><dd>${mempoolSize}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Mempool Bytes</dt><dd>${(mempoolBytes/1024).toFixed(1)} KB</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Avg Tx Size</dt><dd>${mempoolSize > 0 ? (mempoolBytes / mempoolSize).toFixed(0) : 0} bytes</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Fee Range</dt><dd>${node.pending && node.pending.length > 0 ? 
+          fmtKvnc(Math.min(...node.pending.map(t => t.fee || 0))) + " - " + fmtKvnc(Math.max(...node.pending.map(t => t.fee || 0))) : "—"}</dd></div>
+        <div style="display:flex;justify-content:space-between"><dt>Median Fee</dt><dd>${node.pending && node.pending.length > 0 ? 
+          fmtKvnc(node.pending.map(t => t.fee || 0).sort((a,b)=>a-b)[Math.floor(node.pending.length/2)]) : "—"}</dd></div>
+      </dl>
+    </div>
+  </div>`;
+}
+
 function render() {
   if (!state) return;
   mining = !!state.mining;
@@ -374,7 +546,7 @@ function render() {
   $("reset").hidden = !state.allow_reset;
   drawDag(state);
   $("tabs").innerHTML = TABS.map((t) => `<button class="${t===tab?"on":""}" data-tab="${t}">${t}</button>`).join("");
-  const fn = { Graph: graphPanel, Wallets: walletsPanel, Mesh: meshPanel, Mempool: mempoolPanel, Order: orderPanel, Blocks: blocksPanel, Docs: docsPanel, Console: consolePanel }[tab];
+  const fn = { Graph: graphPanel, Wallets: walletsPanel, Mesh: meshPanel, Mempool: mempoolPanel, Order: orderPanel, Blocks: blocksPanel, Docs: docsPanel, Console: consolePanel, Analytics: analyticsPanel }[tab];
   $("panel").innerHTML = fn(state);
   if (tab === "Docs") {
     api("/docs").then((t) => { const el = $("docs-body"); if (el) el.textContent = t; }).catch(() => {});
@@ -399,6 +571,59 @@ async function refresh() {
     render();
   } catch (e) {
     $("status").textContent = "offline";
+  }
+}
+
+function connectWebSocket() {
+  const wsUrl = `${location.protocol === "https:" ? "wss:" : "ws:"}//${location.host}/ws`;
+  ws = new WebSocket(wsUrl);
+  ws.onopen = () => { console.log("WebSocket connected"); };
+  ws.onmessage = (event) => {
+    try {
+      const msg = JSON.parse(event.data);
+      handleWsMessage(msg);
+    } catch (e) { console.error("WS parse error", e); }
+  };
+  ws.onclose = () => {
+    console.log("WebSocket disconnected, reconnecting in 5s...");
+    setTimeout(connectWebSocket, 5000);
+  };
+  ws.onerror = (err) => { console.error("WebSocket error", err); };
+}
+
+function handleWsMessage(msg) {
+  switch (msg.type) {
+    case "block":
+      if (state) {
+        refresh(); // Full refresh on new block for simplicity
+      }
+      break;
+    case "tx":
+      if (state) {
+        refresh(); // New tx in mempool
+      }
+      break;
+    case "tip":
+      if (state) {
+        // Update tip without full refresh
+        state.node.selected_tip = msg.id;
+        state.node.blue_score = msg.blue_score;
+        render();
+      }
+      break;
+    case "peer":
+      if (state) {
+        refresh(); // Peer change
+      }
+      break;
+    case "state":
+      state = msg.snapshot;
+      if (!selectedBlock) selectedBlock = state.node.selected_tip;
+      render();
+      break;
+    case "ping":
+      ws.send(JSON.stringify({ type: "pong" }));
+      break;
   }
 }
 
@@ -454,6 +679,50 @@ async function accountSeed(seed64, index) {
   new DataView(buf.buffer).setUint32(seed64.length, index >>> 0, false);
   return new Uint8Array(await crypto.subtle.digest("SHA-256", buf));
 }
+
+async function bip44Seed(seed64, coinType, account, change, index) {
+  // BIP44 path: m / 44' / coin_type' / account' / change / index
+  // We'll derive step by step using HMAC-SHA512 (BIP32)
+  const hardened = (i) => 0x80000000 | i;
+  
+  // Master key from seed
+  const masterKey = await crypto.subtle.importKey(
+    "raw", seed64, { name: "HMAC", hash: "SHA-512" }, false, ["sign"]
+  );
+  
+  // m / 44'
+  let chainCode = new Uint8Array(await crypto.subtle.sign("HMAC", masterKey, new Uint8Array([0, 0, 0, hardened(44)])));
+  let privateKey = chainCode.slice(0, 32);
+  chainCode = chainCode.slice(32);
+  
+  // m / 44' / coin_type'
+  const coinTypeKey = await crypto.subtle.importKey("raw", privateKey, { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
+  let hmac = new Uint8Array(await crypto.subtle.sign("HMAC", coinTypeKey, new Uint8Array([0, 0, 0, hardened(coinType)])));
+  privateKey = hmac.slice(0, 32);
+  chainCode = hmac.slice(32);
+  
+  // m / 44' / coin_type' / account'
+  const accountKey = await crypto.subtle.importKey("raw", privateKey, { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
+  hmac = new Uint8Array(await crypto.subtle.sign("HMAC", accountKey, new Uint8Array([0, 0, 0, hardened(account)])));
+  privateKey = hmac.slice(0, 32);
+  chainCode = hmac.slice(32);
+  
+  // m / 44' / coin_type' / account' / change
+  const changeKey = await crypto.subtle.importKey("raw", privateKey, { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
+  hmac = new Uint8Array(await crypto.subtle.sign("HMAC", changeKey, new Uint8Array([0, 0, 0, change])));
+  privateKey = hmac.slice(0, 32);
+  chainCode = hmac.slice(32);
+  
+  // m / 44' / coin_type' / account' / change / index
+  const indexKey = await crypto.subtle.importKey("raw", privateKey, { name: "HMAC", hash: "SHA-512" }, false, ["sign"]);
+  hmac = new Uint8Array(await crypto.subtle.sign("HMAC", indexKey, new Uint8Array([0, 0, 0, index])));
+  const finalKey = hmac.slice(0, 32);
+  
+  return finalKey;
+}
+
+// Kovanica coin type (unregistered, using 999 for testnet)
+const KOVANICA_COIN_TYPE = 999;
 async function keysFromSeed32(seed32) {
   const pkcs8 = ed25519Pkcs8(seed32);
   const priv = await crypto.subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, true, ["sign"]);
@@ -479,11 +748,12 @@ async function bip39FromEntropy(entropy) {
   }
   return out.join(" ");
 }
-async function walletOpen(mnemonic, index, shown) {
+async function walletOpen(mnemonic, account, change, index, shown) {
   const seed64 = await mnemonicToSeed(mnemonic);
-  const seed32 = await accountSeed(seed64, index);
+  const seed32 = await bip44Seed(seed64, KOVANICA_COIN_TYPE, account, change, index);
   const keys = await keysFromSeed32(seed32);
-  const rec = { mnemonic, index, jwk: keys.jwk, address: keys.address, mnemonicShown: !!shown };
+  const path = `m/44'/${KOVANICA_COIN_TYPE}'/${account}'/${change}/${index}`;
+  const rec = { mnemonic, account, change, index, path, jwk: keys.jwk, address: keys.address, mnemonicShown: !!shown };
   saveWallet(rec);
   walletBal = 0;
   walletHist = [];
@@ -493,7 +763,7 @@ async function walletCreate() {
   try {
     const entropy = crypto.getRandomValues(new Uint8Array(16));
     const mnemonic = await bip39FromEntropy(entropy);
-    await walletOpen(mnemonic, 0, true);
+    await walletOpen(mnemonic, 0, 0, 0, true);
     walletMsg = "write down the 12 words";
   } catch (e) {
     walletMsg = "err " + (e.message || "this browser has no Ed25519 WebCrypto");
@@ -504,7 +774,7 @@ async function walletImport(phrase) {
   if (words.length !== 12 && words.length !== 24) throw new Error("need 12 or 24 words");
   const list = await loadWordlist();
   for (const w of words) if (!list.includes(w)) throw new Error("unknown word " + w);
-  await walletOpen(words.join(" "), 0, false);
+  await walletOpen(words.join(" "), 0, 0, 0, false);
   walletMsg = "imported";
 }
 async function walletSign(sighashHex) {
@@ -553,9 +823,11 @@ document.body.addEventListener("click", async (e) => {
     }
     if (op === "switch" && walletRecord()) {
       const rec = walletRecord();
-      const idx = Number(document.getElementById("acc-index").value) || 0;
-      await walletOpen(rec.mnemonic, idx, false);
-      walletMsg = "account " + idx;
+      const account = Number(document.getElementById("acc-account").value) || 0;
+      const change = Number(document.getElementById("acc-change").value) || 0;
+      const index = Number(document.getElementById("acc-index").value) || 0;
+      await walletOpen(rec.mnemonic, account, change, index, false);
+      walletMsg = `account ${account}, change ${change}, index ${index}`;
     }
     if (op === "miner" && walletRecord()) {
       try {
@@ -608,6 +880,8 @@ document.body.addEventListener("submit", async (e) => {
 });
 
 poll = setInterval(refresh, 700);
+setupZoomPan();
+connectWebSocket();
 refresh();
 </script>
 </body>
