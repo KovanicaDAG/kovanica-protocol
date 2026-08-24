@@ -149,7 +149,7 @@ groups:
           severity: info
         annotations:
           summary: "Snapshot size over 500MB"
-          description: "Snapshot is {{ $value | humanizeBytes }}."
+          description: "Snapshot is {{ $value | humanize }}."
 
   - name: kovanica-node-recording
     interval: 30s
