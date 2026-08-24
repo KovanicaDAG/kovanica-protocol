@@ -200,15 +200,12 @@ jobs:
     if: needs.sync.outputs.pushed == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      # No full checkout: this job only needs the workspace version, fetched
-      # as the single Cargo.toml blob at the exact SHA being released.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Read workspace version
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          curl -fsSL \
-            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/Cargo.toml" \
-            -o Cargo.toml
           VER="$(python3 - <<'EOF'
           import re, pathlib
           text = pathlib.Path("Cargo.toml").read_text()
