@@ -22,7 +22,9 @@ prometheus = "0.13"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 metrics = "0.22"
-metrics-exporter-prometheus = "0.13"
+# default features pull hyper-tls/openssl for the http-listener we don't use
+# (we render /metrics ourselves); dropping them keeps ARM cross-builds simple.
+metrics-exporter-prometheus = { version = "0.13", default-features = false }
 arbitrary = "1.3"
 proptest = "1.0"
 

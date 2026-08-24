@@ -116,7 +116,7 @@
   <nav class="tabs" id="tabs"></nav>
   <section class="panel" id="panel"></section>
 <script>
-const TABS = ["Graph","Wallets","Mesh","Mempool","Order","Blocks","Docs","Console","Analytics"];
+const TABS = ["Graph","Wallets","Mesh","Mempool","Order","Blocks","Docs","Console","Analytics","Mine"];
 const walletHost = location.hostname.indexOf("wallet.") === 0 || location.pathname.indexOf("/wallet") >= 0;
 if (walletHost) document.body.classList.add("wallet-host");
 let tab = walletHost ? "Wallets" : "Graph";
@@ -464,8 +464,35 @@ function mempoolPanel(s) {
     </tbody></table>`;
 }
 
-function docsPanel() {
-  return `<p class="muted"><a href="/docs">Raw TESTNET.md</a></p><pre id="docs-body" class="mono muted" style="white-space:pre-wrap">loading…</pre>`;
+function minePanel(s) {
+  const net = (s.network || "kovanica").replace(/[^a-z0-9-]/gi, "");
+  return `
+    <p class="pill">Mine ${net} — run the node, earn block subsidies</p>
+    <h2>Join the network in one command</h2>
+    <p class="muted" style="margin:8px 0 12px">Downloads the Kovanica node for your machine (Linux x64 / arm64),
+    installs it to <code>~/.local/bin</code>, and starts a systemd service that syncs from
+    <span class="mono">seed.kovanica.online:9000</span> and mines one block per minute on average.
+    No root required. Uninstall any time with <code>--uninstall</code>.</p>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
+      <input class="mono" readonly value="curl -fsSL https://explorer.kovanica.online/download/install.sh | sh" style="flex:1;min-width:280px;padding:10px;background:var(--bg);border-color:var(--border)">
+      <button type="button" data-mine="copy">Copy</button>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+      <button type="button" class="ghost" onclick="location.href='/download/install.sh'">Download install.sh</button>
+      <button type="button" class="ghost" onclick="location.href='/download/kovanica-node-linux-x64'">Linux x64 binary</button>
+      <button type="button" class="ghost" onclick="location.href='/download/kovanica-node-linux-arm64'">Linux arm64 binary</button>
+    </div>
+    <p class="muted">Prefer manual? After downloading, mark it executable and run:</p>
+    <pre class="mono" style="background:var(--bg);padding:10px;overflow:auto;font-size:11px">chmod +x kovanica-node-linux-x64
+KOVANICA_LISTEN=0.0.0.0:9000 KOVANICA_PEERS=seed.kovanica.online:9000 \\
+KOVANICA_MINE=1 KOVANICA_MINE_SECS=60 KOVANICA_POW=1 KOVANICA_DATA=~/.kovanica \\
+./kovanica-node-linux-x64 explorer 127.0.0.1:18080</pre>
+    <p class="muted" style="margin-top:12px">Verify your node is synced: <code class="mono">curl http://127.0.0.1:18080/api/head</code>
+    — genesis must match this network (<span class="mono">${(s.genesis||"").slice(0,16)}…</span>).
+    Mining uses real proof-of-work; difficulty retargets with network hash rate.</p>`;
+}
+
+function docsPanel() {  return `<p class="muted"><a href="/docs">Raw TESTNET.md</a></p><pre id="docs-body" class="mono muted" style="white-space:pre-wrap">loading…</pre>`;
 }
 
 function orderPanel(s) {
@@ -565,7 +592,7 @@ function render() {
   $("reset").hidden = !state.allow_reset;
   drawDag(state);
   $("tabs").innerHTML = TABS.map((t) => `<button class="${t===tab?"on":""}" data-tab="${t}">${t}</button>`).join("");
-  const fn = { Graph: graphPanel, Wallets: walletsPanel, Mesh: meshPanel, Mempool: mempoolPanel, Order: orderPanel, Blocks: blocksPanel, Docs: docsPanel, Console: consolePanel, Analytics: analyticsPanel }[tab];
+  const fn = { Graph: graphPanel, Wallets: walletsPanel, Mesh: meshPanel, Mempool: mempoolPanel, Order: orderPanel, Blocks: blocksPanel, Docs: docsPanel, Console: consolePanel, Analytics: analyticsPanel, Mine: minePanel }[tab];
   $("panel").innerHTML = fn(state);
   if (tab === "Docs") {
     api("/docs").then((t) => { const el = $("docs-body"); if (el) el.textContent = t; }).catch(() => {});
@@ -1075,9 +1102,6 @@ class TrezorTransport {
 }
 
 // Hardware wallet manager
-let hwTransport = null;
-let hwDeviceType = null;
-let hwDeviceInfo = null;
 
 async function connectHardwareWallet(type) {
   try {
@@ -1244,6 +1268,13 @@ async function walletOpen(mnemonic, account, change, index, shown) {
 }
 
 document.body.addEventListener("click", async (e) => {
+  const mine = e.target.closest("[data-mine]");
+  if (mine && mine.dataset.mine === "copy") {
+    await navigator.clipboard.writeText("curl -fsSL https://explorer.kovanica.online/download/install.sh | sh");
+    mine.textContent = "Copied!";
+    setTimeout(() => { mine.textContent = "Copy"; }, 1500);
+    return;
+  }
   const w = e.target.closest("[data-wallet]");
   if (w) {
     const op = w.dataset.wallet;
