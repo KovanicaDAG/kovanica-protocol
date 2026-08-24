@@ -1,6 +1,29 @@
 # TODO — Kovanica Protocol Development
 
-## Current Session: Multi-Seed Discovery & Kademlia DHT
+## Current Session: Public Mirror Pipeline & seed3 (2026-08-24)
+
+### Shipped
+
+| Item | Status | Notes |
+|------|--------|-------|
+| `sync-public-node` workflow: mirror → build → release | ✅ Done | PRs #10–#14; mirrors `crates/{dag,state,node}` + filtered `Cargo.toml` into public KovanicaDAG/kovanica-node on every main push |
+| Prebuilt binaries — rolling release `v0.1.0` | ✅ Done | Linux x86_64/aarch64 (static musl, zigbuild cross) + macOS x86_64/aarch64, sha256 per asset, tag replaced in place |
+| `install.sh` prebuilt-first | ✅ Done | kovanica-node#2; downloads latest release asset, source build only as fallback |
+| `deploy-seed.sh` Amazon Linux / RHEL support | ✅ Done | PR #15 — package-manager detection (apt/dnf), no curl-minimal conflict on AL2023 |
+| **seed3** deployed — first true off-box node | ✅ Done | AWS EC2 t3.micro, eu-north-1, Amazon Linux 2023, systemd `kovanica-seed3`, mining on; genesis `76cc019d…` matches testnet, headers-first sync climbing past launch |
+| DNS `seed3.kovanica.online` | ✅ Done | A record, DNS-only → `3.79.148.71`; P2P :9000 verified through hostname |
+
+### Follow-ups
+
+- [ ] Roll `seed3.kovanica.online:9000` into default `KOVANICA_PEERS` (public install.sh + deploy-seed.sh defaults)
+- [ ] Rotate the AWS keypair whose `.pem` was shared in chat (ed25519 keys are permanent access now)
+- [ ] Decide `kovanica-cli` publication (mirror workspace deliberately excludes it)
+- [ ] Optional: Windows release assets for `install.ps1` (currently source-build only)
+- [ ] Watch seed3 soak: peer count / block rate / memory over first week
+
+---
+
+## Previous Session: Multi-Seed Discovery & Kademlia DHT
 
 ### Implementation Status
 
@@ -8,13 +31,13 @@
 |------|--------|-------|
 | Create `dns_seed.rs` - DNS multi-seed resolver with injectable trait | ✅ Done | |
 | Create `dht.rs` - Kademlia DHT (NodeId, XOR metric, K-buckets, iterative lookup) | ✅ Done | |
-| Update `relay.rs` - Add DHT wire protocol messages (tags 0x20-0x23) | ⏳ In Progress | |
-| Update `p2p.rs` - Mesh integration for DHT simulation | ⏳ Pending | |
-| Update `node.rs` - Node DHT routing state and helper methods | ⏳ Pending | |
-| Update `explorer.rs` - Live explorer background task with multi-seed resolution | ⏳ Pending | |
-| Update `lib.rs` - Export new modules | ⏳ Pending | |
-| Create `tests/dht_discovery.rs` - Integration test suite | ⏳ Pending | |
-| Run tests and verify implementation | ⏳ Pending | |
+| Update `relay.rs` - Add DHT wire protocol messages (tags 0x20-0x23) | ✅ Done | shipped with the Tier 1–5 suite below |
+| Update `p2p.rs` - Mesh integration for DHT simulation | ✅ Done | |
+| Update `node.rs` - Node DHT routing state and helper methods | ✅ Done | |
+| Update `explorer.rs` - Live explorer background task with multi-seed resolution | ✅ Done | |
+| Update `lib.rs` - Export new modules | ✅ Done | |
+| Create `tests/dht_discovery.rs` - Integration test suite | ✅ Done | |
+| Run tests and verify implementation | ✅ Done | full workspace green incl. Tier 5 |
 
 ---
 
