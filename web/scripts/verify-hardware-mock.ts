@@ -102,7 +102,7 @@ async function runVerification() {
   console.log(`  Sighash:   ${sighashHex}`);
 
   // Request hardware signature
-  let statusUpdates: string[] = [];
+  const statusUpdates: string[] = [];
   const signResult = await provider.signTransaction(testAccount, sighashHex, {
     onStatusChange: (status) => statusUpdates.push(status),
   });

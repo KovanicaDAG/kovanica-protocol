@@ -119,7 +119,7 @@ async function runE2EHardwareChallenge() {
   console.log(`  ✓ Transaction prepared: sighash = ${prep.sighash}`);
 
   // Step 3: Sign sighash with MockHardwareProvider for Account 0
-  let statusUpdates: string[] = [];
+  const statusUpdates: string[] = [];
   const signResult = await provider.signTransaction(0, prep.sighash, {
     onStatusChange: (s) => statusUpdates.push(s),
   });
