@@ -18,7 +18,7 @@ use kovanica_state::{Address, Transaction};
 use crate::dht::{NodeId, PeerContact, RoutingTable};
 use crate::dns_seed::{production_resolver, DnsSeedConfig, DnsSeedResolver};
 use crate::metrics::{
-    init_metrics, record_explorer_http_request, record_rpc_request, set_explorer_ws_clients,
+    init_metrics, record_explorer_http_request, render_prometheus, set_explorer_ws_clients,
 };
 use crate::net::{
     encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first, sync_headers_first,
@@ -1339,8 +1339,9 @@ fn respond_download(
 }
 
 fn respond_prometheus_metrics(stream: &mut TcpStream) -> std::io::Result<()> {
-    // Return a basic Prometheus metrics response
-    let body = "# HELP kovanica_up Node is up\n# TYPE kovanica_up gauge\nkovanica_up 1\n";
+    // Render the live recorder payload (same series the dedicated scrape
+    // endpoint on :9090 serves).
+    let body = render_prometheus();
     respond(
         stream,
         200,

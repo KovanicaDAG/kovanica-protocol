@@ -7,11 +7,14 @@
 
 #![cfg_attr(fuzzing, no_main)]
 
-use arbitrary::{Arbitrary, Error as ArbitraryError, Unstructured};
+#[cfg(any(test, feature = "fuzzing", fuzzing))]
+use arbitrary::{Error as ArbitraryError, Unstructured};
+#[cfg(any(test, feature = "fuzzing", fuzzing))]
 use kovanica_dag::{Block, BlockId};
+#[cfg(any(test, feature = "fuzzing", fuzzing))]
 use kovanica_state::{
-    decode_block_payload, encode_block_payload, Address, KeyPair, OutPoint, Sig, Transaction, TxId,
-    TxOutput,
+    decode_block_payload, encode_block_payload, Address, HalvingSchedule, KeyPair, Ledger,
+    OutPoint, Sig, Transaction, TxId, TxOutput,
 };
 
 /// Generate a random transaction for fuzzing.
@@ -154,21 +157,73 @@ pub fn fuzz_payload_roundtrip(data: &[u8]) {
 /// Fuzz target: Block validation with various malformed inputs
 #[cfg(fuzzing)]
 pub fn fuzz_block_validation(data: &[u8]) {
-    if let Ok(mut u) = Unstructured::new(data) {
-        let keypair = KeyPair::from_u64(u.arbitrary().unwrap_or(1));
-        let parent_ids: Vec<BlockId> = (0..u.int_in_range(0..=3).unwrap_or(1))
-            .map(|_| {
-                u.arbitrary()
-                    .unwrap_or_else(|_| BlockId::from_bytes([0u8; 32]))
-            })
-            .collect();
+    let Ok(mut u) = Unstructured::new(data) else {
+        return;
+    };
+    let k = u.int_in_range(1..=5).unwrap_or(3);
+    let work = u.int_in_range(1..=1000).unwrap_or(1);
+    let timestamp_ms = u.int_in_range(0..=1_000_000_000).unwrap_or(0);
+    let nonce = u.arbitrary().unwrap_or(0u64);
+    let keypair = KeyPair::from_u64(u.arbitrary().unwrap_or(1));
+    // A DAG rooted at an arbitrary genesis; candidates build on the real
+    // genesis id (plus optional junk ids that must be rejected, not panic).
+    let mut dag = kovanica_dag::Dag::new(
+        k,
+        Block::genesis(work as u128, timestamp_ms, nonce, Vec::new()),
+    );
+    let genesis_id = dag.genesis();
+    let mut parent_ids = vec![genesis_id];
+    for _ in 0..u.int_in_range(0..=2).unwrap_or(0) {
+        parent_ids.push(BlockId::from_bytes(u.arbitrary().unwrap_or([0u8; 32])));
+    }
 
-        if let Ok(block) = arbitrary_block(&mut u, &parent_ids, &keypair) {
-            // Test that the block can be inserted into a DAG (may fail for invalid blocks)
-            let _ = kovanica_dag::Dag::new(3, kovanica_dag::Block::genesis(3, 0, 0, vec![]));
-            // We can't easily test full validation here without a full ledger setup
+    if let Ok(block) = arbitrary_block(&mut u, &parent_ids, &keypair) {
+        // Invalid blocks are rejected with Err; the invariant under fuzz is
+        // that insertion never panics on malformed input.
+        let _ = dag.insert(block);
+    }
+}
+
+/// Build an arbitrary genesis-only [`Ledger`] and its snapshot bytes.
+#[cfg(any(test, feature = "fuzzing", fuzzing))]
+fn arbitrary_ledger(u: &mut Unstructured) -> Result<(Ledger, Vec<u8>), ArbitraryError> {
+    let output_count = u.int_in_range(1..=5)?;
+    let mut outputs = Vec::with_capacity(output_count);
+    for _ in 0..output_count {
+        let value = u.int_in_range(1..=1000)?;
+        outputs.push(TxOutput::new(value, arbitrary_address(u)?));
+    }
+    let coinbase = Transaction::coinbase(outputs, Vec::new());
+    let schedule = HalvingSchedule::new(u.int_in_range(1..=10_000)?, u.int_in_range(1..=100)?);
+    let k = u.int_in_range(1..=10)?;
+    let ledger = Ledger::new(k, schedule, &[coinbase]).map_err(|_| ArbitraryError::EmptyChoose)?;
+    let bytes = ledger.write_snapshot();
+    Ok((ledger, bytes))
+}
+
+/// Fuzz target: snapshot write/read roundtrip never corrupts the ledger.
+#[cfg(fuzzing)]
+pub fn fuzz_snapshot_roundtrip(data: &[u8]) {
+    if let Ok(mut u) = Unstructured::new(data) {
+        if let Ok((ledger, bytes)) = arbitrary_ledger(&mut u) {
+            assert_snapshot_equivalent(&ledger, &bytes);
         }
     }
+}
+
+/// Shared assertion used by both the fuzz target and the deterministic test.
+#[cfg(any(test, feature = "fuzzing", fuzzing))]
+fn assert_snapshot_equivalent(ledger: &Ledger, bytes: &[u8]) {
+    use std::collections::BTreeMap;
+    let restored = Ledger::read_snapshot(bytes).expect("snapshot decodes");
+    assert_eq!(restored.dag().linearize(), ledger.dag().linearize());
+    let utxo = |l: &Ledger| -> BTreeMap<OutPoint, (u64, Address)> {
+        l.ledger_state()
+            .iter()
+            .map(|(op, o)| (*op, (o.value, o.owner)))
+            .collect()
+    };
+    assert_eq!(utxo(&restored), utxo(ledger));
 }
 
 /// Fuzz target: Transaction validation
@@ -254,6 +309,24 @@ mod proptest_helpers {
         assert_eq!(decoded[0], tx);
     }
 
+    #[test]
+    fn test_snapshot_roundtrip_prop() {
+        // Deterministic pseudo-random buffers drive arbitrary_ledger across a
+        // spread of shapes (output counts, values, addresses, k, schedule).
+        for seed in 0..64u64 {
+            let data = seed.to_le_bytes().repeat(80);
+            let mut u = Unstructured::new(&data);
+            let Ok((ledger, bytes)) = arbitrary_ledger(&mut u) else {
+                continue;
+            };
+            assert_snapshot_equivalent(&ledger, &bytes);
+            // The snapshot format is canonical: re-serialising a restored
+            // ledger yields identical bytes.
+            let restored = Ledger::read_snapshot(&bytes).unwrap();
+            assert_eq!(restored.write_snapshot(), bytes);
+        }
+    }
+
     // LibFuzzer entry points
     #[cfg(all(fuzzing, not(test)))]
     mod fuzz_targets {
@@ -270,6 +343,10 @@ mod proptest_helpers {
 
         libfuzzer_sys::fuzz_target!(|data: &[u8]| {
             fuzz_payload_roundtrip(data);
+        });
+
+        libfuzzer_sys::fuzz_target!(|data: &[u8]| {
+            fuzz_snapshot_roundtrip(data);
         });
 
         libfuzzer_sys::fuzz_target!(|data: &[u8]| {

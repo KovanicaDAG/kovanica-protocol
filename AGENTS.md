@@ -515,11 +515,21 @@ the testnet teaches us it needs.
    - DHT (Kademlia) for peer discovery
    - Fallback to hardcoded seeds only
 
-3. **Observability & reliability** — production readiness:
-   - Prometheus metrics: block rate, peer count, mempool size, reorg depth, sync latency
-   - Structured logging (JSON) + tracing
-   - Alerting on: peer count < 2, block rate drop > 50%, reorg depth > finality
-   - Fuzzing: block validation, tx encoding, snapshot roundtrip
+3. ~~**Observability & reliability** — production readiness:~~ ✅
+   - `kovanica-node::metrics`: real Prometheus recording (metrics 0.22, unified
+     with the exporter's recorder) for block rate, peer count, mempool size,
+     reorg depth, sync latency, DHT, validation and storage metrics
+   - Structured JSON logging via tracing; spans for block/peer/sync/DHT/RPC ops
+   - Scrape endpoints: explorer `/metrics` renders the live recorder payload;
+     standalone listener (default `0.0.0.0:9090`) serves the same series
+   - `alerting_rules.yml`: Prometheus alerts (peer count < 2, block-rate drop,
+     reorg depth, mempool/DHT churn) + recording rules
+   - `fuzz.rs`: cargo-fuzz targets for block/tx/payload encoding roundtrips,
+     block validation against a real DAG, and snapshot write/read roundtrip
+     (plus deterministic proptest coverage under `cargo test`)
+   - Note: `metrics` must stay on the same minor version as
+     `metrics-exporter-prometheus`'s dependency, or emissions go to a noop
+     recorder in the other crate version's global slot
 
 4. **Testnet soak & parameter tuning** — run for weeks:
    - 24/7 testnet with multiple independent seed operators

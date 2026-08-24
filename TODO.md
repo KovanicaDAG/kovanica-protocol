@@ -37,7 +37,7 @@
 ### Post-DHT Roadmap
 - [x] Light clients / SPV wire protocol (headers-first sync, Merkle proofs)
 - [x] Multi-seed DNS discovery (DNS seed records, DHT fallback)
-- [ ] Prometheus metrics & structured logging
+- [x] Prometheus metrics & structured logging (real recorder wiring, /metrics, alerting rules, fuzz targets)
 - [x] Testnet soak & parameter tuning (infrastructure scripts)
 - [x] Wallet & explorer polish (hardware wallet, fee estimation, DAG viz)
 
