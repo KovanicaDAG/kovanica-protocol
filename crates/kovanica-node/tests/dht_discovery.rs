@@ -968,33 +968,52 @@ fn test_adversarial_high_churn() {
 #[test]
 #[ignore]
 fn test_adversarial_sybil_resistance() {
-    // Sybil attack: attacker creates many NodeIds to poison routing table
+    // Sybil attack: an attacker floods the network with many NodeIds clustered
+    // near the victim's ID to poison its routing table. Honest peers met via
+    // verified handshakes BEFORE the flood must survive in the victim's table.
     let mut mesh = Mesh::new();
     let victim_id = NodeId::random();
     let victim = create_test_node(victim_id, 20); // k=20
     mesh.add_with_dht("victim", victim, victim_id);
 
-    // Attacker creates 100 nodes close to victim's ID
+    // Honest seeds the victim meets first (handshake-verified contacts).
+    let mut honest_ids = Vec::new();
+    for h in 0..5 {
+        let honest_id = NodeId::random();
+        honest_ids.push(honest_id);
+        let honest = create_test_node(honest_id, 8);
+        mesh.add_with_dht(format!("honest-{h}"), honest, honest_id);
+        mesh.connect("victim", &format!("honest-{h}")).unwrap();
+        mesh.drain(5);
+    }
+
+    // Attacker creates 100 nodes close to the victim's ID and the victim
+    // bootstraps from every one of them.
     for i in 0..100 {
         let mut bytes = victim_id.0;
         bytes[31] = i as u8;
         let attacker_id = NodeId::from_bytes(bytes);
         let attacker = create_test_node(attacker_id, 8);
         mesh.add_with_dht(format!("attacker-{}", i), attacker, attacker_id);
+        mesh.dht_bootstrap("victim", &format!("attacker-{}", i))
+            .unwrap();
     }
+    mesh.drain(10);
 
-    // Victim bootstraps from attacker nodes
-    for i in 0..100 {
-        let name = format!("attacker-{}", i);
-        mesh.dht_bootstrap("victim", &name).unwrap();
-    }
-
-    // Victim's routing table should still have diversity
+    // Every handshake-verified honest peer must still be known to the victim:
+    // a full bucket only pushes newcomers into the replacement cache, it never
+    // evicts established contacts.
     let table = mesh.dht_table("victim").unwrap();
+    let known: std::collections::HashSet<NodeId> =
+        table.all_contacts().iter().map(|c| c.node_id).collect();
+    for id in &honest_ids {
+        assert!(
+            known.contains(id),
+            "Honest contact {id:?} evicted by Sybil flood"
+        );
+    }
+    // And the table never exceeds its capacity bounds.
     let contacts = table.closest_peers(&victim_id, 20);
-
-    // With k=20, honest nodes should still be present
-    // (This test verifies the replacement cache and ping eviction work)
     assert!(contacts.len() <= 20);
 }
 

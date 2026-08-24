@@ -247,6 +247,25 @@ impl Mesh {
             self.enqueue_hello(from, to);
             record_peer_connected();
             set_peer_count(self.total_peer_count());
+
+            // A verified handshake exchanges NodeId and address, so both sides
+            // register each other as DHT contacts (Kademlia refreshes buckets
+            // on verified responses). Established contacts therefore claim
+            // bucket slots before unknown newcomers — later arrivals can only
+            // enter the replacement cache while the bucket stays full, which
+            // is the basis of eclipse resistance in this model.
+            let from_id = self.dht_tables.get(from).map(|t| t.local_id);
+            let to_id = self.dht_tables.get(to).map(|t| t.local_id);
+            if let (Some(from_id), Some(to_id)) = (from_id, to_id) {
+                let from_addr = format!("{}:9000", from); // simulated address
+                let to_addr = format!("{}:9000", to);
+                if let Some(table) = self.dht_tables.get_mut(from) {
+                    table.update_contact(PeerContact::new(to_id, to_addr));
+                }
+                if let Some(table) = self.dht_tables.get_mut(to) {
+                    table.update_contact(PeerContact::new(from_id, from_addr));
+                }
+            }
         }
         Ok(())
     }

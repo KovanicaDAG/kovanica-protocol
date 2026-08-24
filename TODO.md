@@ -21,18 +21,18 @@
 ## Next Sessions
 
 ### Phase 2: Integration Test Suite
-- [ ] Implement `tests/dht_discovery.rs` with 5-tier test coverage
-- [ ] Test multi-node dynamic bootstrapping via DNS seeds
-- [ ] Test multi-hop isolated target discovery
-- [ ] Test dynamic disconnect & routing pruning
-- [ ] Test routing table replenishment
-- [ ] Test partition healing
+- [x] Implement `tests/dht_discovery.rs` with 5-tier test coverage
+- [x] Test multi-node dynamic bootstrapping via DNS seeds
+- [x] Test multi-hop isolated target discovery
+- [x] Test dynamic disconnect & routing pruning
+- [x] Test routing table replenishment
+- [x] Test partition healing
 
 ### Phase 3: Adversarial Hardening (Tier 5)
-- [ ] High churn stress test
-- [ ] Sybil / poisoned routing table defense
-- [ ] Eclipse attack defense
-- [ ] 100% E2E test pass verification
+- [x] High churn stress test (`test_adversarial_high_churn`)
+- [x] Sybil / poisoned routing table defense (`test_adversarial_sybil_resistance` — honest contacts must survive a 100-node flood)
+- [x] Eclipse attack defense (`test_adversarial_eclipse_resistance` — fixed: `Mesh::connect` now registers handshake-verified mutual DHT contacts)
+- [x] 100% E2E test pass verification (full workspace suite, incl. previously-ignored Tier 5)
 
 ### Post-DHT Roadmap
 - [x] Light clients / SPV wire protocol (headers-first sync, Merkle proofs)

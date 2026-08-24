@@ -480,6 +480,8 @@ deterministic + adversarial tests per the conventions above.
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.
 - **Finality Checkpointing**: When writing a checkpoint block's payload to the disk (e.g., in `Ledger::write_checkpoint`), you must strictly explicitly prune it via `Block::new_pruned_with_vrf` so the bytes exactly match the reconstructed block from `read_checkpoint`.
+- **DHT handshake contacts**: `Mesh::connect` must register both endpoints as mutual DHT routing-table contacts — a verified handshake exchanges NodeId + address, and established contacts claiming bucket slots first is what gives eclipse resistance its footing (Tier 5 `test_adversarial_eclipse_resistance` asserts this). Do not decouple P2P connect from DHT contact registration.
+- **Metrics crate version**: `kovanica-node`'s `metrics` dependency must stay on the same minor version that `metrics-exporter-prometheus` depends on; otherwise emissions land in a noop recorder of the other version's global slot and `/metrics` renders nothing.
 
 ---
 
