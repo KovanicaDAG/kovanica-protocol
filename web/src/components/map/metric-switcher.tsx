@@ -13,7 +13,7 @@ export function OriginsChip({ className }: Props) {
       )}
     >
       <p className="text-xs font-medium tracking-wide text-subtle uppercase">Origin pulses</p>
-      <p className="mt-0.5 text-sm text-fg">Where taps and visits land</p>
+      <p className="mt-0.5 text-sm text-fg">Where recorded visits land</p>
     </div>
   );
 }

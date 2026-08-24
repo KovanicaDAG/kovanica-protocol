@@ -397,22 +397,20 @@ export function localMine(): { ok: true; block: string } {
 export function localFaucet(
   to: string | null,
   amountRaw: string | null,
-  kindRaw: string | null = null,
 ): { ok: true; tx: string } | string {
   if (!isAddr(to)) return "to address required";
   const amount = Number(amountRaw ?? ATOM);
   if (!Number.isFinite(amount) || amount <= 0) return "amount required";
-  const kind = kindRaw === "tap" ? "tap" : "faucet";
   const s = store();
   const block = mineBlock(s.blocks, [selectedTip(s.blocks)], s.miner);
-  const id = hashHex(`faucet:${kind}:${to}:${amount}:${Date.now()}`);
-  const tx: Tx = { id, coinbase: false, from: kind, to, amount };
+  const id = hashHex(`faucet:${to}:${amount}:${Date.now()}`);
+  const tx: Tx = { id, coinbase: false, from: "faucet", to, amount };
   addTx(block, tx, [{ owner: to, value: amount }]);
   s.history[s.history.length - 1] = {
     owner: to,
     block: block.id,
     tx: id,
-    kind,
+    kind: "faucet",
     delta: amount,
   };
   s.blocks = recast([...s.blocks, block]);

@@ -55,7 +55,7 @@ export function CountryPanel({ rows, selected, onClear, className }: Props) {
 
       <p className="text-xs leading-relaxed text-muted">
         {selected.pulses > 0
-          ? `${selected.pulses} live ${selected.pulses === 1 ? "pulse" : "pulses"} recorded from ${selected.name}. Each tap on Home and each Record origin adds one.`
+          ? `${selected.pulses} live ${selected.pulses === 1 ? "pulse" : "pulses"} recorded from ${selected.name}. Each recorded visit adds one.`
           : `Nobody has pulsed ${selected.name} yet. Record origin if that's you.`}
       </p>
     </section>
@@ -79,7 +79,7 @@ function GlobalSnapshot({
         <p className="font-mono text-xs tracking-wide text-subtle uppercase">Worldwide</p>
         <h2 className="font-display text-2xl leading-tight tracking-tight text-fg lg:text-3xl">Origins</h2>
         <p className="mt-2 text-sm leading-relaxed text-muted">
-          Pulses from coin taps and recorded visits, grouped by inferred country.
+          Pulses from recorded visits, grouped by inferred country.
         </p>
       </header>
       <div>

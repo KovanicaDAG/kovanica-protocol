@@ -1,4 +1,4 @@
-# Join kovanica-testnet-1
+# Join kovanica-testnet
 
 Public seed: **`seed.kovanica.online:9000`** (TCP only, grey-cloud DNS).
 HTTP explorer: https://explorer.kovanica.online  
@@ -61,7 +61,6 @@ export KOVANICA_PEERS=145.223.116.178:9000
 | `KOVANICA_MINE` | `0` |
 | `KOVANICA_MINE_SECS` | `120` (only if mine is on) |
 | `KOVANICA_FAUCET` | `0` |
-| `KOVANICA_TAP` | `0` on clones |
 | `KOVANICA_POW` | `1` |
 | `KOVANICA_DATA` | `./data` |
 

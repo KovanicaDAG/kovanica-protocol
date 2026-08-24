@@ -11,6 +11,6 @@
 ### VRF and Mempool Checkpoints
 - **VRF Serialization**: ✅ Passed
 - **Mempool Checkpoints**: ✅ Passed
-- **SPV Proofs Checkpoints**: ⏳ Running
+- **SPV Proofs Checkpoints**: ✅ Passed (headers-first sync + Merkle proofs + filters shipped; wire suite green in `crates/kovanica-node/tests/spv_sync.rs`)
 
 All DAG and Ledger invariants have proven completely resilient to full roundtrips and checkpointing!

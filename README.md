@@ -17,7 +17,7 @@ VPS: `pm2 kovanica-web` on `127.0.0.1:3010`. Node 20 is enough to **run** the bu
 Header **Preview / Live**:
 
 - Preview = in-process demo DAG (different genesis)
-- Live = proxy to `https://explorer.kovanica.online` (`kovanica-testnet-1`)
+- Live = proxy to `https://explorer.kovanica.online` (`kovanica-testnet`)
 
 ## Paths
 

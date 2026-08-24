@@ -5,18 +5,22 @@ The public seed runs on VPS `srv1745734` as the pm2 process
 
 | What | Where |
 | --- | --- |
-| Explorer HTTP | `127.0.0.1:8080` → Caddy → `explorer.kovanica.online` (Cloudflare-proxied) |
+| Explorer HTTP | `127.0.0.1:8080` → nginx → `explorer.kovanica.online` (Cloudflare-proxied) |
 | P2P (TCP) | `0.0.0.0:9000` + `[::]:9000` (v6only) → `seed.kovanica.online` (grey-cloud DNS) |
-| Data dir | `/root/kovanica-ledger/data` (`KOVANICA_DATA`) |
-| Source | `/root/kovanica-ledger` — a plain clone of `KovanicaDAG/kovanica-ledger@main` |
+| Data dir | `/root/kovanica-data` (`KOVANICA_DATA`, outside any git tree) |
+| Source | release artifact of `KovanicaDAG/kovanica-protocol`, scp'd to `/root/bin/kovanica-node` by the deploy workflow |
 
 ## Process env (as started; `pm2 describe kovanica-explorer` to view)
 
 ```
-KOVANICA_LISTEN=0.0.0.0:9000   KOVANICA_PEERS=off     KOVANICA_MINE=0
-KOVANICA_FAUCET=0              KOVANICA_TAP=1         KOVANICA_ALLOW_RESET=0
-KOVANICA_OPERATOR=0            KOVANICA_POW=1         KOVANICA_DATA=/root/kovanica-ledger/data
+KOVANICA_LISTEN=0.0.0.0:9000   KOVANICA_PEERS=seed2.kovanica.online:9001,seed3.kovanica.online:9000
+KOVANICA_MINE=1                KOVANICA_MINE_SECS=60  KOVANICA_FAUCET=1
+KOVANICA_ALLOW_RESET=0         KOVANICA_OPERATOR=1    KOVANICA_POW=1
+KOVANICA_DATA=/root/kovanica-data
 ```
+
+(`KOVANICA_TAP` no longer exists — the tap micro-faucet was removed
+project-wide on 2026-08-24.)
 
 Do **not** use `ecosystem.config.js` from the repo on this box — it is a
 template with an unrelated cwd.
@@ -58,12 +62,12 @@ re-genesis, not recoverable from anywhere else.
 
 ```sh
 # backup (while running is fine: files are written atomically per save)
-tar -C /root/kovanica-ledger -czf /root/backups/kovanica-data-$(date +%F).tar.gz data/
+tar -C /root/kovanica-data -czf /root/backups/kovanica-data-$(date +%F).tar.gz data/
 
 # restore
 pm2 stop kovanica-explorer
-rm -rf /root/kovanica-ledger/data
-tar -C /root/kovanica-ledger -xzf /root/backups/<file>.tar.gz
+rm -rf /root/kovanica-data
+tar -C /root/kovanica-data -xzf /root/backups/<file>.tar.gz
 pm2 start kovanica-explorer && curl -s localhost:8080/api/head
 ```
 
@@ -88,7 +92,7 @@ Never edit the marker by hand.
 
 ## Known non-goals
 
-- The seed deliberately runs `KOVANICA_MINE=0` and `KOVANICA_PEERS=off`:
-  it serves state and accepts exchanges; it does not mine or dial out.
-- TAP rate limit (40/day/address) persists in `data/taps.txt`; wiping it
-  resets faucet limits only.
+- The seed mines ~1 block/min and dials its sibling seeds; it still serves
+  state and accepts exchanges from clones.
+- The open faucet pays from operator funds; there is no per-address drip
+  (the TAP store was removed with the feature).

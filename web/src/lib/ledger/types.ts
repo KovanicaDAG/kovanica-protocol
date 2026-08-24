@@ -34,11 +34,11 @@ export type HistoryRow = {
   to: string;
   amount: number;
   ts: number;
-  kind: "faucet" | "send" | "coinbase" | "tap";
+  kind: "faucet" | "send" | "coinbase";
 };
 
 export const ATOM = 100_000_000;
 export const DECIMALS = 8;
 export const SUBSIDY = 50 * ATOM;
-export const NETWORK = "kovanica-testnet-1";
+export const NETWORK = "kovanica-testnet";
 export const K = 3;
