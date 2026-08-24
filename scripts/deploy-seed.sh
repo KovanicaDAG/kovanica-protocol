@@ -68,8 +68,17 @@ scp -q "$TARBALL" "$TARGET:/tmp/kovanica-src.tar.gz"
 ssh "$TARGET" "sudo tar -xzf /tmp/kovanica-src.tar.gz -C '$REMOTE_SRC' && sudo chown -R \$(whoami) '$REMOTE_SRC'"
 rm -f "$TARBALL"
 
-echo "[2/7] Installing build prerequisites (curl ca-certificates build-essential pkg-config)..."
-ssh "$TARGET" "sudo apt-get update -qq && sudo apt-get install -y -qq curl ca-certificates build-essential pkg-config >/dev/null"
+echo "[2/7] Installing build prerequisites..."
+# Debian/Ubuntu vs RHEL-family (Amazon Linux, Fedora): same toolset, two managers.
+ssh "$TARGET" 'if command -v apt-get >/dev/null; then
+    sudo apt-get update -qq && sudo apt-get install -y -qq curl ca-certificates build-essential pkg-config >/dev/null
+elif command -v dnf >/dev/null; then
+    # AL2023 ships curl(-minimal); installing `curl` beside it conflicts.
+    sudo dnf install -y -q gcc gcc-c++ make pkgconfig 2>/dev/null \
+      || sudo dnf install -y -q gcc gcc-c++ make
+else
+    echo "unsupported distro: need apt-get or dnf" >&2; exit 1
+fi'
 
 echo "[3/7] Ensuring swap (micro VMs need it for the release build)..."
 ssh "$TARGET" 'if [ "$(free -m | awk "/Mem:/{print \$2}")" -lt 2000 ] && ! swapon --show | grep -q .; then
