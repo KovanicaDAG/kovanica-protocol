@@ -20,6 +20,9 @@ use kovanica_state::{
 };
 
 use crate::mempool_v2::{MempoolConfig, MempoolV2};
+use crate::metrics::{
+    record_block_produced, record_mempool_evicted, record_mempool_promoted, set_mempool_counts,
+};
 
 /// How far ahead of the local wall clock a received block's timestamp may sit
 /// before the node rejects it: two hours, in milliseconds. This is **node
@@ -663,10 +666,17 @@ impl Node {
             return Err(NodeError::UnexpectedCoinbase);
         }
         let id = tx.id();
-        self.mempool
+        let start = std::time::Instant::now();
+        let result = self
+            .mempool
             .add(tx)
-            .map_err(|e| NodeError::Mempool(e.to_string()))?;
-        Ok(id)
+            .map_err(|e| NodeError::Mempool(e.to_string()));
+        let duration = start.elapsed();
+        match &result {
+            Ok(_) => crate::metrics::record_tx_validation(duration, false),
+            Err(_) => crate::metrics::record_tx_validation(duration, true),
+        }
+        result.map(|_| id)
     }
 
     /// Assemble the largest valid prefix of the mempool into a block on the
@@ -714,11 +724,25 @@ impl Node {
         block_txs.extend(selected);
         let nonce = Self::mine_nonce(dag, &parents, work, timestamp, &block_txs);
         let ledger = self.ledger.as_mut().expect("checked above");
+        let start = std::time::Instant::now();
         let block = ledger
             .insert(parents, work, timestamp, nonce, &block_txs)
             .map_err(NodeError::Insert)?;
+        let duration = start.elapsed();
+        let height = ledger
+            .dag()
+            .ghostdag(&block)
+            .map(|g| g.blue_score)
+            .unwrap_or(0);
+        let blue_score = height;
+        record_block_produced(height, blue_score, duration);
         self.mempool.remove_all(&selected_ids);
         self.evict_mempool();
+        set_mempool_counts(
+            self.mempool.len_pending(),
+            self.mempool.len_orphans(),
+            self.mempool.total_bytes(),
+        );
         Ok(Some(block))
     }
 
@@ -732,10 +756,24 @@ impl Node {
         let txs = self.issuance_txs(timestamp, 0);
         let nonce = Self::mine_nonce(dag, &parents, work, timestamp, &txs);
         let ledger = self.ledger.as_mut().ok_or(NodeError::NotInitialized)?;
+        let start = std::time::Instant::now();
         let id = ledger
             .insert(parents, work, timestamp, nonce, &txs)
             .map_err(NodeError::Insert)?;
+        let duration = start.elapsed();
+        let height = ledger
+            .dag()
+            .ghostdag(&id)
+            .map(|g| g.blue_score)
+            .unwrap_or(0);
+        let blue_score = height;
+        record_block_produced(height, blue_score, duration);
         self.evict_mempool();
+        set_mempool_counts(
+            self.mempool.len_pending(),
+            self.mempool.len_orphans(),
+            self.mempool.total_bytes(),
+        );
         Ok(id)
     }
 
@@ -764,8 +802,23 @@ impl Node {
         let Some(ledger) = self.ledger.as_ref() else {
             return;
         };
+        let before_pending = self.mempool.len_pending();
+        let before_orphans = self.mempool.len_orphans();
         let utxo = ledger.ledger_state();
         self.mempool.revalidate_with_utxo(&utxo);
+        let after_pending = self.mempool.len_pending();
+        let after_orphans = self.mempool.len_orphans();
+        if before_pending > after_pending {
+            record_mempool_evicted(before_pending - after_pending);
+        }
+        if before_orphans > after_orphans {
+            record_mempool_evicted(before_orphans - after_orphans);
+        }
+        set_mempool_counts(
+            self.mempool.len_pending(),
+            self.mempool.len_orphans(),
+            self.mempool.total_bytes(),
+        );
     }
 
     /// Called when a new block is added: promote orphans whose inputs are now available.
@@ -780,7 +833,16 @@ impl Node {
             .ghostdag(&tip)
             .map(|g| g.blue_score)
             .unwrap_or(0);
-        self.mempool.on_new_block(&utxo, height)
+        let promoted = self.mempool.on_new_block(&utxo, height);
+        if promoted > 0 {
+            record_mempool_promoted(promoted);
+        }
+        set_mempool_counts(
+            self.mempool.len_pending(),
+            self.mempool.len_orphans(),
+            self.mempool.total_bytes(),
+        );
+        promoted
     }
 
     /// The header for block `id`, if present. The header commits to the payload
@@ -1096,18 +1158,25 @@ impl Node {
             }
         }
 
-        match ledger.insert(
+        let start = std::time::Instant::now();
+        let result = ledger.insert(
             record.parents,
             record.work,
             record.timestamp_ms,
             record.nonce,
             &record.txs,
-        ) {
+        );
+        let duration = start.elapsed();
+        match result {
             Ok(id) => {
+                crate::metrics::record_block_validation(duration, false);
                 self.evict_mempool();
                 Ok(id)
             }
-            Err(e) => Err(NodeError::Insert(e)),
+            Err(e) => {
+                crate::metrics::record_block_validation(duration, true);
+                Err(NodeError::Insert(e))
+            }
         }
     }
 

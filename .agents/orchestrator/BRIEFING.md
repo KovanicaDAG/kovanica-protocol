@@ -1,14 +1,14 @@
-# BRIEFING — 2026-08-24T00:23:55Z
+# BRIEFING — 2026-08-24T00:33:00Z
 
 ## Mission
-Orchestrate the implementation and verification of P2P wire protocol support for Light Clients and SPV Proofs (`getheaders`, `headers`, `getblocks`, `merkleblock`) in `kovanica-node` P2P mesh and relay loops, along with comprehensive E2E/integration testing.
+Orchestrate the design, implementation, and verification of Multi-Seed Discovery (DNS seed querying) and a lightweight Kademlia-based DHT for peer routing in `kovanica-node`, along with comprehensive integration testing (`tests/dht_discovery.rs`) demonstrating dynamic discovery, routing, pruning, and replenishing.
 
 ## 🔒 My Identity
 - Archetype: orchestrator
 - Roles: orchestrator, user_liaison, human_reporter, successor
 - Working directory: /root/kovanica-protocol/.agents/orchestrator
 - Original parent: parent
-- Original parent conversation ID: 88ba1c9c-2e07-470a-bb3b-e778b525d0a3
+- Original parent conversation ID: 1c8d7b71-f1e9-4c63-9794-0d729a95e0b2
 
 ## 🔒 My Workflow
 - **Pattern**: Project
@@ -25,12 +25,12 @@ Orchestrate the implementation and verification of P2P wire protocol support for
    - Escalate: report to parent (sub-orchestrators only, last resort)
 4. **Succession**: Self-succeed at 20 spawns, write handoff.md, spawn successor
 - **Work items**:
-  1. Survey & Architecture [done]
-  2. M1: SPV Wire Protocol & Light Client Engine [done]
-  3. M2: E2E Integration Test Suite (`tests/spv_sync.rs`) [done]
-  4. M3: Final E2E Pass & Adversarial Hardening [done]
-- **Current phase**: 4 (Reporting)
-- **Current focus**: Victory reporting to user
+  1. Survey & Architecture [in-progress]
+  2. M1: DNS Seed Discovery & Kademlia DHT Engine (`dht.rs`, `p2p.rs`, `relay.rs`) [planned]
+  3. M2: Integration Test Suite (`tests/dht_discovery.rs`) [planned]
+  4. M3: Final E2E Pass & Adversarial Hardening [planned]
+- **Current phase**: 0 (Survey & Scope Mapping)
+- **Current focus**: Launch 3 parallel Survey Explorers
 
 ## 🔒 Key Constraints
 - NEVER write, modify, or create source code files directly.
@@ -42,38 +42,31 @@ Orchestrate the implementation and verification of P2P wire protocol support for
 - Never reuse a subagent after it has delivered its handoff — always spawn fresh.
 
 ## Current Parent
-- Conversation ID: 88ba1c9c-2e07-470a-bb3b-e778b525d0a3
-- Updated: not yet
+- Conversation ID: 1c8d7b71-f1e9-4c63-9794-0d729a95e0b2
+- Updated: 2026-08-24T00:33:00Z
 
 ## Key Decisions Made
-- All milestones completed successfully and validated by independent reviewers, challengers, and forensic auditor.
-- Gate status: PASS.
+- Initializing fresh survey for Multi-Seed Discovery and Kademlia DHT peer routing in kovanica-node.
 
 ## Team Roster
 | Agent | Type | Work Item | Status | Conv ID |
 |-------|------|-----------|--------|---------|
-| survey_explorer_1 | teamwork_preview_explorer | Survey P2P wire & relay | completed | dd50580e-6308-4f3e-bcd8-a5f858670fef |
-| survey_explorer_2 | teamwork_preview_explorer | Survey Consensus, Merkle, PoW/Diff | completed | 2f61751e-bd4b-4b4e-85d8-eb1559f51033 |
-| survey_explorer_3 | teamwork_preview_explorer | Survey E2E & SPV sync tests | completed | 08f1211f-ecf4-436e-9759-1563a34b79d1 |
-| m1_explorer_1 | teamwork_preview_explorer | M1 Wire Framing Analysis | completed | 54050b99-4637-4340-a280-5fd9742fb519 |
-| m1_explorer_2 | teamwork_preview_explorer | M1 Node SPV Handlers Analysis | completed | d03c429e-f165-4cc7-9634-453adaf336af |
-| m1_explorer_3 | teamwork_preview_explorer | M1 SPV Client Engine Analysis | completed | 4f6234db-67f8-408b-9c75-02ae92411fbe |
-| m1_worker | teamwork_preview_worker | M1 Implementation | completed | a6a3c3fb-5d0f-45a4-af90-639fa8a02bec |
-| reviewer_1 | teamwork_preview_reviewer | Code Correctness Review | completed (APPROVE) | 3fa222bb-0cca-4c2c-8db4-dbadffc2a255 |
-| reviewer_2 | teamwork_preview_reviewer | Protocol Security Review | completed (APPROVE) | c71f5399-6584-4a54-b193-42e9faba9f40 |
-| challenger_1 | teamwork_preview_challenger | Empirical Stress Challenge | completed (APPROVE) | c8ab3b64-a1f6-4256-a309-e9e47aa3fc06 |
-| challenger_2 | teamwork_preview_challenger | Invariant & Bounds Challenge | completed (APPROVE) | 7d460cb7-723a-4fdc-86ca-e69fbe64cc7a |
-| auditor_1 | teamwork_preview_auditor | Forensic Integrity Audit | completed (CLEAN) | 5d6e3be9-8739-4715-b0a4-7ebcaf74afde |
+| survey_dht_explorer_1 | teamwork_preview_explorer | Survey P2P & Mesh architecture | completed | 750172c6-b561-4b98-8fe3-2202e2fbb48d |
+| survey_dht_explorer_2 | teamwork_preview_explorer | Survey Kademlia DHT & DNS discovery | completed | da16c69c-ed86-4c1b-a364-76342e2bef45 |
+| survey_dht_explorer_3 | teamwork_preview_explorer | Survey Integration & DHT test scenarios | completed | a00b35f7-c3c4-4b20-bb58-b9a0517aaab5 |
+| m1_dht_explorer_1 | teamwork_preview_explorer | M1 DHT & DNS Engine Specification | in-progress | d6d33b13-0035-4644-bc17-87930625633f |
+| m1_dht_explorer_2 | teamwork_preview_explorer | M1 P2P Wire & Mesh Relay Specification | in-progress | 4e194799-4f91-4e5c-a49a-f0a2c16a57a0 |
+| m1_dht_explorer_3 | teamwork_preview_explorer | M1 Integration Test Suite Specification | in-progress | 29f3c446-f68d-4a20-b142-a1706feed468 |
 
 ## Succession Status
 - Succession required: no
-- Spawn count: 12 / 20
-- Pending subagents: none
+- Spawn count: 6 / 20
+- Pending subagents: d6d33b13-0035-4644-bc17-87930625633f, 4e194799-4f91-4e5c-a49a-f0a2c16a57a0, 29f3c446-f68d-4a20-b142-a1706feed468
 - Predecessor: none
-- Successor: not needed (task completed)
+- Successor: not yet spawned
 
 ## Active Timers
-- Heartbeat cron: c778ad59-4026-42bb-925e-648efbb3d7a6/task-15 (to be cancelled upon exit)
+- Heartbeat cron: d32ae92a-d48f-4bab-a3a0-c1ed5fdb5c73/task-21
 - Safety timer: none
 
 ## Artifact Index
@@ -85,4 +78,4 @@ Orchestrate the implementation and verification of P2P wire protocol support for
 - /root/kovanica-protocol/TEST_INFRA.md — E2E test plan & tiers
 - /root/kovanica-protocol/TEST_READY.md — Test suite readiness
 - /root/kovanica-protocol/.agents/orchestrator/GATE_STATUS.md — Gate status tracking
-- /root/kovanica-protocol/.agents/orchestrator/handoff.md — Final orchestrator handoff
+

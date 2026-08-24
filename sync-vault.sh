@@ -19,11 +19,8 @@ cp "$SRC/AGENTS.md" "$DST/AGENTS.md"
 cp "$SRC/OPERATIONS.md" "$DST/OPERATIONS.md"
 cp "$SRC/TESTNET.md" "$DST/TESTNET.md"
 cp "$SRC/README.md" "$DST/README.md"
-cp "$SRC/PROJECT.md" "$DST/PROJECT.md" 2>/dev/null || true
 cp "$SRC/REINDEX_BENCHMARKING.md" "$DST/REINDEX_BENCHMARKING.md" 2>/dev/null || true
-cp "$SRC/TEST_INFRA.md" "$DST/TEST_INFRA.md" 2>/dev/null || true
-cp "$SRC/TEST_READY.md" "$DST/TEST_READY.md" 2>/dev/null || true
-cp "$SRC/TODO.md" "$DST/TODO.md" 2>/dev/null || true
+# PROJECT.md, TEST_INFRA.md, TEST_READY.md, TODO.md are stale planning docs — not synced
 
 # 2. Config snapshots (context only)
 cp "$SRC/Cargo.toml" "$DST/Cargo.toml"

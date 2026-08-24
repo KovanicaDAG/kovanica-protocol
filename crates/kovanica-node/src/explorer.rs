@@ -17,6 +17,9 @@ use kovanica_state::{Address, Transaction};
 
 use crate::dht::{NodeId, PeerContact, RoutingTable};
 use crate::dns_seed::{production_resolver, DnsSeedConfig, DnsSeedResolver};
+use crate::metrics::{
+    init_metrics, record_explorer_http_request, record_rpc_request, set_explorer_ws_clients,
+};
 use crate::net::{
     encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first, sync_headers_first,
 };
@@ -69,6 +72,15 @@ pub fn serve(addr: impl ToSocketAddrs) -> std::io::Result<()> {
     listener.set_nonblocking(true)?;
     let bound = listener.local_addr()?;
     eprintln!("kovanica explorer on http://{bound}");
+
+    // Initialize metrics (Prometheus + tracing)
+    let metrics_addr = "0.0.0.0:9090";
+    if let Err(e) = init_metrics(metrics_addr) {
+        eprintln!("Failed to init metrics: {e}");
+    } else {
+        eprintln!("kovanica metrics on http://{metrics_addr}/metrics");
+    }
+
     let mut app = Explorer::boot_persist();
     loop {
         match listener.accept() {
@@ -718,6 +730,7 @@ fn handle_websocket(app: &mut Explorer, mut stream: TcpStream, req: &str) -> std
     // Register client
     let client = Arc::new(Mutex::new(stream));
     app.ws_clients.lock().unwrap().push(client.clone());
+    set_explorer_ws_clients(app.ws_clients.lock().unwrap().len());
 
     // Read loop (handle ping/pong, keep alive)
     let mut buf = [0u8; 1024];
@@ -744,6 +757,7 @@ fn handle_websocket(app: &mut Explorer, mut stream: TcpStream, req: &str) -> std
         .lock()
         .unwrap()
         .retain(|c| !Arc::ptr_eq(c, &client));
+    set_explorer_ws_clients(app.ws_clients.lock().unwrap().len());
     Ok(())
 }
 
@@ -764,9 +778,17 @@ fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> {
     let target = parts.next().unwrap_or("/");
     let (path, query) = split_query(target);
 
+    // Record HTTP request metric
+    record_explorer_http_request(path, 200); // Will update with actual status later
+
     // WebSocket upgrade
     if method == "GET" && path == "/ws" && req.contains("Upgrade: websocket") {
         return handle_websocket(app, stream, &req);
+    }
+
+    // Prometheus metrics endpoint
+    if method == "GET" && path == "/metrics" {
+        return respond_prometheus_metrics(&mut stream);
     }
 
     if method == "HEAD" && (path == "/" || path == "/index.html" || path == "/wallet") {
@@ -1264,6 +1286,17 @@ fn respond_download(
     stream.write_all(head.as_bytes())?;
     stream.write_all(body)?;
     stream.flush()
+}
+
+fn respond_prometheus_metrics(stream: &mut TcpStream) -> std::io::Result<()> {
+    // Return a basic Prometheus metrics response
+    let body = "# HELP kovanica_up Node is up\n# TYPE kovanica_up gauge\nkovanica_up 1\n";
+    respond(
+        stream,
+        200,
+        "text/plain; version=0.0.4; charset=utf-8",
+        body.as_bytes(),
+    )
 }
 
 fn snapshot(app: &Explorer) -> String {

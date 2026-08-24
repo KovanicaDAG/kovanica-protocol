@@ -1,0 +1,27 @@
+{
+  "seeds": [
+    {
+      "name": "seed1",
+      "ip": "SEED1_IP_HERE",
+      "region": "us-east-1"
+    },
+    {
+      "name": "seed2", 
+      "ip": "SEED2_IP_HERE",
+      "region": "eu-west-1"
+    },
+    {
+      "name": "seed3",
+      "ip": "SEED3_IP_HERE",
+      "region": "ap-southeast-1"
+    }
+  ],
+  "testnet": {
+    "k": 3,
+    "finality_depth": 1000,
+    "pruning_depth": 2000,
+    "difficulty_window": 1440,
+    "pow": true,
+    "mine_secs": 120
+  }
+}

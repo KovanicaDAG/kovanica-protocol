@@ -27,6 +27,11 @@ use kovanica_dag::{Block, BlockId};
 use kovanica_state::{encode_block_payload, Address, Transaction, TxId};
 
 use crate::dht::{DhtMsg, NodeId, PeerContact, RoutingTable};
+use crate::metrics::{
+    record_dht_bootstrap, record_dht_find_node, record_dht_pruned, record_dht_query_received,
+    record_dht_query_sent, record_p2p_message_received, record_p2p_message_sent,
+    record_peer_banned, record_peer_connected, record_peer_disconnected, set_peer_count,
+};
 use crate::node::{BlockRecord, Node, NodeError};
 use crate::p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
 use crate::relay::{handle_relay_query, RelayMsg};
@@ -240,8 +245,15 @@ impl Mesh {
             .insert(to.to_string());
         if inserted {
             self.enqueue_hello(from, to);
+            record_peer_connected();
+            set_peer_count(self.total_peer_count());
         }
         Ok(())
+    }
+
+    /// Total number of peer connections in the mesh.
+    pub fn total_peer_count(&self) -> usize {
+        self.peers.values().map(|s| s.len()).sum()
     }
 
     /// Current peers of `name`, in sorted order.
@@ -461,6 +473,8 @@ impl Mesh {
             .map(|t| t.local_id)
             .ok_or_else(|| P2pError::UnknownNode(format!("{} has no DHT table", seed)))?;
 
+        let start = std::time::Instant::now();
+
         // Get seed's closest peers to from_id (excluding from itself)
         let seed_table = self.dht_tables.get(seed).unwrap();
         let mut contacts = seed_table.closest_peers(&from_id, seed_table.k);
@@ -479,6 +493,11 @@ impl Mesh {
                 added += 1;
             }
         }
+
+        let duration = start.elapsed();
+        record_dht_bootstrap(duration, added);
+        record_dht_query_sent();
+        record_dht_query_received();
 
         Ok(added)
     }
@@ -521,6 +540,8 @@ impl Mesh {
         let local_id = from_table.local_id;
         drop(from_table);
 
+        let start = std::time::Instant::now();
+
         // Create a lookup
         let mut lookup = crate::dht::NodeLookup::new(*target, k, 3);
 
@@ -544,11 +565,13 @@ impl Mesh {
             // by looking up the candidate's routing table if they exist in the mesh
             let mut found_contacts = Vec::new();
             for candidate in candidates {
+                record_dht_query_sent();
                 // Try to find this candidate as a node in our mesh
                 // In simulation, we check if any node has this NodeId
                 let candidate_name = self.find_node_by_id(&candidate.node_id);
                 if let Some(name) = candidate_name {
                     if let Some(table) = self.dht_tables.get(&name) {
+                        record_dht_query_received();
                         let contacts = table.closest_peers(target, k);
                         found_contacts.extend(contacts);
                     }
@@ -560,6 +583,10 @@ impl Mesh {
             }
             rounds += 1;
         }
+
+        let duration = start.elapsed();
+        let results = lookup.closest().len();
+        record_dht_find_node(duration, results);
 
         Ok(lookup.closest())
     }
@@ -582,6 +609,9 @@ impl Mesh {
         for (_, table) in &mut self.dht_tables {
             let pruned = table.prune_unresponsive(3);
             total_pruned += pruned.len();
+        }
+        if total_pruned > 0 {
+            record_dht_pruned(total_pruned);
         }
         total_pruned
     }
@@ -694,6 +724,21 @@ impl Mesh {
             Envelope::Block { .. } => GossipKind::Block,
             Envelope::Tx { .. } => GossipKind::Tx,
         };
+        // Record message sent
+        let kind_str = match kind {
+            GossipKind::Hello => "hello",
+            GossipKind::Block => "block",
+            GossipKind::Tx => "tx",
+        };
+        // Estimate bytes (rough)
+        let bytes = match &q.envelope {
+            Envelope::Hello { advertised } => 100 + advertised.len() * 32,
+            Envelope::Block { record } => 100 + record.parents.len() * 32 + record.txs.len() * 200,
+            Envelope::Tx { .. } => 200,
+        };
+        record_p2p_message_sent(kind_str, bytes);
+        record_p2p_message_received(kind_str, bytes);
+
         self.events.push(GossipEvent {
             at: self.now,
             from: q.from.clone(),
