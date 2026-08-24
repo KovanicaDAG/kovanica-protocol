@@ -55,6 +55,7 @@ verifies genesis match against seed1.
 | --- | --- | --- | --- |
 | `seed.kovanica.online` | A | `145.223.116.178` | DNS only |
 | `seed.kovanica.online` | AAAA | `2a02:4780:41:1f43::1` | DNS only |
+| `seed3.kovanica.online` | A | `3.79.148.71` | DNS only |
 | `explorer/www/app/wallet/trader/bot/dash` | A | `145.223.116.178` | proxied |
 | `opencode` | A | `145.223.116.178` | DNS only |
 
@@ -119,5 +120,7 @@ KOVANICA_PEERS=seed.kovanica.online:9000 ./target/release/kovanica-node explorer
 
 Cloudflare Tunnel is NOT suitable for seeds (no raw public TCP without client agents).
 
-Roadmap naming: **seed3** = first true off-box node (Oracle/GCP), gets
-`A seed3.kovanica.online` (DNS-only) and joins every node's `KOVANICA_PEERS`.
+Roadmap naming: **seed3** = first true off-box node — shipped 2026-08-24 as
+AWS EC2 `t3.micro` in eu-north-1 (Amazon Linux 2023, systemd
+`kovanica-seed3`, mining on). DNS `A seed3.kovanica.online` (DNS-only) is live;
+joining every node's `KOVANICA_PEERS` is the follow-up.
