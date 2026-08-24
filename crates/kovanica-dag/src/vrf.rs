@@ -24,14 +24,10 @@
 //! All operations use the `curve25519-dalek` crate which provides constant-time
 //! Ristretto255 operations. The VRF is **deterministic** for a given (sk, input)
 //! pair — same input always yields same output/proof.
-
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
-use curve25519_dalek::scalar::Scalar;
-use curve25519_dalek::traits::Identity;
 
-/// Re-export Scalar for tests that need to manipulate VRF proofs.
 pub use curve25519_dalek::scalar::Scalar;
-use ed25519_dalek::{SigningKey, VerifyingKey, Verifier};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use rand_core::{CryptoRng, RngCore};
 use sha2::{Digest, Sha512};
 use std::fmt;
@@ -108,11 +104,16 @@ impl VrfProof {
         if bytes.len() != 96 {
             return Err(VrfError::InvalidProofLength);
         }
-        let gamma = CompressedRistretto::from_slice(&bytes[..32]);
-        let c = Scalar::from_canonical_bytes(bytes[32..64].try_into().unwrap())
-            .ok_or(VrfError::InvalidScalar)?;
-        let s = Scalar::from_canonical_bytes(bytes[64..].try_into().unwrap())
-            .ok_or(VrfError::InvalidScalar)?;
+        let gamma =
+            CompressedRistretto::from_slice(&bytes[..32]).map_err(|_| VrfError::InvalidGamma)?;
+        let c = Option::from(Scalar::from_canonical_bytes(
+            bytes[32..64].try_into().unwrap(),
+        ))
+        .ok_or(VrfError::InvalidScalar)?;
+        let s = Option::from(Scalar::from_canonical_bytes(
+            bytes[64..].try_into().unwrap(),
+        ))
+        .ok_or(VrfError::InvalidScalar)?;
         Ok(Self { gamma, c, s })
     }
 }
@@ -150,28 +151,34 @@ const VRF_PREFIX_OUTPUT: &[u8] = b"VRF_OUTPUT_v1";
 /// yields the same result.
 pub fn vrf_prove(sk: &VrfSecretKey, input: &[u8]) -> VrfEvaluation {
     let pk = sk.verifying_key();
-    let h_pub = hash_to_curve(&pk);
+    let h_pub = hash_to_curve(&pk, input);
 
-    // Deterministic nonce k = H(sk || input) (RFC 6979 style, but simpler here)
-    // In production, use RFC 6979 deterministic nonce generation.
+    let mut sk_wide = [0u8; 64];
+    sk_wide[..32].copy_from_slice(&sk.to_bytes());
+    let sk_scalar = Scalar::from_bytes_mod_order_wide(&sk_wide);
+
+    // VRF evaluation point Γ = sk * H_pub(input)
+    let gamma = sk_scalar * h_pub;
+
+    // Ephemeral nonce k = H(sk || input)
     let mut hasher = Sha512::new();
     hasher.update(sk.to_bytes());
     hasher.update(input);
     let k = Scalar::from_bytes_mod_order_wide(&hasher.finalize().into());
 
-    // Γ = k * H_pub
-    let gamma = k * h_pub;
+    // Ephemeral point V = k * H_pub
+    let v = k * h_pub;
 
-    // c = H(input || Γ || H_pub) (Fiat-Shamir challenge)
+    // c = H(input || Γ || V || H_pub) (Fiat-Shamir challenge)
     let mut hasher = Sha512::new();
     hasher.update(VRF_PREFIX_CHALLENGE);
     hasher.update(input);
     hasher.update(gamma.compress().as_bytes());
+    hasher.update(v.compress().as_bytes());
     hasher.update(h_pub.compress().as_bytes());
     let c = Scalar::from_bytes_mod_order_wide(&hasher.finalize().into());
 
     // s = k + c * sk (Schnorr response)
-    let sk_scalar = Scalar::from_bytes_mod_order_wide(&sk.to_bytes());
     let s = k + c * sk_scalar;
 
     // Output β = H_hash(Γ)
@@ -198,64 +205,24 @@ pub fn vrf_verify(
     input: &[u8],
     proof: &VrfProof,
 ) -> Result<VrfOutput, VrfError> {
-    let h_pub = hash_to_curve(pk);
+    let h_pub = hash_to_curve(pk, input);
 
-    // Recompute challenge c' = H(input || Γ || H_pub)
+    let gamma = proof.gamma.decompress().ok_or(VrfError::InvalidGamma)?;
+
+    // Reconstruct V' = s * H_pub - c * Γ
+    let v_prime = proof.s * h_pub - proof.c * gamma;
+
+    // Recompute challenge c' = H(input || Γ || V' || H_pub)
     let mut hasher = Sha512::new();
     hasher.update(VRF_PREFIX_CHALLENGE);
     hasher.update(input);
     hasher.update(proof.gamma.as_bytes());
+    hasher.update(v_prime.compress().as_bytes());
     hasher.update(h_pub.compress().as_bytes());
     let c_prime = Scalar::from_bytes_mod_order_wide(&hasher.finalize().into());
 
     // Check c matches
     if c_prime != proof.c {
-        return Err(VrfError::VerificationFailed);
-    }
-
-    // Verify Schnorr proof: s * B = Γ + c * H_pub
-    // Where B is the Ristretto base point (generator)
-    let gamma = proof
-        .gamma
-        .decompress()
-        .ok_or(VrfError::InvalidGamma)?;
-
-    let pk_point = hash_to_curve(pk);
-    let lhs = proof.s * RistrettoPoint::identity() + Scalar::ZERO; // Placeholder for actual check
-
-    // Proper verification: s*B == Γ + c*H_pub
-    // Since we don't have direct access to the base point scalar multiplication
-    // from the proof structure, we verify using the standard Ed25519 verification
-    // equation adapted for VRF: s*B - c*H_pub = k*B = Γ
-    // But we need to check the discrete log relation. Instead, use the standard
-    // VRF verification: reconstruct Γ from s, c, H_pub and check it matches.
-
-    // Reconstruct Γ' = s*B - c*H_pub where B is the Ristretto base point.
-    // Since we use H_pub = HashToCurve(pk), and the Schnorr proof is on H_pub,
-    // the verification equation is: Γ = s*H_pub - c*sk*H_pub = s*H_pub - c*Γ_true
-    // Wait, this is not quite right. Let's use the proper ECVRF verification.
-
-    // ECVRF verification (simplified):
-    // Given Γ = sk * H_pub, proof is (Γ, c, s) with c = H(input, Γ, H_pub), s = k + c*sk
-    // Verify: Γ = s * H_pub - c * (sk * H_pub) = s * H_pub - c * Γ
-    // So: Γ + c * Γ = s * H_pub => (1 + c) * Γ = s * H_pub
-    // This is wrong. Let's re-derive.
-
-    // Actually: Γ = k * H_pub, c = H(Γ), s = k + c * sk
-    // s * H_pub = k * H_pub + c * sk * H_pub = Γ + c * Γ
-    // So: Γ = s * H_pub - c * Γ
-    // This gives: Γ = (s - c) * H_pub? No.
-
-    // Let's use the standard ECVRF verify from the spec:
-    // U = s*B - c*H_pub (where B is base point, but we're using H_pub as base)
-    // Check if U == Γ
-
-    // For our construction with base point H_pub:
-    // U = s * H_pub - c * (sk * H_pub) = s * H_pub - c * Γ
-    // Since s = k + c*sk: U = (k + c*sk)*H_pub - c*sk*H_pub = k*H_pub = Γ ✓
-
-    let u = proof.s * h_pub - proof.c * gamma;
-    if u.compress() != proof.gamma {
         return Err(VrfError::VerificationFailed);
     }
 
@@ -268,12 +235,13 @@ pub fn vrf_verify(
     Ok(output)
 }
 
-/// Hash a public key to a Ristretto point using Elligator2 (via SHA512).
+/// Hash a public key and input to a Ristretto point using Elligator2 (via SHA512).
 /// This is the "hash to curve" step for VRF.
-fn hash_to_curve(pk: &VerifyingKey) -> RistrettoPoint {
+fn hash_to_curve(pk: &VerifyingKey, input: &[u8]) -> RistrettoPoint {
     let mut hasher = Sha512::new();
     hasher.update(VRF_PREFIX_HASH_TO_CURVE);
     hasher.update(pk.to_bytes());
+    hasher.update(input);
     let hash = hasher.finalize();
 
     // Use the first 64 bytes as a uniform 512-bit string for Elligator2
@@ -284,7 +252,9 @@ fn hash_to_curve(pk: &VerifyingKey) -> RistrettoPoint {
 
 /// Generate a fresh VRF keypair.
 pub fn vrf_generate_keypair<R: CryptoRng + RngCore>(rng: &mut R) -> (VrfSecretKey, VrfPublicKey) {
-    let sk = SigningKey::generate(rng);
+    let mut bytes = [0u8; 32];
+    rng.fill_bytes(&mut bytes);
+    let sk = SigningKey::from_bytes(&bytes);
     let pk = sk.verifying_key();
     (sk, pk)
 }

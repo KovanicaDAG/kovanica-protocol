@@ -15,16 +15,13 @@
 //! Long-lived relay sessions are [`crate::relay`] — tests only, not the
 //! explorer loop.
 
-mod p2p_hardening;
-
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use kovanica_dag::{Block, BlockId};
 use kovanica_state::{encode_block_payload, Address, Transaction, TxId};
 
 use crate::node::{BlockRecord, Node, NodeError};
-
-pub use p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
+use crate::p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
 
 /// Why a mesh operation failed.
 #[derive(Debug)]
@@ -464,7 +461,7 @@ impl Mesh {
                 // Rough estimate: parents + work + timestamp + nonce + txs
                 100 + record.parents.len() * 32 + record.txs.len() * 200
             }
-            Envelope::Tx { tx } => 200,
+            Envelope::Tx { .. } => 200,
         };
 
         // Check rate limit for the sender

@@ -35,19 +35,28 @@
 
 pub mod explorer;
 pub mod mempool;
+pub mod mempool_v2;
 pub mod net;
 pub mod node;
 pub mod p2p;
+pub mod p2p_hardening;
 pub mod relay;
 pub mod rpc;
+pub mod spv;
 
 pub use explorer::serve as serve_explorer;
-pub use mempool::{Mempool, MempoolV2, MempoolConfig, Added, MempoolError};
+pub use mempool::Mempool;
+pub use mempool_v2::{Added, MempoolConfig, MempoolError, MempoolV2};
 pub use net::{
     decode_bodies, decode_getbodies, decode_getheaders, decode_headers, decode_inventory,
     encode_bodies, encode_getbodies, encode_getheaders, encode_headers, encode_inventory,
     exchange_full_dump, serve_headers_first, sync_headers_first, NetError, SyncStats,
 };
-pub use node::{BlockHeader, BlockRecord, Node, NodeError, Prepared, Sent};
-pub use p2p::{GossipEvent, GossipKind, Mesh, P2pError, P2pHardening, P2pHardeningConfig, PeerStats};
-pub use relay::{apply_relay, RelayMsg, RelaySession};
+pub use node::{BlockHeader, BlockRecord, MerkleBlock, Node, NodeError, Prepared, Sent};
+pub use p2p::{GossipEvent, GossipKind, Mesh, P2pError};
+pub use p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
+pub use relay::{apply_relay, handle_relay_query, RelayMsg, RelaySession};
+pub use spv::{
+    build_locator, request_merkle_block, sync_headers_via_relay, sync_headers_via_relay_with_clock,
+    verify_merkle_block,
+};

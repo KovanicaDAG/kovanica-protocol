@@ -31,17 +31,15 @@
 
 use std::collections::HashMap;
 
-use kovanica_dag::{Block, BlockId, meets_target, Retarget, TimedWork};
-use crate::{Transaction, encode_block_payload};
 use blake3::Hasher;
-use serde::{Deserialize, Serialize};
+use kovanica_dag::{meets_target, Block, BlockId, Retarget, TimedWork};
 
 /// A block header: the minimal data a light client needs to verify the
 /// selected chain and transaction inclusion.
 ///
 /// The full block payload (transactions) is NOT stored — only the Merkle
 /// root of the transaction list.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockHeader {
     /// The block's own id (BLAKE3 hash of full block).
     pub id: BlockId,
@@ -97,11 +95,7 @@ impl BlockHeader {
 
     /// Verify this header's work matches the difficulty target implied by
     /// the previous `window + 1` headers (if `retarget` is provided).
-    pub fn verify_difficulty(
-        &self,
-        retarget: &Retarget,
-        prev_headers: &[&BlockHeader],
-    ) -> bool {
+    pub fn verify_difficulty(&self, retarget: &Retarget, prev_headers: &[&BlockHeader]) -> bool {
         if prev_headers.len() < retarget.window + 1 {
             // Not enough history — require minimum work
             return self.work >= retarget.min_work;
@@ -179,7 +173,7 @@ impl BlockHeader {
 
 /// Compute the Merkle root of a list of transactions.
 pub fn merkle_root(txs: &[crate::Transaction]) -> [u8; 32] {
-    let leaves: Vec<[u8; 32]> = txs.iter().map(|tx| tx.id().0).collect();
+    let leaves: Vec<[u8; 32]> = txs.iter().map(|tx| *tx.id().as_bytes()).collect();
     if leaves.is_empty() {
         return [0u8; 32];
     }
@@ -194,14 +188,14 @@ fn merkle_root_from_leaves(leaves: &[[u8; 32]]) -> [u8; 32] {
         for chunk in current.chunks(2) {
             if chunk.len() == 2 {
                 let mut hasher = Hasher::new();
-                hasher.update(chunk[0]);
-                hasher.update(chunk[1]);
+                hasher.update(&chunk[0]);
+                hasher.update(&chunk[1]);
                 next.push(*hasher.finalize().as_bytes());
             } else {
                 // Odd count: duplicate last
                 let mut hasher = Hasher::new();
-                hasher.update(chunk[0]);
-                hasher.update(chunk[0]);
+                hasher.update(&chunk[0]);
+                hasher.update(&chunk[0]);
                 next.push(*hasher.finalize().as_bytes());
             }
         }
@@ -211,7 +205,7 @@ fn merkle_root_from_leaves(leaves: &[[u8; 32]]) -> [u8; 32] {
 }
 
 /// A Merkle proof that a transaction is included in a block.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MerkleProof {
     /// The transaction id being proved.
     pub tx_id: [u8; 32],
@@ -234,11 +228,11 @@ impl MerkleProof {
         for sibling in &self.path {
             let mut hasher = Hasher::new();
             if idx % 2 == 0 {
-                hasher.update(current);
-                hasher.update(*sibling);
+                hasher.update(&current);
+                hasher.update(sibling);
             } else {
-                hasher.update(*sibling);
-                hasher.update(current);
+                hasher.update(sibling);
+                hasher.update(&current);
             }
             current = *hasher.finalize().as_bytes();
             idx /= 2;
@@ -252,7 +246,7 @@ pub fn generate_merkle_proof(txs: &[crate::Transaction], index: usize) -> Option
     if index >= txs.len() {
         return None;
     }
-    let leaves: Vec<[u8; 32]> = txs.iter().map(|tx| tx.id().0).collect();
+    let leaves: Vec<[u8; 32]> = txs.iter().map(|tx| *tx.id().as_bytes()).collect();
     let merkle_root = merkle_root_from_leaves(&leaves);
     let mut path = Vec::new();
     let mut idx = index;
@@ -267,8 +261,8 @@ pub fn generate_merkle_proof(txs: &[crate::Transaction], index: usize) -> Option
                     path.push(sibling);
                 }
                 let mut hasher = Hasher::new();
-                hasher.update(chunk[0]);
-                hasher.update(chunk[1]);
+                hasher.update(&chunk[0]);
+                hasher.update(&chunk[1]);
                 next_level.push(*hasher.finalize().as_bytes());
             } else {
                 // Odd count: duplicate last
@@ -276,8 +270,8 @@ pub fn generate_merkle_proof(txs: &[crate::Transaction], index: usize) -> Option
                     path.push(chunk[0]);
                 }
                 let mut hasher = Hasher::new();
-                hasher.update(chunk[0]);
-                hasher.update(chunk[0]);
+                hasher.update(&chunk[0]);
+                hasher.update(&chunk[0]);
                 next_level.push(*hasher.finalize().as_bytes());
             }
         }
@@ -285,7 +279,7 @@ pub fn generate_merkle_proof(txs: &[crate::Transaction], index: usize) -> Option
         idx /= 2;
     }
     Some(MerkleProof {
-        tx_id: txs[index].id().0,
+        tx_id: *txs[index].id().as_bytes(),
         merkle_root,
         path,
         index,
@@ -296,10 +290,12 @@ pub fn generate_merkle_proof(txs: &[crate::Transaction], index: usize) -> Option
 /// A compact filter for a block: Golomb-Rice coded set of output addresses.
 /// Allows light clients to quickly check if a block might contain transactions
 /// for their addresses without downloading full block payload.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BlockFilter {
     /// Golomb-Rice parameter (k). Higher = denser, larger filter.
     pub k: u8,
+    /// Number of elements.
+    pub n: u64,
     /// Filter data bytes.
     pub data: Vec<u8>,
 }
@@ -307,27 +303,31 @@ pub struct BlockFilter {
 impl BlockFilter {
     /// Create a filter from a block's output addresses.
     pub fn from_addresses(addresses: &[[u8; 32]], k: u8) -> Self {
-        // Simple implementation: hash each address, sort, Golomb-Rice encode
+        let n = addresses.len().max(1) as u64;
+        let m = 1u64 << k;
+        let max_val = n * m;
         let mut hashes: Vec<u64> = addresses
             .iter()
             .map(|addr| {
                 let mut hasher = Hasher::new();
                 hasher.update(addr);
                 let h = hasher.finalize();
-                u64::from_be_bytes(h.as_bytes()[..8].try_into().unwrap())
+                let raw = u64::from_be_bytes(h.as_bytes()[..8].try_into().unwrap());
+                // Map to [0, N * M] to keep diffs small for Golomb-Rice
+                ((raw as u128 * max_val as u128) >> 64) as u64
             })
             .collect();
         hashes.sort_unstable();
 
-        // Golomb-Rice encoding of differences
         let mut data = Vec::new();
+        let mut bit_len = 0;
         let mut prev = 0u64;
         for h in hashes {
             let diff = h.wrapping_sub(prev);
             prev = h;
-            golomb_rice_encode(&mut data, diff, k);
+            golomb_rice_encode(&mut data, &mut bit_len, diff, k);
         }
-        Self { k, data }
+        Self { k, n, data }
     }
 
     /// Check if an address might be in this filter (false positives possible).
@@ -335,10 +335,15 @@ impl BlockFilter {
         let mut hasher = Hasher::new();
         hasher.update(address);
         let h = hasher.finalize();
-        let target = u64::from_be_bytes(h.as_bytes()[..8].try_into().unwrap());
+        let raw = u64::from_be_bytes(h.as_bytes()[..8].try_into().unwrap());
+        let max_val = self.n * (1u64 << self.k);
+        let target = ((raw as u128 * max_val as u128) >> 64) as u64;
 
         // Decode and check
-        let mut bits = self.data.iter().flat_map(|b| (0..8).map(move |i| (b >> i) & 1));
+        let mut bits = self
+            .data
+            .iter()
+            .flat_map(|b| (0..8).map(move |i| (b >> i) & 1));
         let mut prev = 0u64;
         while let Some(val) = golomb_rice_decode(&mut bits, self.k) {
             prev = prev.wrapping_add(val);
@@ -354,29 +359,30 @@ impl BlockFilter {
 }
 
 /// Golomb-Rice encode a value into a bit stream.
-fn golomb_rice_encode(data: &mut Vec<u8>, val: u64, k: u8) {
+fn golomb_rice_encode(data: &mut Vec<u8>, bit_len: &mut usize, val: u64, k: u8) {
     let q = val >> k;
     let r = val & ((1u64 << k) - 1);
     // Unary for quotient
     for _ in 0..q {
-        push_bit(data, 1);
+        push_bit(data, bit_len, 1);
     }
-    push_bit(data, 0); // Terminator
-    // Binary for remainder
+    push_bit(data, bit_len, 0); // Terminator
+                                // Binary for remainder
     for i in (0..k).rev() {
-        push_bit(data, (r >> i) & 1);
+        push_bit(data, bit_len, (r >> i) & 1);
     }
 }
 
-fn push_bit(data: &mut Vec<u8>, bit: u64) {
-    let byte_idx = data.len() / 8;
-    let bit_idx = data.len() % 8;
+fn push_bit(data: &mut Vec<u8>, bit_len: &mut usize, bit: u64) {
+    let byte_idx = *bit_len / 8;
+    let bit_idx = *bit_len % 8;
     if byte_idx >= data.len() {
         data.push(0);
     }
     if bit == 1 {
         data[byte_idx] |= 1 << bit_idx;
     }
+    *bit_len += 1;
 }
 
 /// Decode next Golomb-Rice value from bit iterator.
@@ -387,7 +393,7 @@ fn golomb_rice_decode<I: Iterator<Item = u8>>(bits: &mut I, k: u8) -> Option<u64
         match bits.next() {
             Some(1) => q += 1,
             Some(0) => break,
-            None => return None,
+            _ => return None,
         }
     }
     // Read binary remainder
@@ -402,7 +408,7 @@ fn golomb_rice_decode<I: Iterator<Item = u8>>(bits: &mut I, k: u8) -> Option<u64
 }
 
 /// SPV client state: the header chain it has verified.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default)]
 pub struct SpvClient {
     /// Verified headers, indexed by height.
     headers: HashMap<u64, BlockHeader>,
@@ -454,12 +460,16 @@ impl SpvClient {
             // Need window headers for difficulty check
             let mut window = Vec::new();
             let mut cur_height = tip.height;
-            while window.len() < retarget.window + 1 && cur_height > 0 {
+            while window.len() < retarget.window + 1 {
                 if let Some(h) = self.headers.get(&cur_height) {
                     window.push(h);
                 }
+                if cur_height == 0 {
+                    break;
+                }
                 cur_height -= 1;
             }
+            window.reverse();
             if !header.verify_difficulty(&retarget, &window) {
                 return Err(SpvError::DifficultyMismatch);
             }
@@ -492,8 +502,8 @@ impl SpvClient {
 
     /// Verify a transaction is in the chain: check proof and that the block
     /// is in the verified header chain.
-    pub fn verify_transaction(&self, proof: &MerkleProof) -> bool {
-        self.verify_tx_inclusion(proof, proof.index) // Note: index here is the tx index, not height
+    pub fn verify_transaction(&self, proof: &MerkleProof, height: u64) -> bool {
+        self.verify_tx_inclusion(proof, height)
     }
 
     /// Get the chain work up to the tip.
@@ -503,29 +513,40 @@ impl SpvClient {
 }
 
 /// Errors from SPV operations.
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SpvError {
-    #[error("no checkpoint set")]
     NoCheckpoint,
-    #[error("height mismatch: expected {0}")]
     HeightMismatch,
-    #[error("prev_hash mismatch")]
     PrevHashMismatch,
-    #[error("timestamp not monotonic")]
     TimestampNotMonotonic,
-    #[error("chain work not increasing")]
     WorkNotIncreasing,
-    #[error("insufficient proof-of-work")]
     InsufficientPoW,
-    #[error("difficulty mismatch")]
     DifficultyMismatch,
 }
+
+impl std::fmt::Display for SpvError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SpvError::NoCheckpoint => f.write_str("no checkpoint set"),
+            SpvError::HeightMismatch => f.write_str("height mismatch"),
+            SpvError::PrevHashMismatch => f.write_str("prev_hash mismatch"),
+            SpvError::TimestampNotMonotonic => f.write_str("timestamp not monotonic"),
+            SpvError::WorkNotIncreasing => f.write_str("chain work not increasing"),
+            SpvError::InsufficientPoW => f.write_str("insufficient proof-of-work"),
+            SpvError::DifficultyMismatch => f.write_str("difficulty mismatch"),
+        }
+    }
+}
+
+impl std::error::Error for SpvError {}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kovanica_dag::{Block, pow::mine, Retarget};
-    use kovanica_state::{KeyPair, OutPoint, Transaction, TxOutput, UtxoSet, Address};
+    use crate::{
+        encode_block_payload, Address, KeyPair, OutPoint, Transaction, TxId, TxOutput, UtxoSet,
+    };
+    use kovanica_dag::{pow::mine, Block, Retarget};
 
     fn tx(addr: Address, value: u64, tag: &[u8]) -> Transaction {
         let kp = KeyPair::from_u64(1);
@@ -536,7 +557,7 @@ mod tests {
     fn header_chain(n: usize) -> (Vec<BlockHeader>, Vec<Vec<Transaction>>) {
         let mut headers = Vec::new();
         let mut all_txs = Vec::new();
-        let mut prev_hash = BlockId([0u8; 32]);
+        let mut prev_hash = BlockId::from_bytes([0u8; 32]);
         let mut blue_work = 0u128;
         let mut blue_score = 0u64;
 
@@ -551,13 +572,20 @@ mod tests {
             let block = if i == 0 {
                 Block::genesis(1, 0, 0, encode_block_payload(&txs))
             } else {
-                let mut b = Block::new(vec![prev_hash], 1, i as u64, 0, encode_block_payload(&txs));
+                let mut b = Block::new(
+                    vec![prev_hash],
+                    1,
+                    (i as u64) * 1000,
+                    0,
+                    encode_block_payload(&txs),
+                );
                 b = mine(&b); // Mine to meet work
                 b
             };
             blue_work += block.work();
             blue_score += 1;
-            let header = BlockHeader::from_block(&block, prev_hash, blue_score, blue_work, i as u64, &txs);
+            let header =
+                BlockHeader::from_block(&block, prev_hash, blue_score, blue_work, i as u64, &txs);
             prev_hash = block.id();
             headers.push(header);
             all_txs.push(txs);
@@ -568,13 +596,14 @@ mod tests {
     #[test]
     fn header_chain_verification() {
         let (headers, _) = header_chain(5);
-        let retarget = Retarget::new(2, 1000, 1000, 1); // window=2
+        let retarget = Retarget {
+            window: 2,
+            target_interval_ms: 1000,
+            max_factor: 4,
+            min_work: 1,
+        };
 
-        let mut client = SpvClient::new(
-            headers[0].clone(),
-            true,
-            Some(retarget),
-        );
+        let mut client = SpvClient::new(headers[0].clone(), true, Some(retarget));
 
         for h in &headers[1..] {
             client.add_header(h.clone()).unwrap();
@@ -591,23 +620,24 @@ mod tests {
 
         let proof = generate_merkle_proof(&txs, 0).unwrap();
         assert!(proof.verify());
-        assert_eq!(proof.tx_id, tx1.id().0);
+        assert_eq!(proof.tx_id, *tx1.id().as_bytes());
 
         let proof2 = generate_merkle_proof(&txs, 1).unwrap();
         assert!(proof2.verify());
-        assert_eq!(proof2.tx_id, tx2.id().0);
+        assert_eq!(proof2.tx_id, *tx2.id().as_bytes());
     }
 
     #[test]
     fn spv_verify_tx_inclusion() {
         let (headers, all_txs) = header_chain(3);
-        let retarget = Retarget::new(2, 1000, 1000, 1);
+        let retarget = Retarget {
+            window: 2,
+            target_interval_ms: 1000,
+            max_factor: 4,
+            min_work: 1,
+        };
 
-        let mut client = SpvClient::new(
-            headers[0].clone(),
-            true,
-            Some(retarget),
-        );
+        let mut client = SpvClient::new(headers[0].clone(), true, Some(retarget));
 
         for h in &headers[1..] {
             client.add_header(h.clone()).unwrap();
@@ -623,7 +653,7 @@ mod tests {
     fn block_filter_basic() {
         let kp = KeyPair::from_u64(1);
         let addr = kp.address();
-        let filter = BlockFilter::from_addresses(&[addr.0], 8);
-        assert!(filter.contains(&addr.0));
+        let filter = BlockFilter::from_addresses(&[*addr.as_bytes()], 8);
+        assert!(filter.contains(addr.as_bytes()));
     }
 }

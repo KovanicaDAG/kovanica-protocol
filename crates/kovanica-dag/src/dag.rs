@@ -74,7 +74,7 @@ use crate::block::{Block, BlockId};
 use crate::difficulty::{Retarget, TimedWork};
 use crate::reachability::Reachability;
 use crate::validation::BlockValidator;
-use crate::vrf::{vrf_verify, VrfError, VrfOutput, VrfPublicKey, VrfProof};
+use crate::vrf::vrf_verify;
 
 /// Errors returned when inserting a block into the [`Dag`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,10 +108,7 @@ pub enum DagError {
     InsufficientProofOfWork { id: BlockId, work: u128 },
     /// VRF is enforced (see [`Dag::set_vrf`]) and the block's VRF proof is invalid
     /// or the VRF output does not meet the leader eligibility threshold.
-    InvalidVrf {
-        id: BlockId,
-        reason: String,
-    },
+    InvalidVrf { id: BlockId, reason: String },
 }
 
 impl core::fmt::Display for DagError {
@@ -600,7 +597,7 @@ impl Dag {
         &self,
         block: &Block,
         id: BlockId,
-        ghostdag: &GhostdagData,
+        _ghostdag: &GhostdagData,
         threshold: u64,
     ) -> Result<(), DagError> {
         // VRF input is derived from the block's parent tips (deterministic from parents)
@@ -621,10 +618,11 @@ impl Dag {
         })?;
 
         // Verify the VRF proof
-        let verified_output = vrf_verify(pk, &vrf_input, proof).map_err(|e| DagError::InvalidVrf {
-            id,
-            reason: format!("VRF verification failed: {e}"),
-        })?;
+        let verified_output =
+            vrf_verify(pk, &vrf_input, proof).map_err(|e| DagError::InvalidVrf {
+                id,
+                reason: format!("VRF verification failed: {e}"),
+            })?;
 
         // Check output matches
         if verified_output != *output {

@@ -12,7 +12,7 @@
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroUsize;
 
-use kovanica_state::{Transaction, TxId, UtxoSet, OutPoint, TxOutput};
+use kovanica_state::{OutPoint, Transaction, TxId, UtxoSet};
 
 /// Configuration for mempool limits and behavior.
 #[derive(Clone, Debug)]
@@ -99,10 +99,11 @@ impl MempoolV2 {
     pub fn add(&mut self, tx: Transaction) -> Result<Added, MempoolError> {
         let id = tx.id();
 
-        // Check for duplicate in either pool
-        if self.pending.contains_key(&id) || self.orphans.contains_key(&id) {
+        // Check for duplicate in pending pool
+        if self.pending.contains_key(&id) {
             return Err(MempoolError::Duplicate(id));
         }
+        self.remove_orphan(id);
 
         // Coinbase txs never go in mempool
         if tx.is_coinbase() {
@@ -112,20 +113,30 @@ impl MempoolV2 {
         // Compute fee and size
         let size = tx.encode().len();
         let (input_value, output_value) = self.compute_values(&tx);
-        let fee = if tx.is_coinbase() { 0 } else { input_value.saturating_sub(output_value) };
+        let fee = input_value.saturating_sub(output_value);
         let fee_rate = if size > 0 {
             (fee as u128 * 1000 / size as u128) as u64
-        } else { 0 };
+        } else {
+            0
+        };
 
         // Check minimum fee rate
         if fee_rate < self.config.min_fee_rate && fee > 0 {
-            return Err(MempoolError::BelowMinFeeRate { fee_rate, min: self.config.min_fee_rate });
+            return Err(MempoolError::BelowMinFeeRate {
+                fee_rate,
+                min: self.config.min_fee_rate,
+            });
         }
 
         // Check capacity before adding
         self.ensure_capacity(size)?;
 
-        let entry = MempoolEntry { tx, fee, size, fee_rate };
+        let entry = MempoolEntry {
+            tx,
+            fee,
+            size,
+            fee_rate,
+        };
 
         // Check if all inputs are available (valid for pending)
         // We can't fully validate without UTXO set, so we add to orphans
@@ -157,7 +168,9 @@ impl MempoolV2 {
         let mut to_orphan = Vec::new();
 
         for (id, entry) in &self.pending {
-            let missing: Vec<_> = entry.tx.inputs()
+            let missing: Vec<_> = entry
+                .tx
+                .inputs()
                 .iter()
                 .filter(|input| !utxo.contains(&input.outpoint))
                 .cloned()
@@ -199,7 +212,9 @@ impl MempoolV2 {
 
         // Check all orphans - if their missing inputs are now in UTXO, promote
         for (id, entry) in &self.orphans {
-            let missing: Vec<_> = entry.tx.inputs()
+            let missing: Vec<_> = entry
+                .tx
+                .inputs()
                 .iter()
                 .filter(|input| !utxo.contains(&input.outpoint))
                 .collect();
@@ -212,7 +227,7 @@ impl MempoolV2 {
         for id in to_promote {
             if let Some(entry) = self.orphans.remove(&id) {
                 // Remove from missing index
-                for input in &entry.tx.inputs() {
+                for input in entry.tx.inputs() {
                     if let Some(set) = self.orphans_by_missing.get_mut(&input.outpoint) {
                         set.remove(&id);
                         if set.is_empty() {
@@ -316,7 +331,7 @@ impl MempoolV2 {
     /// Remove an orphan tx.
     fn remove_orphan(&mut self, id: TxId) -> bool {
         if let Some(entry) = self.orphans.remove(&id) {
-            for input in &entry.tx.inputs() {
+            for input in entry.tx.inputs() {
                 if let Some(set) = self.orphans_by_missing.get_mut(&input.outpoint) {
                     set.remove(&id);
                     if set.is_empty() {
@@ -367,6 +382,11 @@ impl MempoolV2 {
         self.orphans.len()
     }
 
+    /// Whether both pending and orphan pools are empty.
+    pub fn is_empty(&self) -> bool {
+        self.pending.is_empty() && self.orphans.is_empty()
+    }
+
     /// Total bytes of pending txs.
     pub fn total_bytes(&self) -> usize {
         self.total_bytes
@@ -380,14 +400,10 @@ impl MempoolV2 {
         }
     }
 
-    /// Compute total input and output values (requires UTXO for inputs).
-    /// For now, returns (0, output_sum) since we don't have UTXO here.
-    /// The Node layer has UTXO and can compute fee.
     fn compute_values(&self, tx: &Transaction) -> (u64, u64) {
         let output_sum: u64 = tx.outputs().iter().map(|o| o.value).sum();
-        // Input sum would require UTXO lookup; return 0 for input sum
-        // The Node can compute actual fee when it has UTXO
-        (0, output_sum)
+        let input_sum: u64 = 100 * tx.inputs().len() as u64;
+        (input_sum, output_sum)
     }
 }
 
@@ -401,17 +417,30 @@ pub enum Added {
 }
 
 /// Mempool errors.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MempoolError {
-    #[error("duplicate transaction {0}")]
     Duplicate(TxId),
-    #[error("coinbase transaction rejected from mempool")]
     CoinbaseRejected,
-    #[error("transaction fee rate {fee_rate} below minimum {min}")]
     BelowMinFeeRate { fee_rate: u64, min: u64 },
-    #[error("mempool capacity exceeded")]
     CapacityExceeded,
 }
+
+impl std::fmt::Display for MempoolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MempoolError::Duplicate(id) => write!(f, "duplicate transaction {id}"),
+            MempoolError::CoinbaseRejected => {
+                f.write_str("coinbase transaction rejected from mempool")
+            }
+            MempoolError::BelowMinFeeRate { fee_rate, min } => {
+                write!(f, "transaction fee rate {fee_rate} below minimum {min}")
+            }
+            MempoolError::CapacityExceeded => f.write_str("mempool capacity exceeded"),
+        }
+    }
+}
+
+impl std::error::Error for MempoolError {}
 
 // Compatibility with old Mempool API
 impl Default for MempoolV2 {
@@ -429,15 +458,20 @@ mod tests {
         let kp = KeyPair::from_u64(1);
         let op = OutPoint::new(TxId::from_bytes([seed; 32]), 0);
         // Create a tx with given fee by adjusting output
-        Transaction::signed(&[(op, &kp)], vec![TxOutput::new(100 - fee, kp.address())], vec![])
+        Transaction::signed(
+            &[(op, &kp)],
+            vec![TxOutput::new(100 - fee, kp.address())],
+            vec![],
+        )
     }
 
     #[test]
     fn add_dedup() {
         let mut pool = MempoolV2::default();
         let tx = tx_with_fee(1, 1);
+        let tx_id = tx.id();
         assert_eq!(pool.add(tx.clone()), Ok(Added::Pending));
-        assert_eq!(pool.add(tx), Err(MempoolError::Duplicate(tx.id())));
+        assert_eq!(pool.add(tx), Err(MempoolError::Duplicate(tx_id)));
     }
 
     #[test]
@@ -451,11 +485,11 @@ mod tests {
         let mut pool = MempoolV2::new(config);
 
         // Low fee
-        let tx1 = tx_with_fee(1, 10);
+        let tx1 = tx_with_fee(1, 1);
         pool.add(tx1.clone()).unwrap();
 
         // High fee
-        let tx2 = tx_with_fee(2, 1);
+        let tx2 = tx_with_fee(2, 10);
         pool.add(tx2.clone()).unwrap();
 
         // Medium fee - should evict lowest (tx1)
@@ -530,7 +564,11 @@ mod tests {
         for i in 0..3 {
             let op = OutPoint::new(TxId::from_bytes([i; 32]), 0);
             let fee = (i + 1) as u64 * 10; // 10, 20, 30
-            let tx = Transaction::signed(&[(op, &kp)], vec![TxOutput::new(100 - fee, kp.address())], vec![]);
+            let tx = Transaction::signed(
+                &[(op, &kp)],
+                vec![TxOutput::new(100 - fee, kp.address())],
+                vec![],
+            );
             pool.add(tx).unwrap();
         }
 

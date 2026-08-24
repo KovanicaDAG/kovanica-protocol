@@ -475,6 +475,16 @@ deterministic + adversarial tests per the conventions above.
   - Integration: rate limits checked on `Mesh::enqueue`, duplicates checked on `Mesh::deliver`
   - Stats: `Mesh::peer_stats` / `all_peer_stats` for monitoring
   - Tests: rate limit enforcement, duplicate penalties, ban prevents relay, stats
+- [x] Mempool upgrades: orphan handling, fee-based eviction, capacity limits.
+
+## 8. Hard-won Lessons & Invariants (Do Not Break)
+- **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.
+- **Finality Checkpointing**: When writing a checkpoint block's payload to the disk (e.g., in `Ledger::write_checkpoint`), you must strictly explicitly prune it via `Block::new_pruned_with_vrf` so the bytes exactly match the reconstructed block from `read_checkpoint`.
+
+---
+
+## Roadmap
+
 - [x] Mempool policy upgrades: orphan-tx handling, fee-based eviction order.
   - `kovanica-node::mempool_v2`: enhanced mempool with orphan pool and fee-based eviction
   - Orphan pool: txs with missing inputs held separately, auto-promoted when block adds inputs

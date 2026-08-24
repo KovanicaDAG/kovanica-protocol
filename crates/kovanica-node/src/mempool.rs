@@ -12,11 +12,9 @@
 //! New code should use [`MempoolV2`] which adds orphan handling, fee-based
 //! eviction, and capacity limits.
 
-use std::collections::HashMap;
-
 use kovanica_state::{Transaction, TxId, UtxoSet};
 
-use crate::mempool_v2::{MempoolV2, MempoolConfig, Added};
+use crate::mempool_v2::{Added, MempoolV2};
 
 /// A set of pending transactions (legacy API).
 #[derive(Debug, Default)]
@@ -45,7 +43,7 @@ impl Mempool {
 
     /// The pending transaction with this id, if present.
     pub fn get(&self, id: &TxId) -> Option<Transaction> {
-        self.inner.get(id)
+        self.inner.get(id).cloned()
     }
 
     /// Number of pending transactions.

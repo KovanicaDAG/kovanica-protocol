@@ -109,7 +109,7 @@ impl Dag {
         let k = reader.read_u16()?;
         // v4 added block id (32 bytes). v3 and earlier don't have it.
         // v5 added VRF fields: 1 byte flag + up to 160 bytes (pk+proof+output)
-        let min_block_size = if version >= 5 { 240 } else if version >= 4 { 80 } else { 48 };
+        let min_block_size = if version >= 4 { 80 } else { 48 };
         let count = reader.read_count(min_block_size)?;
 
         if version >= 4 {
@@ -160,10 +160,11 @@ pub fn decode_snapshot(bytes: &[u8]) -> Result<DagSnapshot, SnapshotError> {
     if version > VERSION {
         return Err(SnapshotError::UnsupportedVersion(version));
     }
+    reader.version = version;
     let k = reader.read_u16()?;
     // v4 added block id (32 bytes). v3 and earlier don't have it.
     // v5 added VRF fields: 1 byte flag + up to 160 bytes (pk+proof+output)
-    let min_block_size = if version >= 5 { 240 } else if version >= 4 { 80 } else { 48 };
+    let min_block_size = if version >= 4 { 80 } else { 48 };
     let count = reader.read_count(min_block_size)?;
     let mut blocks = Vec::with_capacity(count);
     for _ in 0..count {
@@ -227,11 +228,16 @@ pub fn decode_block(bytes: &[u8]) -> Result<Block, SnapshotError> {
 struct Reader<'a> {
     buf: &'a [u8],
     pos: usize,
+    version: u16,
 }
 
 impl<'a> Reader<'a> {
     fn new(buf: &'a [u8]) -> Self {
-        Self { buf, pos: 0 }
+        Self {
+            buf,
+            pos: 0,
+            version: VERSION,
+        }
     }
 
     fn remaining(&self) -> usize {
@@ -290,24 +296,23 @@ impl<'a> Reader<'a> {
         let nonce = self.read_u64()?;
 
         // VRF fields (v5+)
-        let has_vrf = self.read_u8()?;
-        let vrf_public_key = if has_vrf == 1 {
-            let pk_bytes: [u8; 32] = self.read_array::<32>()?;
-            Some(VrfPublicKey::from_bytes(&pk_bytes))
+        let (vrf_public_key, vrf_proof, vrf_output) = if self.version >= 5 {
+            let has_vrf = self.read_u8()?;
+            if has_vrf == 1 {
+                let pk_bytes: [u8; 32] = self.read_array::<32>()?;
+                let pk = VrfPublicKey::from_bytes(&pk_bytes)
+                    .map_err(|_| SnapshotError::UnexpectedEof)?;
+                let proof_bytes: [u8; 96] = self.read_array::<96>()?;
+                let proof =
+                    VrfProof::from_bytes(&proof_bytes).map_err(|_| SnapshotError::UnexpectedEof)?;
+                let output_bytes: [u8; 32] = self.read_array::<32>()?;
+                let output = VrfOutput::from_bytes(output_bytes);
+                (Some(pk), Some(proof), Some(output))
+            } else {
+                (None, None, None)
+            }
         } else {
-            None
-        };
-        let vrf_proof = if has_vrf == 1 {
-            let proof_bytes: [u8; 96] = self.read_array::<96>()?;
-            Some(VrfProof::from_bytes(&proof_bytes).map_err(|_| SnapshotError::UnexpectedEof)?)
-        } else {
-            None
-        };
-        let vrf_output = if has_vrf == 1 {
-            let output_bytes: [u8; 32] = self.read_array::<32>()?;
-            Some(VrfOutput::from_bytes(output_bytes))
-        } else {
-            None
+            (None, None, None)
         };
 
         let payload_len = self.read_count(1)?;

@@ -1,6 +1,6 @@
 //! Integration tests for VRF-based leader selection and randomness beacon.
 
-use kovanica_dag::{Block, BlockId, Dag, VrfConfig, vrf_keypair_from_seed, vrf_prove, Scalar};
+use kovanica_dag::{vrf_keypair_from_seed, vrf_prove, Block, BlockId, Dag, VrfProof};
 
 /// Build a DAG with the given `k` and a fixed genesis.
 fn new_dag(k: u16) -> (Dag, BlockId) {
@@ -77,20 +77,29 @@ fn vrf_leader_eligibility() {
     let output_u64 = eval.output.as_u64();
     if output_u64 < 100 {
         // Eligible - should insert
-        let id = add_with_vrf(&mut dag, &[genesis], "eligible", &pk, &eval.proof, &eval.output);
-        assert!(dag.nodes.contains_key(&id));
+        let id = add_with_vrf(
+            &mut dag,
+            &[genesis],
+            "eligible",
+            &pk,
+            &eval.proof,
+            &eval.output,
+        );
+        assert!(dag.ghostdag(&id).is_some());
     } else {
         // Not eligible - should fail
-        let err = dag.insert(Block::new_with_vrf(
-            vec![genesis],
-            1,
-            0,
-            0,
-            pk,
-            eval.proof.clone(),
-            eval.output,
-            b"not eligible".to_vec(),
-        )).unwrap_err();
+        let err = dag
+            .insert(Block::new_with_vrf(
+                vec![genesis],
+                1,
+                0,
+                0,
+                pk,
+                eval.proof.clone(),
+                eval.output,
+                b"not eligible".to_vec(),
+            ))
+            .unwrap_err();
         assert!(matches!(err, kovanica_dag::DagError::InvalidVrf { .. }));
     }
 }
@@ -105,19 +114,22 @@ fn vrf_invalid_proof_rejected() {
     let eval = vrf_prove(&sk, &vrf_input);
 
     // Tamper with proof
-    let mut bad_proof = eval.proof.clone();
-    bad_proof.c = kovanica_dag::Scalar::ZERO;
+    let mut bytes = eval.proof.to_bytes();
+    bytes[64] ^= 1;
+    let bad_proof = VrfProof::from_bytes(&bytes).unwrap();
 
-    let err = dag.insert(Block::new_with_vrf(
-        vec![genesis],
-        1,
-        0,
-        0,
-        pk,
-        bad_proof,
-        eval.output,
-        b"bad proof".to_vec(),
-    )).unwrap_err();
+    let err = dag
+        .insert(Block::new_with_vrf(
+            vec![genesis],
+            1,
+            0,
+            0,
+            pk,
+            bad_proof,
+            eval.output,
+            b"bad proof".to_vec(),
+        ))
+        .unwrap_err();
 
     assert!(matches!(err, kovanica_dag::DagError::InvalidVrf { .. }));
 }
@@ -128,13 +140,9 @@ fn vrf_missing_fields_rejected() {
     dag.set_vrf(u64::MAX);
 
     // Block without VRF fields
-    let err = dag.insert(Block::new(
-        vec![genesis],
-        1,
-        0,
-        0,
-        b"no vrf".to_vec(),
-    )).unwrap_err();
+    let err = dag
+        .insert(Block::new(vec![genesis], 1, 0, 0, b"no vrf".to_vec()))
+        .unwrap_err();
 
     assert!(matches!(err, kovanica_dag::DagError::InvalidVrf { .. }));
 }
@@ -151,16 +159,18 @@ fn vrf_wrong_public_key_rejected() {
     let eval = vrf_prove(&sk1, &vrf_input);
 
     // Use proof from sk1 but pk2
-    let err = dag.insert(Block::new_with_vrf(
-        vec![genesis],
-        1,
-        0,
-        0,
-        pk2,
-        eval.proof,
-        eval.output,
-        b"wrong pk".to_vec(),
-    )).unwrap_err();
+    let err = dag
+        .insert(Block::new_with_vrf(
+            vec![genesis],
+            1,
+            0,
+            0,
+            pk2,
+            eval.proof,
+            eval.output,
+            b"wrong pk".to_vec(),
+        ))
+        .unwrap_err();
 
     assert!(matches!(err, kovanica_dag::DagError::InvalidVrf { .. }));
 }
@@ -189,9 +199,9 @@ fn vrf_input_is_deterministic() {
 
 #[test]
 fn vrf_different_parents_different_input() {
-    let (dag, genesis) = new_dag(3);
-    let a = add(&mut dag.clone(), &[genesis], "a");
-    let b = add(&mut dag.clone(), &[genesis], "b");
+    let (mut dag, genesis) = new_dag(3);
+    let a = add(&mut dag, &[genesis], "a");
+    let b = add(&mut dag, &[genesis], "b");
 
     let input1 = Dag::vrf_input(&[genesis, a]);
     let input2 = Dag::vrf_input(&[genesis, b]);
@@ -210,19 +220,24 @@ fn vrf_composes_with_pow() {
     let vrf_input = Dag::vrf_input(&[genesis]);
     let eval = vrf_prove(&sk, &vrf_input);
 
-    let err = dag.insert(Block::new_with_vrf(
-        vec![genesis],
-        1,
-        0,
-        0, // nonce 0 won't meet work target
-        pk,
-        eval.proof,
-        eval.output,
-        b"no pow".to_vec(),
-    )).unwrap_err();
+    let err = dag
+        .insert(Block::new_with_vrf(
+            vec![genesis],
+            1000, // work 1000 means nonce 0 won't meet work target
+            0,    // timestamp_ms
+            0,    // nonce
+            pk,
+            eval.proof,
+            eval.output,
+            b"no pow".to_vec(),
+        ))
+        .unwrap_err();
 
     // Should fail on PoW first (checked before VRF)
-    assert!(matches!(err, kovanica_dag::DagError::InsufficientProofOfWork { .. }));
+    assert!(matches!(
+        err,
+        kovanica_dag::DagError::InsufficientProofOfWork { .. }
+    ));
 }
 
 #[test]

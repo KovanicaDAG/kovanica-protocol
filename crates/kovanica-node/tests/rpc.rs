@@ -107,6 +107,8 @@ fn checkpoint_roundtrip_through_rpc_preserves_balances() {
     run(&mut node, "genesis_finality 3 1000 500 1 3");
     run(&mut node, "send 1 200 2");
     run(&mut node, "send 2 50 3");
+    run(&mut node, "send 3 10 4");
+    run(&mut node, "send 4 2 5"); // reach tip blue score 4 so finality score (4 - 3 = 1) is active
     assert_eq!(
         run(&mut node, &format!("checkpoint {path_str}")),
         format!("ok checkpoint saved {path_str}")
@@ -114,14 +116,17 @@ fn checkpoint_roundtrip_through_rpc_preserves_balances() {
 
     // Fresh node loads the checkpoint and sees the same balances.
     let mut restored = Node::new();
-    assert_eq!(run(&mut restored, &format!("load_checkpoint {path_str}")), "ok loaded");
+    assert_eq!(
+        run(&mut restored, &format!("load_checkpoint {path_str}")),
+        "ok loaded"
+    );
     assert_eq!(run(&mut restored, "balance 1"), "ok 299");
     assert_eq!(run(&mut restored, "balance 2"), "ok 149");
-    assert_eq!(run(&mut restored, "balance 3"), "ok 50");
+    assert_eq!(run(&mut restored, "balance 3"), "ok 39");
 
-    // A restored node keeps working: actor 3 forwards to actor 4.
-    assert!(run(&mut restored, "send 3 40 4").starts_with("ok block "));
-    assert_eq!(run(&mut restored, "balance 4"), "ok 40");
+    // A restored node keeps working: actor 3 forwards to actor 5.
+    assert!(run(&mut restored, "send 3 20 5").starts_with("ok block "));
+    assert_eq!(run(&mut restored, "balance 5"), "ok 22");
 
     let _ = std::fs::remove_file(&path);
 }

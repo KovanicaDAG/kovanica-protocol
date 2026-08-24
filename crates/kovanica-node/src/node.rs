@@ -19,7 +19,7 @@ use kovanica_state::{
     TxOutput, UtxoSet, DEFAULT_HALVING_ERA,
 };
 
-use crate::mempool::{Mempool, MempoolV2, MempoolConfig};
+use crate::mempool_v2::{MempoolConfig, MempoolV2};
 
 /// How far ahead of the local wall clock a received block's timestamp may sit
 /// before the node rejects it: two hours, in milliseconds. This is **node
@@ -72,6 +72,8 @@ pub enum NodeError {
         /// The local wall-clock time it was checked against, in milliseconds.
         now_ms: u64,
     },
+    /// A mempool operation failed.
+    Mempool(String),
 }
 
 impl core::fmt::Display for NodeError {
@@ -91,8 +93,9 @@ impl core::fmt::Display for NodeError {
             NodeError::Snapshot(e) => write!(f, "bad snapshot: {e}"),
             NodeError::TimestampTooFarInFuture { timestamp_ms, now_ms } => write!(
                 f,
-                "block timestamp {timestamp_ms}ms is more than {MAX_FUTURE_DRIFT_MS}ms ahead of local time {now_ms}ms"
+                "block timestamp ({timestamp_ms} ms) is more than 2h ahead of local clock ({now_ms} ms)"
             ),
+            NodeError::Mempool(err) => write!(f, "mempool error: {err}"),
         }
     }
 }
@@ -125,7 +128,7 @@ pub struct Prepared {
 }
 
 /// The wire form of a block for gossip: everything a peer needs to re-insert it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockRecord {
     /// The block's parents.
     pub parents: Vec<BlockId>,
@@ -138,6 +141,22 @@ pub struct BlockRecord {
     pub nonce: u64,
     /// The block's transactions.
     pub txs: Vec<Transaction>,
+}
+
+/// A MerkleBlock response for SPV clients: proves transaction inclusion in a block
+/// with zero full-payload leakage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MerkleBlock {
+    /// The block ID containing the transaction.
+    pub block_id: BlockId,
+    /// The block's BLAKE3 Merkle root.
+    pub merkle_root: [u8; 32],
+    /// Total number of transactions in the block.
+    pub tx_count: u32,
+    /// Inclusion proof for the matching transaction.
+    pub proof: Option<kovanica_state::spv::MerkleProof>,
+    /// The matching transaction data.
+    pub matched_tx: Option<Transaction>,
 }
 
 /// A block header: the block's consensus fields plus a commitment to its
@@ -623,7 +642,9 @@ impl Node {
     pub fn pool(&mut self, from_seed: u64, amount: u64, to_seed: u64) -> Result<TxId, NodeError> {
         let tx = self.build_transfer(from_seed, amount, to_seed)?;
         let id = tx.id();
-        self.mempool.add(tx).map_err(|e| NodeError::Mempool(e.to_string()))?;
+        self.mempool
+            .add(tx)
+            .map_err(|e| NodeError::Mempool(e.to_string()))?;
         Ok(id)
     }
 
@@ -634,7 +655,9 @@ impl Node {
             return Err(NodeError::UnexpectedCoinbase);
         }
         let id = tx.id();
-        self.mempool.add(tx).map_err(|e| NodeError::Mempool(e.to_string()))?;
+        self.mempool
+            .add(tx)
+            .map_err(|e| NodeError::Mempool(e.to_string()))?;
         Ok(id)
     }
 
@@ -726,7 +749,7 @@ impl Node {
 
     /// A pending mempool transaction by id, if present.
     pub fn mempool_tx(&self, id: &TxId) -> Option<Transaction> {
-        self.mempool.get(id)
+        self.mempool.get(id).cloned()
     }
 
     fn evict_mempool(&mut self) {
@@ -743,8 +766,11 @@ impl Node {
             return 0;
         };
         let utxo = ledger.ledger_state();
-        let height = ledger.dag().selected_tip()
-            .and_then(|tip| ledger.dag().ghostdag(&tip).ok().map(|g| g.blue_score))
+        let tip = ledger.dag().selected_tip();
+        let height = ledger
+            .dag()
+            .ghostdag(&tip)
+            .map(|g| g.blue_score)
             .unwrap_or(0);
         self.mempool.on_new_block(&utxo, height)
     }
@@ -808,6 +834,139 @@ impl Node {
     /// Headers for the blocks in `ids` that are present, in the order given.
     pub fn headers_for(&self, ids: &[BlockId]) -> Vec<BlockHeader> {
         ids.iter().filter_map(|id| self.block_header(id)).collect()
+    }
+
+    /// Construct an SPV `BlockHeader` for a single block in the DAG.
+    pub fn spv_header(&self, id: &BlockId) -> Option<kovanica_state::spv::BlockHeader> {
+        let ledger = self.ledger.as_ref()?;
+        let dag = ledger.dag();
+        let block = dag.block(id)?;
+        let ghostdag = dag.ghostdag(id)?;
+
+        let prev_hash = ghostdag
+            .selected_parent
+            .unwrap_or_else(|| BlockId::from_bytes([0u8; 32]));
+        let blue_score = ghostdag.blue_score;
+        let chain_blue_work = ghostdag.blue_work;
+
+        // Calculate height along selected-parent chain
+        let mut height = 0u64;
+        let mut cur = ghostdag.selected_parent;
+        while let Some(pid) = cur {
+            height += 1;
+            cur = dag.ghostdag(&pid).and_then(|g| g.selected_parent);
+        }
+
+        let txs = decode_block_payload(block.payload()).ok()?;
+        Some(kovanica_state::spv::BlockHeader::from_block(
+            block,
+            prev_hash,
+            blue_score,
+            chain_blue_work,
+            height,
+            &txs,
+        ))
+    }
+
+    /// Every block along the GHOSTDAG selected chain as an SPV header.
+    pub fn export_spv_headers(&self) -> Vec<kovanica_state::spv::BlockHeader> {
+        let Some(ledger) = self.ledger.as_ref() else {
+            return Vec::new();
+        };
+        let selected_chain = ledger.dag().selected_chain();
+        selected_chain
+            .iter()
+            .filter_map(|id| self.spv_header(id))
+            .collect()
+    }
+
+    /// Export SPV block headers along the selected chain starting after the common
+    /// ancestor found in `locator`, up to `stop` (or tip), bounded by `limit`.
+    pub fn headers_from(
+        &self,
+        locator: &[BlockId],
+        stop: Option<BlockId>,
+        limit: usize,
+    ) -> Result<Vec<kovanica_state::spv::BlockHeader>, NodeError> {
+        let ledger = self.ledger()?;
+        let dag = ledger.dag();
+        let selected_chain = dag.selected_chain();
+
+        // 1. Find highest common ancestor in locator
+        let mut match_idx = None;
+        for loc in locator {
+            if let Some(pos) = selected_chain.iter().position(|id| id == loc) {
+                match_idx = Some(pos);
+                break;
+            }
+        }
+
+        // 2. Start after matched block, or from genesis (0) if no match / empty locator
+        let start_idx = match match_idx {
+            Some(idx) => idx + 1,
+            None => 0,
+        };
+
+        if start_idx >= selected_chain.len() {
+            return Ok(Vec::new());
+        }
+
+        // 3. Slice up to stop hash (if present and non-zero)
+        let candidates = &selected_chain[start_idx..];
+        let mut end_idx = candidates.len();
+        if let Some(stop_id) = stop {
+            if stop_id != BlockId::from_bytes([0u8; 32]) {
+                if let Some(pos) = candidates.iter().position(|id| *id == stop_id) {
+                    end_idx = pos + 1; // inclusive of stop_id
+                }
+            }
+        }
+
+        let max_serve = limit.clamp(1, 10_000);
+        let selected_ids = &candidates[..end_idx.min(max_serve)];
+
+        let headers: Vec<_> = selected_ids
+            .iter()
+            .filter_map(|id| self.spv_header(id))
+            .collect();
+
+        Ok(headers)
+    }
+
+    /// Assemble a `MerkleBlock` for a given transaction `tx_id` within block `block_id`
+    /// with zero full-payload leakage.
+    pub fn merkle_block(&self, block_id: &BlockId, tx_id: &TxId) -> Result<MerkleBlock, NodeError> {
+        let ledger = self.ledger()?;
+        let dag = ledger.dag();
+        let block = dag
+            .block(block_id)
+            .ok_or_else(|| NodeError::Io("block not found".into()))?;
+
+        let txs = decode_block_payload(block.payload())
+            .map_err(|e| NodeError::Snapshot(e.to_string()))?;
+
+        let merkle_root = kovanica_state::spv::merkle_root(&txs);
+        let tx_count = txs.len() as u32;
+
+        if let Some(index) = txs.iter().position(|t| t.id() == *tx_id) {
+            let proof = kovanica_state::spv::generate_merkle_proof(&txs, index);
+            let matched_tx = Some(txs[index].clone());
+            Ok(MerkleBlock {
+                block_id: *block_id,
+                merkle_root,
+                tx_count,
+                proof,
+                matched_tx,
+            })
+        } else {
+            Ok(MerkleBlock {
+                block_id: *block_id,
+                merkle_root,
+                tx_count,
+                proof: None,
+                matched_tx: None,
+            })
+        }
     }
 
     /// Verify that `record` matches `header` (id, parents, work, timestamp,
@@ -1000,7 +1159,7 @@ impl Node {
         Ok((
             Self {
                 ledger: Some(ledger),
-                mempool: Mempool::new(),
+                mempool: MempoolV2::default(),
                 clock: Clock::default(),
                 miner: None,
             },
@@ -1014,7 +1173,7 @@ impl Node {
             LedgerStore::open_checkpoint(path).map_err(|e| NodeError::Snapshot(e.to_string()))?;
         Ok(Self {
             ledger: Some(ledger),
-            mempool: Mempool::new(),
+            mempool: MempoolV2::default(),
             clock: Clock::default(),
             miner: None,
         })
@@ -1043,4 +1202,102 @@ fn fee_of(state: &UtxoSet, tx: &Transaction) -> u64 {
     }
     let sum_out: u64 = tx.outputs().iter().map(|o| o.value).sum();
     sum_in.saturating_sub(sum_out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_node_spv_header_and_export() {
+        let mut node = Node::new();
+        let (genesis, _) = node.genesis(3, 1000, 1000, 1).unwrap();
+        let sent1 = node.send(1, 100, 2).unwrap();
+        let sent2 = node.send(2, 50, 3).unwrap();
+
+        let h_gen = node.spv_header(&genesis).unwrap();
+        assert_eq!(h_gen.id, genesis);
+        assert_eq!(h_gen.prev_hash, BlockId::from_bytes([0u8; 32]));
+        assert_eq!(h_gen.height, 0);
+
+        let h1 = node.spv_header(&sent1.block).unwrap();
+        assert_eq!(h1.id, sent1.block);
+        assert_eq!(h1.prev_hash, genesis);
+        assert_eq!(h1.height, 1);
+
+        let h2 = node.spv_header(&sent2.block).unwrap();
+        assert_eq!(h2.id, sent2.block);
+        assert_eq!(h2.prev_hash, sent1.block);
+        assert_eq!(h2.height, 2);
+
+        let all_spv = node.export_spv_headers();
+        assert_eq!(all_spv.len(), 3);
+        assert_eq!(all_spv[0].id, genesis);
+        assert_eq!(all_spv[1].id, sent1.block);
+        assert_eq!(all_spv[2].id, sent2.block);
+    }
+
+    #[test]
+    fn test_node_headers_from() {
+        let mut node = Node::new();
+        let (genesis, _) = node.genesis(3, 1000, 1000, 1).unwrap();
+        let sent1 = node.send(1, 100, 2).unwrap();
+        let sent2 = node.send(2, 50, 3).unwrap();
+
+        // 1. Empty locator -> returns all from genesis
+        let h_all = node.headers_from(&[], None, 10).unwrap();
+        assert_eq!(h_all.len(), 3);
+
+        // 2. Locator with genesis -> returns from block 1 onwards
+        let h_after_gen = node.headers_from(&[genesis], None, 10).unwrap();
+        assert_eq!(h_after_gen.len(), 2);
+        assert_eq!(h_after_gen[0].id, sent1.block);
+        assert_eq!(h_after_gen[1].id, sent2.block);
+
+        // 3. Locator with tip -> returns empty
+        let h_tip = node.headers_from(&[sent2.block], None, 10).unwrap();
+        assert!(h_tip.is_empty());
+
+        // 4. Locator with unknown hash -> falls back to start from genesis
+        let h_unknown = node
+            .headers_from(&[BlockId::from_bytes([99u8; 32])], None, 10)
+            .unwrap();
+        assert_eq!(h_unknown.len(), 3);
+
+        // 5. Stop hash
+        let h_stop = node.headers_from(&[], Some(sent1.block), 10).unwrap();
+        assert_eq!(h_stop.len(), 2);
+        assert_eq!(h_stop[1].id, sent1.block);
+
+        // 6. Limit
+        let h_limit = node.headers_from(&[], None, 1).unwrap();
+        assert_eq!(h_limit.len(), 1);
+    }
+
+    #[test]
+    fn test_node_merkle_block() {
+        let mut node = Node::new();
+        node.genesis(3, 1000, 1000, 1).unwrap();
+        let sent = node.send(1, 200, 2).unwrap();
+
+        // Matching transaction
+        let mb = node.merkle_block(&sent.block, &sent.tx).unwrap();
+        assert_eq!(mb.block_id, sent.block);
+        assert!(mb.proof.is_some());
+        assert!(mb.matched_tx.is_some());
+        let proof = mb.proof.as_ref().unwrap();
+        assert_eq!(proof.tx_id, *sent.tx.as_bytes());
+        assert!(proof.verify());
+
+        // Non-matching transaction
+        let unknown_tx = TxId::from_bytes([99u8; 32]);
+        let mb_unknown = node.merkle_block(&sent.block, &unknown_tx).unwrap();
+        assert_eq!(mb_unknown.block_id, sent.block);
+        assert!(mb_unknown.proof.is_none());
+        assert!(mb_unknown.matched_tx.is_none());
+
+        // Non-existent block
+        let unknown_block = BlockId::from_bytes([99u8; 32]);
+        assert!(node.merkle_block(&unknown_block, &sent.tx).is_err());
+    }
 }

@@ -351,18 +351,20 @@ fn read_frame<R: Read>(r: &mut R, max_bytes: usize) -> Result<Vec<u8>, NetError>
     Ok(buf)
 }
 
-/// Sync protocol message tags.
-const TAG_INVENTORY: u8 = 0x10; // Vec<BlockId> (sorted, deduped)
-const TAG_HEADERS: u8 = 0x11; // Vec<BlockHeader>
-const TAG_GETHEADERS: u8 = 0x12; // Vec<BlockId> (ids whose headers we want)
-const TAG_GETBODIES: u8 = 0x13; // Vec<BlockId> (ids whose bodies we want)
-const TAG_BODIES: u8 = 0x14; // Vec<BlockRecord>
+/// Sync and SPV protocol message tags.
+pub const TAG_INVENTORY: u8 = 0x10; // Vec<BlockId> (sorted, deduped)
+pub const TAG_HEADERS: u8 = 0x11; // Vec<BlockHeader> / Vec<SpvHeader>
+pub const TAG_GETHEADERS: u8 = 0x12; // Vec<BlockId> (ids whose headers we want)
+pub const TAG_GETBODIES: u8 = 0x13; // Vec<BlockId> (ids whose bodies we want)
+pub const TAG_BODIES: u8 = 0x14; // Vec<BlockRecord>
+pub const TAG_GET_MERKLE_PROOF: u8 = 0x15;
+pub const TAG_MERKLEBLOCK: u8 = 0x16;
 
-const MAX_INVENTORY_IDS: usize = 200_000; // 6.4 MB max
-const MAX_HEADERS: usize = 10_000; // ~3 MB max
-const MAX_GETBODIES: usize = 10_000;
-const MAX_BODIES: usize = 10_000;
-const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024; // 16 MB
+pub const MAX_INVENTORY_IDS: usize = 200_000; // 6.4 MB max
+pub const MAX_HEADERS: usize = 10_000; // ~3 MB max
+pub const MAX_GETBODIES: usize = 10_000;
+pub const MAX_BODIES: usize = 10_000;
+pub const MAX_FRAME_BYTES: usize = 16 * 1024 * 1024; // 16 MB
 
 /// Encode an inventory message (sorted, deduped block ids).
 pub fn encode_inventory(ids: &[BlockId]) -> Vec<u8> {

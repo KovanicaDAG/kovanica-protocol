@@ -330,7 +330,7 @@ impl Block {
             hasher.update(&[0u8]);
         }
         if let Some(proof) = &self.vrf_proof {
-            hasher.update(proof.to_bytes());
+            hasher.update(&proof.to_bytes());
         }
         if let Some(output) = &self.vrf_output {
             hasher.update(output.as_bytes());

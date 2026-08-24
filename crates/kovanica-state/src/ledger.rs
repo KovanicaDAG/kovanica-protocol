@@ -851,7 +851,8 @@ impl Ledger {
             return Err(LedgerCheckpointError::FinalityDisabled);
         }
         let finality_score = self.finality_score();
-        if finality_score == 0 {
+        let genesis_height = self.heights.get(&self.genesis).copied().unwrap_or(0);
+        if finality_score == 0 && genesis_height == 0 {
             return Err(LedgerCheckpointError::FinalityNotActive);
         }
 
@@ -863,6 +864,7 @@ impl Ledger {
             let gd = self.dag.ghostdag(id).unwrap();
             if gd.blue_score >= finality_score {
                 checkpoint_block = *id;
+                break;
             }
         }
 
@@ -880,12 +882,26 @@ impl Ledger {
         // The checkpoint block is included so it can serve as the trusted genesis
         // on restore, with its original ID preserved via Block::new_pruned.
         let mut tip_segment = Vec::new();
-        tip_segment.push(self.dag.block(&checkpoint_block).expect("checkpoint block is present").clone());
+        let cp_block = self
+            .dag
+            .block(&checkpoint_block)
+            .expect("checkpoint block is present");
+        let pruned_cp = kovanica_dag::Block::new_pruned_with_vrf(
+            cp_block.parents().to_vec(),
+            cp_block.work(),
+            cp_block.timestamp_ms(),
+            cp_block.nonce(),
+            cp_block.vrf_public_key().cloned(),
+            cp_block.vrf_proof().cloned(),
+            cp_block.vrf_output().cloned(),
+            cp_block.id(),
+        );
+        tip_segment.push(pruned_cp);
         for id in &order {
             let gd = self.dag.ghostdag(id).unwrap();
             if gd.blue_score > finality_score {
                 let block = self.dag.block(id).expect("linearized id is present");
-                tip_segment.push(block);
+                tip_segment.push(block.clone());
             }
         }
 
@@ -962,7 +978,8 @@ impl Ledger {
                 return Err(LedgerCheckpointError::UnexpectedEof);
             }
             // Read the stored block ID (first 32 bytes of encode_block output)
-            let stored_id = BlockId::from_bytes(bytes[block_pos..block_pos + 32].try_into().unwrap());
+            let stored_id =
+                BlockId::from_bytes(bytes[block_pos..block_pos + 32].try_into().unwrap());
             block_pos += 32;
             let (mut block, consumed) = decode_checkpoint_block(&bytes[block_pos..])?;
             block_pos += consumed;
@@ -989,30 +1006,44 @@ impl Ledger {
         // Create DAG with checkpoint block as genesis (trusted, bypasses parent check).
         // The checkpoint block may have parents that don't exist in the restored DAG;
         // we trust it as the finality boundary.
-        let dag = Dag::with_validator(k, checkpoint_block, Box::new(TxStructureValidator));
+        let checkpoint_id = checkpoint_block.id();
+        let mut dag = Dag::with_validator(k, checkpoint_block, Box::new(TxStructureValidator));
         dag.set_payload_pruning_depth(payload_pruning_depth);
 
         // Build ledger with the checkpoint state applied directly.
         let mut ledger = Ledger {
             dag,
             schedule,
-            genesis: checkpoint_block.id(),
+            genesis: checkpoint_id,
             finality_depth,
             payload_pruning_depth,
             states: HashMap::new(),
             heights: HashMap::new(),
         };
         // Apply checkpoint state as the ledger's current state and the checkpoint block's view state.
-        ledger.states.insert(checkpoint_block.id(), checkpoint_state.clone());
-        ledger.heights.insert(checkpoint_block.id(), checkpoint_height);
+        ledger
+            .states
+            .insert(checkpoint_id, checkpoint_state.clone());
+        ledger.heights.insert(checkpoint_id, checkpoint_height);
 
         // Replay remaining tip segment blocks (those strictly above finality).
         for block in blocks_iter {
             let txs =
                 decode_block_payload(block.payload()).map_err(LedgerCheckpointError::Payload)?;
+            let mapped_parents: Vec<_> = block
+                .parents()
+                .iter()
+                .map(|p| {
+                    if ledger.dag().ghostdag(p).is_some() {
+                        *p
+                    } else {
+                        checkpoint_id
+                    }
+                })
+                .collect();
             ledger
                 .insert(
-                    block.parents().to_vec(),
+                    mapped_parents,
                     block.work(),
                     block.timestamp_ms(),
                     block.nonce(),
@@ -1043,26 +1074,35 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
     let work = reader.read_u128()?;
     let timestamp_ms = reader.read_u64()?;
     let nonce = reader.read_u64()?;
+
+    // VRF fields (v5+)
+    let has_vrf = reader.read_u8()?;
+    let (vrf_public_key, vrf_proof, vrf_output) = if has_vrf == 1 {
+        let pk_bytes: [u8; 32] = reader.read_array::<32>()?;
+        let pk = kovanica_dag::VrfPublicKey::from_bytes(&pk_bytes)
+            .map_err(|_| LedgerCheckpointError::UnexpectedEof)?;
+        let proof_bytes: [u8; 96] = reader.read_array::<96>()?;
+        let proof = kovanica_dag::VrfProof::from_bytes(&proof_bytes)
+            .map_err(|_| LedgerCheckpointError::UnexpectedEof)?;
+        let output_bytes: [u8; 32] = reader.read_array::<32>()?;
+        let output = kovanica_dag::VrfOutput::from_bytes(output_bytes);
+        (Some(pk), Some(proof), Some(output))
+    } else {
+        (None, None, None)
+    };
+
     let payload_len = reader.read_count(1)? as usize;
     if payload_len == 0 {
-        // Pruned block - need to provide the id (5th argument).
-        // For pruned blocks in checkpoint, the original id is not stored.
-        // We compute a deterministic id from the available data.
-        // Note: This won't match the original id (which was computed with the original payload),
-        // but it's deterministic and consistent for the checkpoint.
-        let id = {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&(parents.len() as u64).to_le_bytes());
-            for parent in &parents {
-                hasher.update(parent.as_bytes());
-            }
-            hasher.update(&work.to_le_bytes());
-            hasher.update(&timestamp_ms.to_le_bytes());
-            hasher.update(&nonce.to_le_bytes());
-            hasher.update(&0u64.to_le_bytes()); // empty payload len
-            BlockId::from_bytes(*hasher.finalize().as_bytes())
-        };
-        let block = Block::new_pruned(parents, work, timestamp_ms, nonce, id);
+        let block = Block::new_pruned_with_vrf(
+            parents,
+            work,
+            timestamp_ms,
+            nonce,
+            vrf_public_key,
+            vrf_proof,
+            vrf_output,
+            BlockId::from_bytes([0u8; 32]),
+        );
         let consumed = reader.pos;
         return Ok((block, consumed));
     }
@@ -1070,7 +1110,20 @@ fn decode_checkpoint_block(bytes: &[u8]) -> Result<(Block, usize), LedgerCheckpo
         return Err(LedgerCheckpointError::UnexpectedEof);
     }
     let payload = reader.read_bytes(payload_len)?;
-    let block = Block::new(parents, work, timestamp_ms, nonce, payload);
+    let block = if let Some(pk) = vrf_public_key {
+        Block::new_with_vrf(
+            parents,
+            work,
+            timestamp_ms,
+            nonce,
+            pk,
+            vrf_proof.unwrap(),
+            vrf_output.unwrap(),
+            payload,
+        )
+    } else {
+        Block::new(parents, work, timestamp_ms, nonce, payload)
+    };
     let consumed = reader.pos;
     Ok((block, consumed))
 }
@@ -1085,9 +1138,11 @@ impl<'a> CheckpointReader<'a> {
     fn new(buf: &'a [u8]) -> Self {
         Self { buf, pos: 0 }
     }
+
     fn remaining(&self) -> usize {
         self.buf.len() - self.pos
     }
+
     fn read_array<const N: usize>(&mut self) -> Result<[u8; N], LedgerCheckpointError> {
         if self.remaining() < N {
             return Err(LedgerCheckpointError::UnexpectedEof);
@@ -1097,6 +1152,12 @@ impl<'a> CheckpointReader<'a> {
         self.pos += N;
         Ok(out)
     }
+
+    fn read_u8(&mut self) -> Result<u8, LedgerCheckpointError> {
+        let b = self.read_array::<1>()?;
+        Ok(b[0])
+    }
+
     fn read_u64(&mut self) -> Result<u64, LedgerCheckpointError> {
         Ok(u64::from_le_bytes(self.read_array::<8>()?))
     }

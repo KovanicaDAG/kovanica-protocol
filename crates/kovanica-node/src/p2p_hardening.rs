@@ -8,9 +8,9 @@
 //!
 //! All state is deterministic (discrete time) so tests are reproducible.
 
-use std::collections::{BTreeMap, HashMap};
 use kovanica_dag::BlockId;
 use kovanica_state::TxId;
+use std::collections::{BTreeMap, HashMap};
 
 /// Configuration for P2P hardening parameters.
 #[derive(Clone, Debug)]
@@ -48,9 +48,9 @@ pub struct P2pHardeningConfig {
 impl Default for P2pHardeningConfig {
     fn default() -> Self {
         Self {
-            max_bytes_per_window: 1_000_000,      // 1 MB per window
-            rate_window_ticks: 100,                // 100 ticks
-            max_messages_per_window: 1000,         // 1000 msgs per window
+            max_bytes_per_window: 1_000_000, // 1 MB per window
+            rate_window_ticks: 100,          // 100 ticks
+            max_messages_per_window: 1000,   // 1000 msgs per window
             initial_score: 0,
             score_valid_block: 1,
             score_duplicate_block: -5,
@@ -171,7 +171,7 @@ impl ScoreState {
 }
 
 /// P2P hardening manager for a Mesh.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct P2pHardening {
     config: P2pHardeningConfig,
     rate_limits: HashMap<String, RateLimitState>,
