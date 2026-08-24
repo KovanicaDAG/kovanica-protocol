@@ -31,7 +31,11 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      # persist-credentials: false — keep the default GITHUB_TOKEN out of git
+      # config so it can never shadow the PAT on the mirror push below.
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Check for NODE_PUBLIC_TOKEN
         env:
@@ -91,6 +95,7 @@ jobs:
         working-directory: public
         env:
           SRC_SHA: ${{ github.sha }}
+          NODE_PUBLIC_TOKEN: ${{ secrets.NODE_PUBLIC_TOKEN }}
         run: |
           git config user.name "kovanica-sync-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -100,4 +105,9 @@ jobs:
             exit 0
           fi
           git commit -m "sync: mirror kovanica-protocol@${SRC_SHA:0:12}"
+          # Push explicitly with the PAT: strip any inherited Authorization
+          # header, then authenticate the remote URL directly.
+          git config --unset-all http.https://github.com/.extraheader || true
+          git remote set-url origin \
+            "https://x-access-token:${NODE_PUBLIC_TOKEN}@github.com/KovanicaDAG/kovanica-node.git"
           git push
