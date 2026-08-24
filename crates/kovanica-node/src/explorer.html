@@ -793,11 +793,35 @@ async function walletSend(to, amountHuman) {
   const rec = walletRecord();
   const node = state?.selected || "alpha";
   const amount = parseKvnc(amountHuman);
-  const prep = await api(`/api/prepare?node=${node}&from=${rec.address}&to=${to}&amount=${amount}`, "POST");
+  
+  // Get fee estimate
+  const feeEstimate = await estimateFee(amount);
+  
+  const prep = await api(`/api/prepare?node=${node}&from=${rec.address}&to=${to}&amount=${amount}&fee=${feeEstimate}`, "POST");
   const sig = await walletSign(prep.sighash);
-  const sub = await api(`/api/submit?node=${node}&from=${rec.address}&to=${to}&amount=${amount}&sig=${sig}`, "POST");
+  const sub = await api(`/api/submit?node=${node}&from=${rec.address}&to=${to}&amount=${amount}&sig=${sig}&fee=${feeEstimate}`, "POST");
   await api(`/api/produce?node=${node}`, "POST");
-  walletMsg = `ok tx ${short(sub.tx)}`;
+  walletMsg = `ok tx ${short(sub.tx)} (fee: ${fmtKvnc(feeEstimate)})`;
+}
+
+async function estimateFee(amount) {
+  if (!state || !state.node.pending) return state?.node?.min_fee || 0;
+  
+  const pending = state.node.pending;
+  if (pending.length === 0) return state.node.min_fee || 0;
+  
+  // Calculate fee percentiles from mempool
+  const fees = pending.map(t => t.fee || 0).sort((a, b) => a - b);
+  const medianFee = fees[Math.floor(fees.length / 2)];
+  const p90Fee = fees[Math.floor(fees.length * 0.9)];
+  
+  // Use p90 fee for faster confirmation, but cap at reasonable amount
+  const baseFee = Math.max(state.node.min_fee || 0, p90Fee);
+  
+  // Scale by amount (larger txs may need slightly higher fee)
+  const scale = amount > 100000000 ? 1.2 : 1; // >1 KVNC
+  
+  return Math.round(baseFee * scale);
 }
 
 document.body.addEventListener("click", async (e) => {

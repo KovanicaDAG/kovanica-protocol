@@ -935,6 +935,48 @@ fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> {
     respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found")
 }
 
+
+fn estimate_fee(node: &Node, _amount: u64) -> Result<u64, String> {
+    let pending = node.pending_txs();
+    if pending.is_empty() {
+        return Ok(node.min_fee());
+    }
+    
+    let mut fees: Vec<u64> = pending.iter().filter_map(|t| {
+        // Approximate fee from transaction
+        if let Ok(ledger) = node.ledger() {
+            let utxo = ledger.ledger_state();
+            let mut sum_in = 0u64;
+            for input in t.inputs() {
+                if let Some(prev) = utxo.get(&input.outpoint) {
+                    sum_in = sum_in.saturating_add(prev.value);
+                }
+            }
+            let sum_out: u64 = t.outputs().iter().map(|o| o.value).sum();
+            if sum_in > sum_out {
+                Some(sum_in - sum_out)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }).collect();
+    
+    if fees.is_empty() {
+        return Ok(node.min_fee());
+    }
+    
+    fees.sort();
+    let _median = fees[fees.len() / 2];
+    let p90_idx = (fees.len() as f64 * 0.9).floor() as usize;
+    let p90 = fees[p90_idx.min(fees.len() - 1)];
+    
+    // Use p90 fee for faster confirmation, minimum at node's min_fee
+    let base = std::cmp::max(node.min_fee(), p90);
+    Ok(base)
+}
+
 fn dispatch(
     app: &mut Explorer,
     action: &str,
@@ -1112,6 +1154,12 @@ fn dispatch(
                 want,
                 TAP_DAILY.saturating_sub(used + 1)
             ));
+        }
+        "fee_estimate" => {
+            let amount = parse_u64(q, "amount", 0)?;
+            let n = app.mesh.node(&node).ok_or("unknown node")?;
+            let fee = estimate_fee(&n, amount)?;
+            return Ok(format!("{{\"ok\":true,\"fee\":{}}}", fee));
         }
         other => return Err(format!("unknown action {other}")),
     }
