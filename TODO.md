@@ -17,19 +17,30 @@
 - [x] Rotate the AWS keypair whose `.pem` was shared in chat (leaked RSA removed
       from `authorized_keys`, local pems shredded, unknown third key stripped;
       only the two ops-box ed25519 keys remain)
-- [ ] **Peers rollout**: `seed3.kovanica.online:9000` into default `KOVANICA_PEERS`
-      (public install.sh + deploy-seed.sh defaults)
-- [ ] **Fix default DNS-seed list** (`dns_seed.rs`): `seed2.kovanica.online` and
-      `seed.kovanica.net` do not resolve — replace with live seeds
+- [x] **Fix default DNS-seed list** (`dns_seed.rs`): defaults are now the three
+      live hosts — `seed`/`seed2`/`seed3.kovanica.online`; `seed.kovanica.net`
+      is gone and seed2 resolves again (A `145.223.116.178`)
+- [ ] **Peers rollout**: `seed3.kovanica.online:9000` into the node binary's
+      default `KOVANICA_PEERS` and the public `install.sh` (deploy-seed.sh
+      already defaults to `seed…,seed3…`)
 - [ ] Decide `kovanica-cli` publication (mirror workspace deliberately excludes it)
 - [ ] Optional: Windows release assets for `install.ps1` (currently source-build only)
 
 ### Next session — Testnet soak kickoff (roadmap item 4 ◀ ACTIVE)
 
-1. Peers rollout + DNS-seed list fix (above) so nodes bootstrap across seed + seed3
-2. Point Prometheus at both `/metrics` endpoints; arm `alerting_rules.yml`
-3. Baseline capture: orphan rate, propagation latency, fork rate, disk growth
-4. First tuning review after 1–2 weeks of data (`k`, finality depth,
+1. [x] Peers rollout + DNS-seed list fix — nodes bootstrap across seed + seed3
+2. [x] Prometheus armed on the VPS (`127.0.0.1:19080`; seed direct, seed3 over
+       firewalled SSH tunnel), 15 alerts + 9 recording rules loaded
+3. [x] Baseline captured 2026-08-24 16:20 UTC: height 448/447, peers 2/2,
+       mempool 0, orphans 0, blue_score≈height, no reorgs (OPERATIONS.md §5)
+4. [ ] Tuning review after 1–2 weeks of data (`k`, finality depth,
+   payload pruning depth, difficulty window)
+
+Also this session: process manager unified on systemd — pm2 retired for node
+processes after a supervisor port fight; auto-deploy now swaps the binary
+atomically into `/usr/local/bin/kovanica-node` and restarts units (#25, #26).
+Branch hygiene: every merged feature branch deleted; one archive tag
+(`archive/geo-origin-node-policy`) preserves the only unique unshipped patch. (`k`, finality depth,
    payload pruning depth, difficulty window)
 
 ---
@@ -90,7 +101,7 @@
 - **Wire tags**: 0x20 (Ping), 0x21 (Pong), 0x22 (FindNode), 0x23 (Nodes)
 
 ### DNS Seed Resolver
-- **Seeds**: `seed.kovanica.online`, `seed2.kovanica.online`, `seed.kovanica.net`
+- **Seeds**: `seed.kovanica.online`, `seed2.kovanica.online`, `seed3.kovanica.online`
 - **Port**: 9000 (default)
 - **Fallbacks**: `127.0.0.1:9000`, `[::1]:9000`
 - **Injectable trait**: `DnsResolver` with `StdDnsResolver` and `MockDnsResolver`
