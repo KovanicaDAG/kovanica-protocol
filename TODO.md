@@ -12,14 +12,25 @@
 | `deploy-seed.sh` Amazon Linux / RHEL support | ✅ Done | PR #15 — package-manager detection (apt/dnf), no curl-minimal conflict on AL2023 |
 | **seed3** deployed — first true off-box node | ✅ Done | AWS EC2 t3.micro, eu-north-1, Amazon Linux 2023, systemd `kovanica-seed3`, mining on; genesis `76cc019d…` matches testnet, headers-first sync climbing past launch |
 | DNS `seed3.kovanica.online` | ✅ Done | A record, DNS-only → `3.79.148.71`; P2P :9000 verified through hostname |
-
 ### Follow-ups
 
-- [ ] Roll `seed3.kovanica.online:9000` into default `KOVANICA_PEERS` (public install.sh + deploy-seed.sh defaults)
-- [ ] Rotate the AWS keypair whose `.pem` was shared in chat (ed25519 keys are permanent access now)
+- [x] Rotate the AWS keypair whose `.pem` was shared in chat (leaked RSA removed
+      from `authorized_keys`, local pems shredded, unknown third key stripped;
+      only the two ops-box ed25519 keys remain)
+- [ ] **Peers rollout**: `seed3.kovanica.online:9000` into default `KOVANICA_PEERS`
+      (public install.sh + deploy-seed.sh defaults)
+- [ ] **Fix default DNS-seed list** (`dns_seed.rs`): `seed2.kovanica.online` and
+      `seed.kovanica.net` do not resolve — replace with live seeds
 - [ ] Decide `kovanica-cli` publication (mirror workspace deliberately excludes it)
 - [ ] Optional: Windows release assets for `install.ps1` (currently source-build only)
-- [ ] Watch seed3 soak: peer count / block rate / memory over first week
+
+### Next session — Testnet soak kickoff (roadmap item 4 ◀ ACTIVE)
+
+1. Peers rollout + DNS-seed list fix (above) so nodes bootstrap across seed + seed3
+2. Point Prometheus at both `/metrics` endpoints; arm `alerting_rules.yml`
+3. Baseline capture: orphan rate, propagation latency, fork rate, disk growth
+4. First tuning review after 1–2 weeks of data (`k`, finality depth,
+   payload pruning depth, difficulty window)
 
 ---
 
