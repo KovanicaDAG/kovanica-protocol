@@ -512,10 +512,18 @@ the testnet teaches us it needs.
    - `SpvClient` state machine: checkpoint → header chain → Merkle proofs
    - Wire protocol: `getheaders`/`getblocks` with proof verification (next)
 
-2. **Multi-seed discovery** — decentralize bootstrap:
+2. ~~**Multi-seed discovery** — decentralize bootstrap:~~ ✅ code shipped;
+   deployment wiring tracked in TODO.md
    - DNS seed records (A/AAAA for bootstrap nodes)
    - DHT (Kademlia) for peer discovery
    - Fallback to hardcoded seeds only
+
+   Shipped: `dns_seed.rs` (injectable `DnsResolver`, dedup + fallback),
+   `dht.rs` Kademlia (XOR metric, k-buckets) with relay tags 0x20–0x23,
+   Mesh integration, and `tests/dht_discovery.rs` Tiers 1–5 green.
+   Remaining wiring: the default seed list still names non-resolving hosts
+   (`seed2.kovanica.online`, `seed.kovanica.net`) and
+   `seed3.kovanica.online:9000` is not yet in `KOVANICA_PEERS` defaults.
 
 3. ~~**Observability & reliability** — production readiness:~~ ✅
    - `kovanica-node::metrics`: real Prometheus recording (metrics 0.22, unified
@@ -533,9 +541,13 @@ the testnet teaches us it needs.
      `metrics-exporter-prometheus`'s dependency, or emissions go to a noop
      recorder in the other crate version's global slot
 
-4. **Testnet soak & parameter tuning** — run for weeks:
+4. **Testnet soak & parameter tuning** — run for weeks: **◀ ACTIVE NEXT**
    - 24/7 testnet with multiple independent seed operators
+     (seed = Hostinger VPS; **seed3 = AWS eu-north-1**, live since
+     2026-08-24 — systemd `kovanica-seed3`, mining on, genesis verified,
+     DNS `seed3.kovanica.online`)
    - Measure: orphan rate, propagation latency, fork rate, disk growth
+     (both seeds expose `/metrics`; `alerting_rules.yml` ready to arm)
    - Tune: `k`, finality depth, payload pruning depth, difficulty window
 
 5. ~~**Wallet & explorer polish** — end-user UX:~~ ✅
