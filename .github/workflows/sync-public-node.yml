@@ -162,6 +162,12 @@ jobs:
         with:
           tool: cargo-zigbuild
 
+      # cargo-zigbuild shells out to a zig compiler; the pip wheel is the
+      # officially suggested install and lands on PATH as `python3 -m ziglang`.
+      - name: Install zig (linker backend for zigbuild)
+        if: matrix.zigbuild
+        run: pip3 install ziglang
+
       - name: Build release binary
         env:
           TARGET: ${{ matrix.target }}
