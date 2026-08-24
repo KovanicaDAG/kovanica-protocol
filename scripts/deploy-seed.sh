@@ -73,8 +73,9 @@ echo "[2/7] Installing build prerequisites..."
 ssh "$TARGET" 'if command -v apt-get >/dev/null; then
     sudo apt-get update -qq && sudo apt-get install -y -qq curl ca-certificates build-essential pkg-config >/dev/null
 elif command -v dnf >/dev/null; then
-    sudo dnf install -y -q gcc gcc-c++ make curl ca-certificates pkgconfig 2>/dev/null \
-      || sudo dnf install -y -q gcc gcc-c++ make curl ca-certificates
+    # AL2023 ships curl(-minimal); installing `curl` beside it conflicts.
+    sudo dnf install -y -q gcc gcc-c++ make pkgconfig 2>/dev/null \
+      || sudo dnf install -y -q gcc gcc-c++ make
 else
     echo "unsupported distro: need apt-get or dnf" >&2; exit 1
 fi'
