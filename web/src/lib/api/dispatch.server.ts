@@ -13,6 +13,7 @@ import {
   localP2p,
   localPrepare,
   localProduce,
+  localFeeEstimate,
   localReset,
   localState,
   localSubmit,
@@ -130,6 +131,8 @@ export async function dispatchApi(req: Request): Promise<Response> {
         return okOrErr(localFaucet(q.get("to"), q.get("amount"), q.get("kind")));
       case "tap":
         return okOrErr(localFaucet(q.get("to"), q.get("amount"), "tap"));
+      case "fee_estimate":
+        return okOrErr(localFeeEstimate(q.get("amount")));
       case "reset":
         return json(localReset());
       case "origin":

@@ -526,7 +526,8 @@ the testnet teaches us it needs.
    - Measure: orphan rate, propagation latency, fork rate, disk growth
    - Tune: `k`, finality depth, payload pruning depth, difficulty window
 
-5. **Wallet & explorer polish** — end-user UX:
-   - Hardware wallet (Ledger/Trezor) via HWI
-   - BIP39/BIP44 derivation, transaction history, fee estimation
-   - Explorer: real-time DAG viz, address analytics, token support
+5. ~~**Wallet & explorer polish** — end-user UX:~~ ✅
+   - Hardware wallet (Ledger via WebHID, Trezor via WebUSB) in the node explorer
+   - BIP39/BIP44 derivation, transaction history
+   - Fee estimation from mempool p90 (`POST /api/fee_estimate`, Rust + web preview)
+   - Explorer: real-time DAG viz with zoom/pan + WebSocket updates, analytics panel

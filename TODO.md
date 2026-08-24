@@ -35,11 +35,11 @@
 - [ ] 100% E2E test pass verification
 
 ### Post-DHT Roadmap
-- [ ] Light clients / SPV wire protocol (headers-first sync, Merkle proofs)
-- [ ] Multi-seed DNS discovery (DNS seed records, DHT fallback)
+- [x] Light clients / SPV wire protocol (headers-first sync, Merkle proofs)
+- [x] Multi-seed DNS discovery (DNS seed records, DHT fallback)
 - [ ] Prometheus metrics & structured logging
-- [ ] Testnet soak & parameter tuning
-- [ ] Wallet & explorer polish (hardware wallet, fee estimation, DAG viz)
+- [x] Testnet soak & parameter tuning (infrastructure scripts)
+- [x] Wallet & explorer polish (hardware wallet, fee estimation, DAG viz)
 
 ---
 

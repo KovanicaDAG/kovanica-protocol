@@ -419,6 +419,21 @@ export function localFaucet(
   return { ok: true, tx: id };
 }
 
+export function localFeeEstimate(amountRaw: string | null): { ok: true; fee: number } | string {
+  let amount = 0;
+  if (amountRaw !== null) {
+    amount = Number(amountRaw);
+    if (!Number.isFinite(amount) || amount < 0) return "amount invalid";
+  }
+  const s = store();
+  if (s.pending.length === 0) return { ok: true, fee: MIN_FEE };
+  const fees = s.pending.map((p) => p.fee).sort((a, b) => a - b);
+  const p90 = fees[Math.min(fees.length - 1, Math.floor(fees.length * 0.9))];
+  let fee = Math.max(MIN_FEE, p90);
+  if (amount > ATOM) fee = Math.round(fee * 1.2);
+  return { ok: true, fee };
+}
+
 export function localMining(on: string | null): { ok: true; mining: boolean } {
   store().mining = on === "1" || on === "true";
   return { ok: true, mining: store().mining };

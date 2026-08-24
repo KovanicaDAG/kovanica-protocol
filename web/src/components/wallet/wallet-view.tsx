@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AddressQr } from "@/components/wallet/address-qr";
 import { api, useApiSource } from "@/lib/api/client";
+import { MIN_FEE } from "@/lib/api/contract";
 import type { ApiHistory, ApiUtxos } from "@/lib/api/contract";
 import { ATOM } from "@/lib/ledger/types";
 import { fmtKvnc, parseKvnc } from "@/lib/ledger/format";
@@ -31,17 +32,21 @@ export function WalletView() {
   const [amount, setAmount] = useState("1");
   const [utxos, setUtxos] = useState<ApiUtxos | null>(null);
   const [hist, setHist] = useState<ApiHistory | null>(null);
+  const [feeAtoms, setFeeAtoms] = useState<number | null>(null);
 
   const balance = utxos?.balance ?? 0;
+  const fee = feeAtoms ?? MIN_FEE;
 
   async function refreshChain(address: string) {
     try {
-      const [u, h] = await Promise.all([
+      const [u, h, f] = await Promise.all([
         api<ApiUtxos>(`/api/utxos?address=${address}`),
         api<ApiHistory>(`/api/history?address=${address}`),
+        api<{ ok: boolean; fee: number }>("/api/fee_estimate", "POST"),
       ]);
       setUtxos(u);
       setHist(h);
+      if (typeof f.fee === "number" && f.fee > 0) setFeeAtoms(f.fee);
     } catch {
       /* keep last */
     }
@@ -166,7 +171,6 @@ export function WalletView() {
       toast.error("Need a kvnc…dag or 64-hex address");
       return;
     }
-    const fee = 10_000;
     const spendable = utxos?.balance ?? 0;
     if (spendable > 0 && atoms + fee > spendable) {
       const maxSend = Math.max(0, spendable - fee) / ATOM;
@@ -352,7 +356,6 @@ export function WalletView() {
               className="h-11 px-3"
               disabled={busy || !utxos}
               onClick={() => {
-                const fee = 10_000;
                 const v = Math.max(0, (utxos?.balance ?? 0) - fee) / ATOM;
                 setAmount(v.toFixed(8).replace(/\.?0+$/, "") || "0");
               }}
@@ -361,7 +364,9 @@ export function WalletView() {
             </Button>
           </div>
         </label>
-        <p className="text-[11px] text-muted">Fee 0.0001 KVNC. 50 KVNC sends spend two coinbases.</p>
+        <p className="text-[11px] text-muted">
+          Fee {fmtKvnc(fee)} (mempool p90 estimate, min {fmtKvnc(MIN_FEE)}). 50 KVNC sends spend two coinbases.
+        </p>
         <Button type="submit" className="h-12" disabled={busy}>
           {busy ? "Sending…" : live ? "Sign & send on Live" : "Send"}
         </Button>

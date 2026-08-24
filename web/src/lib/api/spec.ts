@@ -77,6 +77,10 @@ POST /api/submit?from=&to=&amount=&sig=
 POST /api/produce
   pack mempool into a block (400 if empty)
 
+POST /api/fee_estimate?amount=
+  mempool fee estimate in atoms: p90 of pending fees, min-fee when empty;
+  amounts over 1 KVNC scale by 1.2
+
 POST /api/mine
   operator: append a coinbase block (preview on, live off)
 
