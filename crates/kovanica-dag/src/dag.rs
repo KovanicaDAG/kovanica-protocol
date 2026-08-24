@@ -236,7 +236,7 @@ pub struct Dag {
     /// - The VRF output to be less than `threshold` (leader eligibility).
     ///   A threshold of `u64::MAX` means all valid VRF outputs are eligible.
     ///   The threshold is interpreted as a big-endian u64 from the VRF output.
-    /// Off by default (`None`).
+    ///   Off by default (`None`).
     vrf_config: Option<VrfConfig>,
 }
 

@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn vrf_deterministic() {
-        let (sk, pk) = vrf_keypair_from_seed(&[1u8; 32]);
+        let (sk, _pk) = vrf_keypair_from_seed(&[1u8; 32]);
         let input = b"test input";
 
         let eval1 = vrf_prove(&sk, input);
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn vrf_verify_wrong_key() {
-        let (sk1, pk1) = vrf_keypair_from_seed(&[4u8; 32]);
+        let (sk1, _pk1) = vrf_keypair_from_seed(&[4u8; 32]);
         let (_, pk2) = vrf_keypair_from_seed(&[5u8; 32]);
         let input = b"wrong key";
         let eval = vrf_prove(&sk1, input);

@@ -127,7 +127,7 @@ impl DuplicateState {
 }
 
 /// Per-peer scoring state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 struct ScoreState {
     score: i32,
     total_valid_blocks: u64,
@@ -139,26 +139,12 @@ struct ScoreState {
     banned: bool,
 }
 
-impl Default for ScoreState {
-    fn default() -> Self {
-        Self {
-            score: 0,
-            total_valid_blocks: 0,
-            total_duplicate_blocks: 0,
-            total_valid_txs: 0,
-            total_duplicate_txs: 0,
-            total_invalid_blocks: 0,
-            total_invalid_txs: 0,
-            banned: false,
-        }
-    }
-}
-
 impl ScoreState {
     fn new(initial: i32) -> Self {
-        let mut s = Self::default();
-        s.score = initial;
-        s
+        Self {
+            score: initial,
+            ..Self::default()
+        }
     }
 
     fn apply(&mut self, delta: i32, config: &P2pHardeningConfig) {

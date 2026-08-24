@@ -156,7 +156,7 @@ impl BlockHeader {
                 } else {
                     0
                 };
-                let window_headers: Vec<_> = headers[start..].iter().copied().collect();
+                let window_headers: Vec<_> = headers[start..].to_vec();
                 if !h.verify_difficulty(retarget, &window_headers) {
                     return false;
                 }
@@ -184,7 +184,7 @@ pub fn merkle_root(txs: &[crate::Transaction]) -> [u8; 32] {
 fn merkle_root_from_leaves(leaves: &[[u8; 32]]) -> [u8; 32] {
     let mut current = leaves.to_vec();
     while current.len() > 1 {
-        let mut next = Vec::with_capacity((current.len() + 1) / 2);
+        let mut next = Vec::with_capacity(current.len().div_ceil(2));
         for chunk in current.chunks(2) {
             if chunk.len() == 2 {
                 let mut hasher = Hasher::new();
@@ -252,7 +252,7 @@ pub fn generate_merkle_proof(txs: &[crate::Transaction], index: usize) -> Option
     let mut idx = index;
     let mut current_level = leaves;
     while current_level.len() > 1 {
-        let mut next_level = Vec::with_capacity((current_level.len() + 1) / 2);
+        let mut next_level = Vec::with_capacity(current_level.len().div_ceil(2));
         for chunk in current_level.chunks(2) {
             if chunk.len() == 2 {
                 let sibling = if idx % 2 == 0 { chunk[1] } else { chunk[0] };
@@ -399,9 +399,9 @@ fn golomb_rice_decode<I: Iterator<Item = u8>>(bits: &mut I, k: u8) -> Option<u64
     // Read binary remainder
     let mut r = 0u64;
     for i in (0..k).rev() {
-        match bits.next() {
-            Some(b) => r |= (b as u64) << i,
-            None => return None,
+        {
+            let b = bits.next()?;
+            r |= (b as u64) << i
         }
     }
     Some((q << k) | r)
@@ -415,6 +415,8 @@ pub struct SpvClient {
     /// The highest verified header (tip of the SPV chain).
     tip: Option<BlockHeader>,
     /// The trusted checkpoint header (genesis or later).
+    /// Retained for introspection; verification uses `headers`.
+    #[allow(dead_code)]
     checkpoint: Option<BlockHeader>,
     /// Whether PoW verification is required.
     require_pow: bool,
@@ -425,11 +427,15 @@ pub struct SpvClient {
 impl SpvClient {
     /// Create a new SPV client with a trusted checkpoint.
     pub fn new(checkpoint: BlockHeader, require_pow: bool, retarget: Option<Retarget>) -> Self {
-        let mut s = Self::default();
-        s.checkpoint = Some(checkpoint.clone());
-        s.headers.insert(checkpoint.height, checkpoint.clone());
-        s.tip = Some(checkpoint);
-        s.require_pow = require_pow;
+        let mut headers = HashMap::new();
+        headers.insert(checkpoint.height, checkpoint.clone());
+        let mut s = Self {
+            checkpoint: Some(checkpoint.clone()),
+            headers,
+            tip: Some(checkpoint),
+            require_pow,
+            ..Self::default()
+        };
         s.retarget = retarget;
         s
     }
@@ -543,9 +549,7 @@ impl std::error::Error for SpvError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        encode_block_payload, Address, KeyPair, OutPoint, Transaction, TxId, TxOutput, UtxoSet,
-    };
+    use crate::{encode_block_payload, Address, KeyPair, OutPoint, Transaction, TxId, TxOutput};
     use kovanica_dag::{pow::mine, Block, Retarget};
 
     fn tx(addr: Address, value: u64, tag: &[u8]) -> Transaction {

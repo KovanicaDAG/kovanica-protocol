@@ -6,8 +6,7 @@
 //! shuffles and deduplicates results, and falls back to static IPs if DNS fails.
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-use std::sync::Arc;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 /// Trait for DNS resolution, allowing test injection.
 pub trait DnsResolver: Send + Sync {
@@ -173,7 +172,7 @@ pub fn mock_resolver(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::{Ipv4Addr, SocketAddr};
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
     #[test]
     fn test_std_resolver_localhost() {

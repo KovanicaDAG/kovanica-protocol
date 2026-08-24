@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "kovanica-explorer",
-      cwd: "/root/kovanica-ledger",
+      cwd: "/root/kovanica-protocol",
       script: "./target/release/kovanica-node",
       args: "explorer 127.0.0.1:8080",
       interpreter: "none",

@@ -78,7 +78,7 @@ jobs:
             set -e
             # Non-interactive SSH does not source ~/.profile
             export PATH="$HOME/.cargo/bin:$PATH"
-            cd /root/kovanica-ledger
+            cd /root/kovanica-protocol
             git pull --ff-only origin main
             # Replace binary with CI-built artifact
             cp ~/bin/kovanica-node ./target/release/kovanica-node

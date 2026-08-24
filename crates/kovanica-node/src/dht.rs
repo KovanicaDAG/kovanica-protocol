@@ -5,8 +5,7 @@
 //! head-probing ping eviction, 3-strike dead peer pruning, and iterative
 //! node lookup (α=3 concurrency) over distance-sorted shortlists.
 
-use std::collections::{BTreeMap, VecDeque};
-use std::net::SocketAddr;
+use std::collections::VecDeque;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use blake3;
@@ -38,8 +37,8 @@ impl NodeId {
     /// XOR distance between two NodeIds.
     pub fn distance(&self, other: &NodeId) -> [u8; 32] {
         let mut dist = [0u8; 32];
-        for i in 0..32 {
-            dist[i] = self.0[i] ^ other.0[i];
+        for (d, (a, b)) in dist.iter_mut().zip(self.0.iter().zip(other.0.iter())) {
+            *d = a ^ b;
         }
         dist
     }
@@ -690,7 +689,7 @@ impl NodeLookup {
                 .iter()
                 .all(|(_, c)| self.queried.contains(&c.node_id))
         } else {
-            let kth_dist = self.shortlist[self.k - 1].0;
+            let _kth_dist = self.shortlist[self.k - 1].0;
             // Check if any unqueried candidate is closer than kth
             self.shortlist
                 .iter()
@@ -712,7 +711,6 @@ impl NodeLookup {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
 
     #[test]
     fn test_node_id_random() {
@@ -783,7 +781,7 @@ mod tests {
 
         let c1 = PeerContact::new(id1, "127.0.0.1:9001".to_string());
         let c2 = PeerContact::new(id2, "127.0.0.1:9002".to_string());
-        let c3 = PeerContact::new(id3, "127.0.0.1:9003".to_string());
+        let _c3 = PeerContact::new(id3, "127.0.0.1:9003".to_string());
 
         bucket.update_contact(c1);
         bucket.update_contact(c2);
@@ -806,9 +804,8 @@ mod tests {
 
         // Mark failed 3 times
         for _ in 0..3 {
-            let evicted = bucket.mark_failed(&id1);
-            if evicted.is_some() {
-                assert_eq!(evicted.unwrap().node_id, id1);
+            if let Some(evicted) = bucket.mark_failed(&id1) {
+                assert_eq!(evicted.node_id, id1);
             }
         }
         assert!(bucket.is_empty());

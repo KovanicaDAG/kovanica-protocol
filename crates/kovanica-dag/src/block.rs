@@ -155,6 +155,7 @@ impl Block {
     }
 
     /// Create a block with full VRF fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_vrf(
         mut parents: Vec<BlockId>,
         work: u128,
@@ -208,6 +209,7 @@ impl Block {
     }
 
     /// Create a pruned block with full VRF fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_pruned_with_vrf(
         mut parents: Vec<BlockId>,
         work: u128,

@@ -50,7 +50,6 @@ impl Default for MempoolConfig {
 #[derive(Clone, Debug)]
 struct MempoolEntry {
     tx: Transaction,
-    fee: u64,
     size: usize,
     fee_rate: u64, // atoms per byte (scaled by 1000 for precision)
 }
@@ -86,6 +85,7 @@ impl MempoolV2 {
     }
 
     /// Create with default config.
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
         Self::new(MempoolConfig::default())
     }
@@ -131,12 +131,7 @@ impl MempoolV2 {
         // Check capacity before adding
         self.ensure_capacity(size)?;
 
-        let entry = MempoolEntry {
-            tx,
-            fee,
-            size,
-            fee_rate,
-        };
+        let entry = MempoolEntry { tx, size, fee_rate };
 
         // Check if all inputs are available (valid for pending)
         // We can't fully validate without UTXO set, so we add to orphans

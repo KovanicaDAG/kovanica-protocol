@@ -423,6 +423,7 @@ fn test_cross_block_merkle_forgery_and_tampered_payloads() {
     assert!(node.merkle_block(&bogus_block, &sent1.tx).is_err());
 }
 
+#[allow(clippy::large_enum_variant)]
 enum NodeCmd {
     Query(RelayMsg, Sender<Option<RelayMsg>>),
     Produce(Sender<()>),

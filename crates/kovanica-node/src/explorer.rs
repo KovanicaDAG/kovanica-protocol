@@ -16,7 +16,7 @@ use kovanica_dag::BlockId;
 use kovanica_state::{Address, Transaction};
 
 use crate::dht::{NodeId, PeerContact, RoutingTable};
-use crate::dns_seed::{production_resolver, DnsSeedConfig, DnsSeedResolver};
+use crate::dns_seed::{DnsSeedConfig, DnsSeedResolver};
 use crate::metrics::{
     init_metrics, record_explorer_http_request, render_prometheus, set_explorer_ws_clients,
 };
@@ -184,7 +184,7 @@ impl Explorer {
                 self.dht_table = Some(n.dht_routing_table().unwrap().clone());
 
                 // Initialize DNS resolver
-                let config = DnsSeedConfig::default();
+                let _config = DnsSeedConfig::default();
                 self.dns_resolver = Some(DnsSeedResolver::new(crate::dns_seed::StdDnsResolver));
             }
         }
@@ -378,7 +378,7 @@ impl Explorer {
         if !listen_addr.is_empty() || !peers.is_empty() {
             eprintln!("kovanica p2p listen={listen_addr} peers={peers:?}");
         }
-        let config = DnsSeedConfig::default();
+        let _config = DnsSeedConfig::default();
         let dns_resolver = Some(DnsSeedResolver::new(crate::dns_seed::StdDnsResolver));
         let mut app = Self {
             mesh,
@@ -1160,7 +1160,7 @@ fn dispatch(
         "fee_estimate" => {
             let amount = parse_u64(q, "amount", 0)?;
             let n = app.mesh.node(&node).ok_or("unknown node")?;
-            let fee = estimate_fee(&n, amount)?;
+            let fee = estimate_fee(n, amount)?;
             return Ok(format!("{{\"ok\":true,\"fee\":{}}}", fee));
         }
         other => return Err(format!("unknown action {other}")),

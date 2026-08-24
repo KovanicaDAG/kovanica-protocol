@@ -230,7 +230,7 @@ fn checkpoint_restored_ledger_accepts_new_blocks() {
     let original_len = restored.dag().linearize().len();
 
     // The restored ledger should be able to accept new blocks on top of the tip.
-    let alice = KeyPair::from_u64(1);
+    let _alice = KeyPair::from_u64(1);
     let bob = KeyPair::from_u64(2);
     let tip = restored.dag().selected_tip();
     let tx = Transaction::coinbase(

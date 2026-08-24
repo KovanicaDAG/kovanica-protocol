@@ -19,7 +19,7 @@ use kovanica_state::{
 };
 
 use crate::dht::{
-    DhtMsg, NodeId, PeerContact, TAG_DHT_FIND_NODE, TAG_DHT_NODES, TAG_DHT_PING, TAG_DHT_PONG,
+    NodeId, PeerContact, TAG_DHT_FIND_NODE, TAG_DHT_NODES, TAG_DHT_PING, TAG_DHT_PONG,
 };
 use crate::net::{decode_one_record, encode_record, NetError};
 use crate::node::{BlockRecord, Node};

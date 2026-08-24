@@ -152,7 +152,7 @@ fn vrf_wrong_public_key_rejected() {
     let (mut dag, genesis) = new_dag(3);
     dag.set_vrf(u64::MAX);
 
-    let (sk1, pk1) = vrf_keypair_from_seed(&[3u8; 32]);
+    let (sk1, _pk1) = vrf_keypair_from_seed(&[3u8; 32]);
     let (_, pk2) = vrf_keypair_from_seed(&[4u8; 32]);
 
     let vrf_input = Dag::vrf_input(&[genesis]);
@@ -178,11 +178,9 @@ fn vrf_wrong_public_key_rejected() {
 #[test]
 fn vrf_genesis_exempt() {
     // Genesis should not require VRF even when VRF is enabled
-    let (mut dag, genesis) = new_dag(3);
+    let (mut dag, _genesis) = new_dag(3);
     dag.set_vrf(0); // threshold 0 means no one eligible except genesis is exempt
 
-    // This should work (genesis is exempt)
-    let g2 = Block::genesis(1, 0, 0, b"genesis2".to_vec());
     // We can't actually insert another genesis, but we can check that genesis
     // doesn't trigger VRF checks by inserting a block without VRF when genesis
     // was created without VRF enabled, then enabling VRF and inserting.

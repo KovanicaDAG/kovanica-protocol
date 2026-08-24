@@ -1,7 +1,7 @@
 //! Integration tests for continuous in-process gossip: peer discovery, the
 //! relay loop, transaction dissemination, and mempool eviction of spent txs.
 
-use kovanica_node::{GossipKind, Mesh, Node, PeerStats};
+use kovanica_node::{GossipKind, Mesh, Node};
 
 fn genesis_node() -> Node {
     let mut node = Node::new();
@@ -138,14 +138,14 @@ fn hardening_rate_limit_blocks_excess() {
         ..Default::default()
     };
     let mut mesh = kovanica_node::Mesh::with_hardening_config(config);
-    let mut node = genesis_node();
+    let node = genesis_node();
     mesh.add("alpha", node);
     mesh.add("beta", genesis_node());
     mesh.connect("alpha", "beta").unwrap();
     mesh.drain(8);
 
     // Send blocks until rate limited
-    for i in 0..20 {
+    for _i in 0..20 {
         let _ = mesh.send("alpha", 1, 10, 2);
         mesh.drain(4);
     }
@@ -197,7 +197,7 @@ fn hardening_duplicate_tx_penalizes_peer() {
     mesh.drain(8);
 
     // Pool a tx from alpha
-    let tx = mesh.pool("alpha", 1, 100, 2);
+    let _tx = mesh.pool("alpha", 1, 100, 2);
     mesh.drain(8);
 
     // Check that stats track it

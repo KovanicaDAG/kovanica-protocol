@@ -26,15 +26,14 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use kovanica_dag::{Block, BlockId};
 use kovanica_state::{encode_block_payload, Address, Transaction, TxId};
 
-use crate::dht::{DhtMsg, NodeId, PeerContact, RoutingTable};
+use crate::dht::{NodeId, PeerContact, RoutingTable};
 use crate::metrics::{
     record_dht_bootstrap, record_dht_find_node, record_dht_pruned, record_dht_query_received,
     record_dht_query_sent, record_p2p_message_received, record_p2p_message_sent,
-    record_peer_banned, record_peer_connected, record_peer_disconnected, set_peer_count,
+    record_peer_connected, set_peer_count,
 };
 use crate::node::{BlockRecord, Node, NodeError};
 use crate::p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
-use crate::relay::{handle_relay_query, RelayMsg};
 
 /// Why a mesh operation failed.
 #[derive(Debug)]
@@ -556,8 +555,6 @@ impl Mesh {
             .get(from)
             .ok_or_else(|| P2pError::UnknownNode(format!("{} has no DHT table", from)))?;
         let k = from_table.k;
-        let local_id = from_table.local_id;
-        drop(from_table);
 
         let start = std::time::Instant::now();
 
@@ -625,7 +622,7 @@ impl Mesh {
     /// Returns the total number of peers pruned across all tables.
     pub fn prune_unreachable_peers(&mut self) -> usize {
         let mut total_pruned = 0;
-        for (_, table) in &mut self.dht_tables {
+        for table in self.dht_tables.values_mut() {
             let pruned = table.prune_unresponsive(3);
             total_pruned += pruned.len();
         }

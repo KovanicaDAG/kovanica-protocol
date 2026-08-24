@@ -8,17 +8,10 @@
 //! - Tier 5: Adversarial (churn, Sybil/poisoning, eclipse resistance)
 
 use kovanica_node::{
-    dht::{
-        DhtMsg, NodeId, NodeLookup, PeerContact, RoutingTable, UpdateResult, TAG_DHT_FIND_NODE,
-        TAG_DHT_NODES, TAG_DHT_PING, TAG_DHT_PONG,
-    },
-    dns_seed::{
-        mock_resolver, production_resolver, DnsResolver, DnsSeedConfig, DnsSeedResolver,
-        MockDnsResolver, StdDnsResolver,
-    },
-    net::NetError,
+    dht::{DhtMsg, NodeId, NodeLookup, PeerContact, RoutingTable, UpdateResult},
+    dns_seed::{DnsSeedConfig, DnsSeedResolver, MockDnsResolver},
     node::Node,
-    p2p::{Mesh, P2pError},
+    p2p::Mesh,
     relay::{RelayMsg, RelaySession},
 };
 
@@ -36,6 +29,7 @@ fn create_test_node(node_id: NodeId, k: usize) -> Node {
 }
 
 /// Helper to create a mesh with DHT-enabled nodes
+#[allow(dead_code)]
 fn create_dht_mesh(node_count: usize, k: usize) -> (Mesh, Vec<NodeId>) {
     let mut mesh = Mesh::new();
     let mut node_ids = Vec::new();
@@ -50,7 +44,7 @@ fn create_dht_mesh(node_count: usize, k: usize) -> (Mesh, Vec<NodeId>) {
 
     (mesh, node_ids)
 }
-
+#[allow(dead_code)]
 #[test]
 fn test_dns_multi_seed_resolver_deduplication() {
     let mut records = HashMap::new();
@@ -203,9 +197,8 @@ fn test_kbucket_failure_eviction() {
 
     // Mark failed 3 times
     for _ in 0..3 {
-        let evicted = bucket.mark_failed(&id1);
-        if evicted.is_some() {
-            assert_eq!(evicted.unwrap().node_id, id1);
+        if let Some(evicted) = bucket.mark_failed(&id1) {
+            assert_eq!(evicted.node_id, id1);
         }
     }
     assert!(bucket.is_empty());
@@ -378,7 +371,7 @@ fn test_mesh_dht_find_node() {
     let node_id2 = NodeId::random();
     let node_id3 = NodeId::random();
 
-    let mut node1 = create_test_node(node_id1, 8);
+    let node1 = create_test_node(node_id1, 8);
     let node2 = create_test_node(node_id2, 8);
     let node3 = create_test_node(node_id3, 8);
 
@@ -877,7 +870,7 @@ fn test_multiplexed_tcp_framing() {
                     let resp = RelayMsg::DhtPong { sender, nonce };
                     session.send(&resp).unwrap();
                 }
-                RelayMsg::Hello { from: _, .. } => {
+                RelayMsg::Hello { .. } => {
                     let resp = RelayMsg::Hello {
                         from: "server".into(),
                         advertised: vec![],
@@ -951,7 +944,7 @@ fn test_adversarial_high_churn() {
 
         // Prune old nodes
         if round > 10 {
-            let old_name = format!("node-{}", round - 10);
+            let _old_name = format!("node-{}", round - 10);
             if let Some(table) = mesh.dht_table_mut(&mesh.names()[0]) {
                 table.mark_failed(&node_ids[round - 10]);
             }
