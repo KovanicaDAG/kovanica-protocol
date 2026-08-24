@@ -1,94 +1,123 @@
-# Seed operations runbook (`kovanica-testnet`)
+# Operations runbook — `kovanica-testnet`
 
-The public seed runs on VPS `srv1745734` as the pm2 process
-**kovanica-explorer**, serving:
+> Source of truth for live topology, deploy pipeline, DNS, and incident
+> lessons. Mirrored to `Obsidian-Vault/KovanicaDAG/`. Keep in sync with
+> reality in the same change that alters any of it.
 
-| What | Where |
-| --- | --- |
-| Explorer HTTP | `127.0.0.1:8080` → Caddy → `explorer.kovanica.online` (Cloudflare-proxied) |
-| P2P (TCP) | `0.0.0.0:9000` + `[::]:9000` (v6only) → `seed.kovanica.online` (grey-cloud DNS) |
-| Data dir | `/root/kovanica-ledger/data` (`KOVANICA_DATA`) |
-| Source | `/root/kovanica-ledger` — a plain clone of `KovanicaDAG/kovanica-ledger@main` |
+*Updated: 2026-08-24*
 
-## Process env (as started; `pm2 describe kovanica-explorer` to view)
+## 1. Topology (all on VPS `srv1745734`, 145.223.116.178)
 
+| Component | Where | Notes |
+| --- | --- | --- |
+| **seed1** (primary) | pm2 `kovanica-explorer`, P2P `:9000`, HTTP loopback `:8080` | auto-mines 1 block/min (`KOVANICA_MINE=1 KOVANICA_MINE_SECS=60`) |
+| **seed2** (validation instance) | systemd `kovanica-seed2`, P2P `:9001`, HTTP loopback `:18080` | same host as seed1 — proves deploy-seed.sh, no resilience gain |
+| **web** (kovanica.online + wallet + map + explorer pages) | pm2 `kovanica-web`, `127.0.0.1:3010` | built via `npm run build:vps`, deployed to `/root/kovanica-web/.output` |
+| nginx | `/etc/nginx/sites-enabled/explorer.kovanica.online` | `/api/*`→`:8080`, pages→`:3010`, `/download/*`→`/var/www/kovanica-dist/` |
+| Node binaries (public) | `/var/www/kovanica-dist/{kovanica-node-linux-x64,-arm64,install.sh}` | served at `https://explorer.kovanica.online/download/…` |
+| Chain data (seed1) | `/root/kovanica-data` (`KOVANICA_DATA`) | **outside the git tree** so runtime writes never dirty it |
+| Soak logs | `/root/kovanica-data/soak/` | `testnet-measure.py`, 24h runs |
+
+Current network: genesis `76cc019de947cb9f6b2abe9428dc120bbf6f3ee3c3f0be89efa83a4e3af3c140`.
+The pre-reset chain (genesis `27d5f750…`, 127 blocks) was lost on 2026-08-24 — its
+data dir was inside a directory that got deleted while the old process held it.
+
+## 2. Deploy pipelines
+
+### Rust node (explorer/seeds) — GitHub Actions `.github/workflows/deploy.yml`
+- Trigger: push to `main`; gated by `DEPLOY_ENABLED=true` repo variable (set).
+- Secrets: `VPS_HOST=145.223.116.178`, `VPS_USERNAME=root`, `VPS_PRIVATE_KEY` (= local `~/.ssh/github_actions`, authorized in `~/.ssh/authorized_keys`).
+- **SSH port is 2222, not 22** — upstream filtering (Hostinger-level) times out GitHub runner connections on :22 after repeated logins. sshd listens on both.
+- Steps: cargo test/clippy/fmt gate → release build artifact → scp to `/root/bin/kovanica-node` → `pm2 stop kovanica-explorer` → cp over `target/release/kovanica-node` → `pm2 restart --update-env` → `pm2 save`.
+
+### Web app — manual for now
 ```
-KOVANICA_LISTEN=0.0.0.0:9000   KOVANICA_PEERS=off     KOVANICA_MINE=0
-KOVANICA_FAUCET=0              KOVANICA_TAP=1         KOVANICA_ALLOW_RESET=0
-KOVANICA_OPERATOR=0            KOVANICA_POW=1         KOVANICA_DATA=/root/kovanica-ledger/data
+cd web && npm run build:vps
+rsync -a --delete .output/ /root/kovanica-web/.output/
+pm2 restart kovanica-web
 ```
 
-Do **not** use `ecosystem.config.js` from the repo on this box — it is a
-template with an unrelated cwd.
+### New remote seed — `scripts/deploy-seed.sh`
+```
+./scripts/deploy-seed.sh root@<host> --name seed3 --mine --peers seed.kovanica.online:9000
+```
+Ships a `git archive` tarball (no clone auth needed), installs prereqs + swap,
+builds on-target, systemd unit `kovanica-seed3`, opens only the P2P port,
+verifies genesis match against seed1.
 
-## Post-deploy checks (after every deploy)
+## 3. DNS (Cloudflare)
+
+- Zone `kovanica.online`: `6fc91866edb8c9fab9fd2458857b5939`
+- API token: `/root/cloudflare-token` — **always call with `curl -4`**: the token's IP filter rejects this box's IPv6 egress ("Cannot use the access token from location").
+- Records (seeds must be **DNS-only / grey cloud** — proxying breaks raw TCP :9000):
+
+| Name | Type | Content | Proxy |
+| --- | --- | --- | --- |
+| `seed.kovanica.online` | A | `145.223.116.178` | DNS only |
+| `seed.kovanica.online` | AAAA | `2a02:4780:41:1f43::1` | DNS only |
+| `explorer/www/app/wallet/trader/bot/dash` | A | `145.223.116.178` | proxied |
+| `opencode` | A | `145.223.116.178` | DNS only |
+
+## 4. Hard-won incident lessons (do not relearn)
+
+1. **Port 22 from GitHub runners gets filtered** after several rapid deploys:
+   `dial tcp :22 i/o timeout` with zero packets reaching sshd. Fix = alternate
+   port 2222 (workflow `port:` fields + ufw). If it recurs on 2222, suspect the
+   provider shield again — rotate the port or self-host the runner.
+2. **Ubuntu socket-activated sshd ignores bare `Port` lines** until restarted
+   through `ssh.socket`. Editing `/etc/ssh/sshd_config` alone can leave you with
+   a half-bound state or kill ssh.socket (`Address already in use`). After any
+   port change: `systemctl daemon-reload && systemctl restart ssh.socket ssh`,
+   then verify with `ss -tlnp | grep -E ':22|:2222'` **and an actual login**.
+3. **ETXTBSY**: a running binary cannot be overwritten. Always stop → cp → start.
+4. **Deleted-inode trap**: replacing the binary file does NOT update a running
+   process — it keeps serving the old bytes with `(deleted)` in
+   `/proc/<pid>/exe`. After any binary swap, restart the service and confirm
+   `readlink /proc/$(pm2 pid <svc>)/exe` matches the disk file.
+5. **Never put runtime state inside a git working tree** (the lost-chain
+   incident). Data lives in `/root/kovanica-data`, outside any checkout.
+6. **Metrics crate versions must align**: `metrics` minor version must equal
+   what `metrics-exporter-prometheus` uses internally, or emissions land in a
+   noop recorder of the other version's global slot. Also keep
+   `default-features = false` on the exporter (we render `/metrics` ourselves;
+   the http-listener feature drags openssl and breaks ARM cross-builds).
+7. **DHT handshake contacts**: `Mesh::connect` registers mutual routing-table
+   contacts; eclipse resistance depends on it. See AGENTS.md §8.
+
+## 5. Quick commands
 
 ```sh
-curl -s localhost:8080/api/head      # network "kovanica-testnet", blocks>0, tip advancing
-ss -tlnp | grep 9000                 # TWO lines: 0.0.0.0:9000 and [::]:9000
-pm2 ls                               # kovanica-explorer online, restart count stable
+# Health
+curl -s http://127.0.0.1:8080/api/head          # seed1 head
+systemctl status kovanica-seed2                  # seed2
+curl -s http://127.0.0.1:9090/metrics | head     # Prometheus series
+pm2 ls                                           # web + explorer
+
+# Restart after binary swap
+pm2 restart kovanica-explorer --update-env
+
+# Watch sync/mining logs
+journalctl -u kovanica-seed2 -f
+pm2 logs kovanica-explorer --lines 50
+
+# Cold bootstrap check (pristine node pulls from hostname)
+KOVANICA_DATA=/tmp/cbt KOVANICA_LISTEN=127.0.0.1:19000 \
+KOVANICA_PEERS=seed.kovanica.online:9000 ./target/release/kovanica-node explorer 127.0.0.1:18081
 ```
 
-From outside:
+## 6. Free hosting candidates for the next off-box seed
 
-```sh
-nc -vz seed.kovanica.online 9000     # must succeed for v4 AND v6
-curl -s https://explorer.kovanica.online/api/head
-```
+| Provider | Offer | Verdict |
+| --- | --- | --- |
+| Oracle Cloud Always Free ⭐ | ARM A1 4 OCPU/24GB (+2 micro AMD), free forever | best; needs card; capacity varies by region |
+| Google Cloud e2-micro | 1 VM free forever (us-west1/central1/east1) | solid fallback |
+| AWS Free Tier | ~$200 credits / 6 mo (new accounts); Lightsail 3-mo free | temporary seeds only |
+| DigitalOcean | $200 / 60-day trial credits | temporary |
+| Vultr | ~$300 / 30-day trial credits | temporary |
+| Hetzner | ~€4.5/mo CX22 | not free but reliable EU permanent option |
+| Own hardware (RPi/laptop) | free forever behind port-forward or tailscale | genuinely free; needs reachable TCP :9000 |
 
-Peer exchange sanity: a fresh clone with `KOVANICA_PEERS=seed.kovanica.online:9000`
-should pull records within seconds of boot (see its stderr log).
+Cloudflare Tunnel is NOT suitable for seeds (no raw public TCP without client agents).
 
-## Restart drill
-
-```sh
-pm2 restart kovanica-explorer        # seconds of downtime, chain resumes from data/
-curl -s localhost:8080/api/head      # same tip as before restart
-```
-
-A restart replays the append-only store; block count and tip must match
-pre-restart values. If they do not, stop and check `data/` before any
-further action.
-
-## Backup / restore
-
-Everything authoritative lives in `data/` (snapshots + replay log +
-taps/origins). The DAG itself is consensus state — losing it means
-re-genesis, not recoverable from anywhere else.
-
-```sh
-# backup (while running is fine: files are written atomically per save)
-tar -C /root/kovanica-ledger -czf /root/backups/kovanica-data-$(date +%F).tar.gz data/
-
-# restore
-pm2 stop kovanica-explorer
-rm -rf /root/kovanica-ledger/data
-tar -C /root/kovanica-ledger -xzf /root/backups/<file>.tar.gz
-pm2 start kovanica-explorer && curl -s localhost:8080/api/head
-```
-
-Keep at least the last 7 daily backups; test a restore quarterly.
-
-## Logs
-
-```sh
-pm2 logs kovanica-explorer --lines 200       # live
-ls /root/.pm2/logs/                          # rotated files (pm2-logrotate)
-```
-
-What to look for after a deploy: `p2p exchanged with <peer>` lines,
-no repeated `listen ... failed`, no `exchange ...: decode/apply error` storms.
-
-## Network marker & re-genesis
-
-`data/network` stores the network id. A node whose marker differs from its
-build's `NETWORK` const wipes `data/` and starts a new genesis on first boot.
-That is how the `kovanica-testnet-1 → kovanica-testnet` rename was rolled out.
-Never edit the marker by hand.
-
-## Known non-goals
-
-- The seed deliberately runs `KOVANICA_MINE=0` and `KOVANICA_PEERS=off`:
-  it serves state and accepts exchanges; it does not mine or dial out.
-- TAP rate limit (40/day/address) persists in `data/taps.txt`; wiping it
-  resets faucet limits only.
+Roadmap naming: **seed3** = first true off-box node (Oracle/GCP), gets
+`A seed3.kovanica.online` (DNS-only) and joins every node's `KOVANICA_PEERS`.
