@@ -96,5 +96,9 @@ jobs:
             # retired for Kovanica processes (2026-08-24).
             chmod +x ~/bin/kovanica-node
             systemctl stop kovanica-explorer || true
-            cp ~/bin/kovanica-node /usr/local/bin/kovanica-node
+            # Atomic replace: seed2 executes the same path, so an in-place
+            # copy would hit ETXTBSY. mv swaps the directory entry instead.
+            install -m 0755 ~/bin/kovanica-node /usr/local/bin/kovanica-node.new
+            mv -f /usr/local/bin/kovanica-node.new /usr/local/bin/kovanica-node
             systemctl start kovanica-explorer
+            systemctl restart kovanica-seed2 || true
