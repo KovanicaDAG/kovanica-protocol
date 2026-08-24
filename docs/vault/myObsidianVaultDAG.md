@@ -43,7 +43,7 @@ kovanica-protocol/
 ## Current Status (as of 2026-08-23)
 
 ### ✅ Stage 0 — Shipped: BlockDAG testnet
-Deployed on `kovanica-testnet-1` (seed: `seed.kovanica.online:9000`, explorer: `explorer.kovanica.online`)
+Deployed on `kovanica-testnet` (seed: `seed.kovanica.online:9000`, explorer: `explorer.kovanica.online`)
 
 - Transactions + UTXO state, ed25519 signatures
 - Block validation (structural + stateful)
@@ -61,7 +61,7 @@ Deployed on `kovanica-testnet-1` (seed: `seed.kovanica.online:9000`, explorer: `
 - **Real PoW** (opt-in, Nakamoto `H * work < 2^256`)
 - Halving schedule, TX size limits, human addresses (`kvnc…dag`)
 - Framed bidirectional TCP sync, multi-input transfers
-- TAP micro-faucet, CI gate + dual-stack P2P
+- CI gate + dual-stack P2P (TAP micro-faucet removed 2026-08-24)
 
 ### ✅ Stage 1 — Operations hardening
 - Auto-deploy armed (`VPS_HOST`, `DEPLOY_ENABLED`)
@@ -197,10 +197,10 @@ npm run dev
    - Compact block filters (Golomb-Rice) for address watching
    - `SpvClient` state machine with checkpoint-based trust
    - Next: wire protocol (`getheaders`/`getblocks` with proofs)
-2. **Multi-seed discovery** — DNS seeds / DHT for decentralized bootstrap
-3. **Observability & reliability** — Prometheus metrics, fuzzing, alerting
-4. **Testnet soak & parameter tuning** — 24/7 multi-seed testnet
-5. **Wallet & explorer polish** — hardware wallet, BIP39, fee estimation
+2. ~~Multi-seed discovery~~ ✅ shipped (`dns_seed.rs`, Kademlia DHT, Tiers 1–5 green)
+3. ~~Observability & reliability~~ ✅ shipped (Prometheus metrics, fuzz targets, alerts)
+4. **Testnet soak & parameter tuning** — ◀ active (seed1 + seed2 + seed3 live)
+5. ~~Wallet & explorer polish~~ ✅ shipped (hardware wallet, BIP39, fee estimate, DAG viz)
 
 ---
 

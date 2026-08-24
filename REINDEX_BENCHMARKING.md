@@ -35,9 +35,11 @@ The reindex finds the lowest ancestor with `capacity >= 2 * subtree_size` and re
 - **Expected**: Reindexes when chains interleave and exhaust intervals
 - **Metric**: Reindex frequency per step
 
-## Latency-Based Reindex Detection
+## Reindex Detection
 
-Since we can't directly observe reindexes from the public API, detect via latency spikes:
+Reindexes are directly observable: `Dag::reachability_reindex_metrics()` returns
+`(reindexes, relayout_touches)` counters. The latency-spike heuristic below is
+kept only as an independent cross-check in ad-hoc benchmarks:
 
 ```rust
 if latency_ns > prev_avg_latency_ns * 10 {
@@ -49,8 +51,12 @@ A reindex touches O(subtree_size) nodes, causing ~10-100x latency spike vs norma
 
 ## Tuning Parameters
 
+### CHILD_RESERVE
+- **Current**: `1 << 40` cap on each freshly allocated child interval — a wide
+  fan stays reindex-free up to ~8M children (interval-numbering-only change)
+
 ### ROOT_CAPACITY
-- **Current**: `u64::MAX >> 1` (~9.2e18)
+- **Value**: `u64::MAX >> 1` (~9.2e18)
 - **Trade-off**: Larger = fewer reindexes, but more interval space used
 - **Recommendation**: Keep as-is for production; reduce for testing reindex behavior
 
@@ -105,7 +111,9 @@ cargo bench -p kovanica-dag
 - [x] Incremental reindexing implemented (Kaspa-style)
 - [x] Differential tests verify correctness vs naive oracle
 - [x] Reindex stress tests (long chain, wide fan, deep+wide)
+- [x] Interval-reindex amortisation tuning (`CHILD_RESERVE` cap; metrics exposed
+      via `Dag::reachability_reindex_metrics()`)
 - [ ] Production benchmarking (blocked on linker)
-- [ ] Tuning based on real-world block rates
+- [ ] Tuning based on real-world block rates (testnet soak, in progress)
 
 Run the benchmark tests with `--ignored` flag when build environment supports linking.

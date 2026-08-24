@@ -1,6 +1,6 @@
 # Kovanica Ledger
 
-**Default branch: `vps-live`.** This is the Rust node running on the VPS (`kovanica-testnet`).
+Public mirror: [kovanica-node](https://github.com/KovanicaDAG/kovanica-node) (`main`). This is the Rust node running on the VPS (`kovanica-testnet`).
 
 | Host | Process |
 | --- | --- |
@@ -11,9 +11,9 @@
 cargo run -p kovanica-node -- explorer 127.0.0.1:8080
 ```
 
-Env on the public node: `KOVANICA_POW=1` `KOVANICA_MINE=0` `KOVANICA_FAUCET=0` `KOVANICA_ALLOW_RESET=0` `KOVANICA_LISTEN=0.0.0.0:9000` `KOVANICA_PEERS=off`.
+Env on the public node (see `/api/state`): `KOVANICA_POW=1` `KOVANICA_MINE=1 KOVANICA_MINE_SECS=60` `KOVANICA_FAUCET=1` `KOVANICA_ALLOW_RESET=0` `KOVANICA_OPERATOR=1` `KOVANICA_LISTEN=0.0.0.0:9000` `KOVANICA_PEERS=seed2.kovanica.online:9001,seed3.kovanica.online:9000`. The tap micro-faucet was removed 2026-08-24.
 
-TCP **:9000** is the only P2P path (libp2p/30333 removed). Clones: `KOVANICA_PEERS=explorer.kovanica.online:9000`. Cloneable tree: [kovanica-node](https://github.com/KovanicaDAG/kovanica-node).
+TCP **:9000** is the only P2P path (libp2p/30333 removed). Clones: `KOVANICA_PEERS=seed.kovanica.online:9000` — **not** the Cloudflare-proxied `explorer…` hostname; raw TCP :9000 does not pass it. Cloneable tree: [kovanica-node](https://github.com/KovanicaDAG/kovanica-node).
 
 Do **not** rebuild from `claude/claude-md-docs-*` — that line has no HTTP `explorer` mode.
 UI is TypeScript only: [kovanica-web](https://github.com/KovanicaDAG/kovanica-web). GHOSTDAG / UTXO / Ed25519 stay here.

@@ -23,21 +23,21 @@
 ## Feature Inventory
 | # | Feature | Description | Milestone | Source | Status |
 |---|---------|-------------|-----------|--------|--------|
-| 1 | DNS Multi-Seed Resolver & Fallback Pipeline | Multi-host DNS querying, A/AAAA record resolution, shuffling, and static fallback IP pipeline (`dns_seed.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | PLANNED |
-| 2 | 256-bit NodeId & XOR Metric Engine | 256-bit NodeId representation, bitwise XOR distance calculation, and bucket index derivation (`dht.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | PLANNED |
-| 3 | K-Bucket Routing Table & LRU Eviction | 256 $k$-buckets ($k=8/20$), contact liveness tracking, replacement cache, ping eviction, and dead-peer pruning (`dht.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | PLANNED |
-| 4 | DHT Wire Protocol Messages & Framing | Binary framing and message codecs for `DhtPing`, `DhtPong`, `DhtFindNode`, `DhtNodes` with 64-bit nonces (`relay.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | PLANNED |
-| 5 | Iterative Node Lookup & Routing Algorithm | $\alpha=3$ iterative node lookup over distance-sorted candidate shortlists converging to $k$ closest nodes (`dht.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | PLANNED |
-| 6 | Mesh & Relay DHT Integration | In-process discrete-time simulation in `Mesh`, query handling in `handle_relay_query`, and peer replenishment (`p2p.rs`, `relay.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | PLANNED |
-| 7 | Dedicated Integration Test Suite | 4-tier integration test suite in `tests/dht_discovery.rs` testing multi-node dynamic discovery, multi-hop routing, and peer pruning | M2 | Survey / ORIGINAL_REQUEST R2 | PLANNED |
-| 8 | 100% E2E Pass & Adversarial Hardening | Tier 5 adversarial stress testing (churn, Sybil/poisoning, eclipse resistance, socket leak tests) and 100% pass verification | M3 | Survey / Pattern | PLANNED |
+| 1 | DNS Multi-Seed Resolver & Fallback Pipeline | Multi-host DNS querying, A/AAAA record resolution, shuffling, and static fallback IP pipeline (`dns_seed.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | SHIPPED |
+| 2 | 256-bit NodeId & XOR Metric Engine | 256-bit NodeId representation, bitwise XOR distance calculation, and bucket index derivation (`dht.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | SHIPPED |
+| 3 | K-Bucket Routing Table & LRU Eviction | 256 $k$-buckets ($k=8/20$), contact liveness tracking, replacement cache, ping eviction, and dead-peer pruning (`dht.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | SHIPPED |
+| 4 | DHT Wire Protocol Messages & Framing | Binary framing and message codecs for `DhtPing`, `DhtPong`, `DhtFindNode`, `DhtNodes` with 64-bit nonces (`relay.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | SHIPPED |
+| 5 | Iterative Node Lookup & Routing Algorithm | $\alpha=3$ iterative node lookup over distance-sorted candidate shortlists converging to $k$ closest nodes (`dht.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | SHIPPED |
+| 6 | Mesh & Relay DHT Integration | In-process discrete-time simulation in `Mesh`, query handling in `handle_relay_query`, and peer replenishment (`p2p.rs`, `relay.rs`) | M1 | Survey / ORIGINAL_REQUEST R1 | SHIPPED |
+| 7 | Dedicated Integration Test Suite | 4-tier integration test suite in `tests/dht_discovery.rs` testing multi-node dynamic discovery, multi-hop routing, and peer pruning | M2 | Survey / ORIGINAL_REQUEST R2 | SHIPPED |
+| 8 | 100% E2E Pass & Adversarial Hardening | Tier 5 adversarial stress testing (churn, Sybil/poisoning, eclipse resistance, socket leak tests) and 100% pass verification | M3 | Survey / Pattern | SHIPPED |
 
 ## Milestones
 | # | Name | Scope | Dependencies | Status |
 |---|------|-------|-------------|--------|
-| 1 | DNS Seed Discovery & Kademlia DHT Engine | Implement `dns_seed.rs`, `dht.rs`, wire framing in `relay.rs`, and simulation hooks in `p2p.rs`/`node.rs` | none | IN_PROGRESS |
-| 2 | Integration Test Suite (`tests/dht_discovery.rs`) | Complete 4-tier integration test suite for multi-seed bootstrap, dynamic discovery, multi-hop routing, and pruning | M1 | PLANNED |
-| 3 | Final E2E Pass & Adversarial Hardening | 100% E2E pass + Tier 5 adversarial stress testing (churn, Sybil resistance, eclipse protection) | M2 | PLANNED |
+| 1 | DNS Seed Discovery & Kademlia DHT Engine | Implement `dns_seed.rs`, `dht.rs`, wire framing in `relay.rs`, and simulation hooks in `p2p.rs`/`node.rs` | none | SHIPPED |
+| 2 | Integration Test Suite (`tests/dht_discovery.rs`) | Complete 4-tier integration test suite for multi-seed bootstrap, dynamic discovery, multi-hop routing, and pruning | M1 | SHIPPED |
+| 3 | Final E2E Pass & Adversarial Hardening | 100% E2E pass + Tier 5 adversarial stress testing (churn, Sybil resistance, eclipse protection) | M2 | SHIPPED |
 
 ## Interface Contracts
 ### DNS Multi-Seed Resolver (`dns_seed.rs`)

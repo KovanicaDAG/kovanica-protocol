@@ -1,5 +1,10 @@
 # explorer.kovanica.online (nginx + certbot)
 
+> **Historical bring-up doc.** This describes the original one-time setup.
+> Current topology and day-to-day ops live in [`../OPERATIONS.md`](../OPERATIONS.md):
+> the seed runs under pm2 (`kovanica-explorer`), chain data lives in
+> `/root/kovanica-data`, and seed2/seed3 joined the network since.
+
 Wallet needs HTTPS. Node stays on `127.0.0.1:8080`.
 
 ## Cloudflare DNS

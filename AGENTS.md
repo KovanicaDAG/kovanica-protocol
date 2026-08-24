@@ -112,7 +112,7 @@ crates/
       net.rs                   gossip() (in-process) + serve_blocks/pull_blocks (one-shot TCP sync) + framed bidirectional exchange (pull_blocks_timeout/serve_exchange: read peer dump, apply, send own back; old one-way peers still work)
       p2p.rs                   Mesh: peer discovery (hello), delayed relay loop, block+tx flood
       relay.rs                 RelaySession: long-lived TCP framing of hello/block/tx
-      explorer.rs              self-hosted explorer: JSON API + static UI over Mesh (WebSocket /ws, TAP micro-faucet, dual-stack P2P listeners, KOVANICA_MINE_SECS interval)
+      explorer.rs              self-hosted explorer: JSON API + static UI over Mesh (WebSocket /ws, open faucet, dual-stack P2P listeners, KOVANICA_MINE_SECS interval)
       explorer.html            UI served by `kovanica-node explorer`
       main.rs                  Binary: `serve` (stdin/stdout REPL) and `demo` (scripted scenario)
     tests/
@@ -371,10 +371,11 @@ CI gates every push (`fmt --check`, `clippy -D warnings`,
       largest-first until they cover amount + fee; one signature attached to
       every input) — no more spurious `InsufficientFunds` when the balance is
       spread across many coinbases.
-- [x] TAP micro-faucet on the explorer (`POST /api/tap`, `KOVANICA_TAP=0|1`,
-      default on): 0.01 KVNC per request, 40/day per address, persisted in
-      `data/taps.txt`; plus `KOVANICA_MINE_SECS` for the public mine interval.
-      Explorer addresses accept `kvnc…dag` or hex everywhere.
+- [x] ~~TAP micro-faucet on the explorer~~ — **removed 2026-08-24**: `/api/tap`,
+      the `data/taps.txt` rate-limit store, and `KOVANICA_TAP` are gone; the open
+      faucet (`POST /api/faucet`, 1 KVNC from operator funds) remains, plus
+      `KOVANICA_MINE_SECS` for the public mine interval. Explorer addresses
+      accept `kvnc…dag` or hex everywhere.
 - [x] CI gate + dual-stack P2P: every push runs `fmt --check`,
       `clippy -D warnings`, `cargo test` before deploy may start (deploy job
       additionally armed via a `DEPLOY_ENABLED` repo variable); the seed's
@@ -476,6 +477,28 @@ deterministic + adversarial tests per the conventions above.
   - Stats: `Mesh::peer_stats` / `all_peer_stats` for monitoring
   - Tests: rate limit enforcement, duplicate penalties, ban prevents relay, stats
 - [x] Mempool upgrades: orphan handling, fee-based eviction, capacity limits.
+- [x] Stake registry for hybrid PoW + VRF-staked validation (slice 1: ledger layer).
+  - `kovanica-state::stake`: bond/unbond via tag conventions on ordinary
+    transactions — no new tx types. Bond tag = `KVB1 || vrf_pk(32)`, unbond tag
+    = `KVU1`. A bond must pay one output back to its own input owner; that
+    output becomes **frozen** in the per-block `StakeState` (registry overlay;
+    the UTXO itself is unchanged). Unbond spends frozen outpoints only, after
+    `UNBOND_MATURITY` (100 blocks of blue height), releasing value.
+  - Enforcement lives in `apply_block_with_stake` (atomic across UTXO set and
+    registry; regular spends of frozen outpoints are rejected with
+    `LedgerError::Stake`). `Ledger` keeps a per-block `StakeState` mirroring its
+    per-block `UtxoSet`; checkpoint format bumped to v3 (length-prefixed stake
+    blob after the UTXO set).
+  - Eligibility math for the future VRF-staked block production:
+    `StakeState::eligibility_threshold(stake, total, num, den)` /
+    `is_eligible(output, …)` — Algorand/Praos-style sortition comparing
+    `VrfOutput::as_u64()` against `(stake << 64)/total × rate`.
+  - NOT yet wired: Dag/Node enforcement of "PoW OR eligible-VRF" hybrid insert,
+    node-side VRF block production, RPC endpoints, epoch randomness beacon
+    (VRF input is still parent tips — grinding-resistant beacon is follow-up).
+  - Tests: freeze/unfreeze accounting, maturity gate, frozen-input rejection,
+    per-block stake across heights, threshold/sortition distribution,
+    encode/decode roundtrip.
 
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.
@@ -521,9 +544,12 @@ the testnet teaches us it needs.
    Shipped: `dns_seed.rs` (injectable `DnsResolver`, dedup + fallback),
    `dht.rs` Kademlia (XOR metric, k-buckets) with relay tags 0x20–0x23,
    Mesh integration, and `tests/dht_discovery.rs` Tiers 1–5 green.
-   Remaining wiring: the default seed list still names non-resolving hosts
-   (`seed2.kovanica.online`, `seed.kovanica.net`) and
-   `seed3.kovanica.online:9000` is not yet in `KOVANICA_PEERS` defaults.
+   All three DNS-seed hostnames resolve (`seed`/`seed2`/`seed3.kovanica.online`)
+   and are the `DnsSeedConfig::default()` list; `deploy-seed.sh` defaults new
+   seeds to `KOVANICA_PEERS=seed.kovanica.online:9000,seed3.kovanica.online:9000`.
+   Remaining wiring: the node binary's default `KOVANICA_PEERS` still names only
+   `seed.kovanica.online:9000`, and rolling seed3 into the public `install.sh`
+   default is tracked in TODO.md.
 
 3. ~~**Observability & reliability** — production readiness:~~ ✅
    - `kovanica-node::metrics`: real Prometheus recording (metrics 0.22, unified
