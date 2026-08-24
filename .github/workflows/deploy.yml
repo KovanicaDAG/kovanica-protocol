@@ -91,9 +91,10 @@ jobs:
             cd /root/kovanica-protocol
             git pull --ff-only origin main
             # Replace binary with CI-built artifact (stop first: running
-            # binaries cannot be overwritten — ETXTBSY)
+            # binaries cannot be overwritten — ETXTBSY). The node runs as a
+            # systemd service — same supervisor as seed2/seed3. pm2 is
+            # retired for Kovanica processes (2026-08-24).
             chmod +x ~/bin/kovanica-node
-            pm2 stop kovanica-explorer >/dev/null 2>&1 || true
-            cp ~/bin/kovanica-node ./target/release/kovanica-node
-            pm2 restart kovanica-explorer --update-env
-            pm2 save
+            systemctl stop kovanica-explorer || true
+            cp ~/bin/kovanica-node /usr/local/bin/kovanica-node
+            systemctl start kovanica-explorer
