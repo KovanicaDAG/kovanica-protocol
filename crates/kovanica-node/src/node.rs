@@ -195,6 +195,10 @@ pub struct Node {
     clock: Clock,
     /// Address that receives the per-block KVNC subsidy coinbase.
     miner: Option<Address>,
+    /// DHT NodeId for peer discovery (optional).
+    dht_node_id: Option<crate::dht::NodeId>,
+    /// DHT routing table for peer discovery (optional).
+    dht_routing_table: Option<crate::dht::RoutingTable>,
 }
 
 /// Blocks per subsidy-halving era. Issuance is `cap >> (height / HALVING_ERA)`.
@@ -209,6 +213,8 @@ impl Default for Node {
             mempool: MempoolV2::default(),
             clock: Clock::default(),
             miner: None,
+            dht_node_id: None,
+            dht_routing_table: None,
         }
     }
 }
@@ -226,6 +232,8 @@ impl Node {
             mempool: MempoolV2::new(config),
             clock: Clock::default(),
             miner: None,
+            dht_node_id: None,
+            dht_routing_table: None,
         }
     }
 
@@ -1162,6 +1170,8 @@ impl Node {
                 mempool: MempoolV2::default(),
                 clock: Clock::default(),
                 miner: None,
+                dht_node_id: None,
+                dht_routing_table: None,
             },
             store,
         ))
@@ -1176,6 +1186,8 @@ impl Node {
             mempool: MempoolV2::default(),
             clock: Clock::default(),
             miner: None,
+            dht_node_id: None,
+            dht_routing_table: None,
         })
     }
 
@@ -1190,6 +1202,89 @@ impl Node {
         store
             .append(block)
             .map_err(|e| NodeError::Io(e.to_string()))
+    }
+
+    // ========================================================================
+    // DHT Integration Methods (P2P layer - not part of consensus state)
+    // ========================================================================
+
+    /// The node's DHT NodeId (for peer discovery). Returns None if not set.
+    pub fn dht_node_id(&self) -> Option<crate::dht::NodeId> {
+        self.dht_node_id
+    }
+
+    /// Set the node's DHT NodeId for peer discovery.
+    pub fn set_dht_node_id(&mut self, node_id: crate::dht::NodeId) {
+        self.dht_node_id = Some(node_id);
+    }
+
+    /// Get the node's DHT routing table, if DHT is enabled.
+    pub fn dht_routing_table(&self) -> Option<&crate::dht::RoutingTable> {
+        self.dht_routing_table.as_ref()
+    }
+
+    /// Get mutable access to the node's DHT routing table.
+    pub fn dht_routing_table_mut(&mut self) -> Option<&mut crate::dht::RoutingTable> {
+        self.dht_routing_table.as_mut()
+    }
+
+    /// Initialize the node's DHT routing table with a NodeId and bucket size k.
+    pub fn init_dht_routing_table(&mut self, node_id: crate::dht::NodeId, k: usize) {
+        self.dht_node_id = Some(node_id);
+        self.dht_routing_table = Some(crate::dht::RoutingTable::new(node_id, k));
+    }
+
+    /// Bootstrap this node's DHT routing table using a seed node's contacts.
+    /// Returns the number of new contacts added.
+    pub fn dht_bootstrap(
+        &mut self,
+        seed_contacts: Vec<crate::dht::PeerContact>,
+    ) -> Result<usize, NodeError> {
+        let table = self
+            .dht_routing_table_mut()
+            .ok_or(NodeError::NotInitialized)?;
+        let mut added = 0;
+        for contact in seed_contacts {
+            if table.update_contact(contact) != crate::dht::UpdateResult::Cached {
+                added += 1;
+            }
+        }
+        Ok(added)
+    }
+
+    /// Perform an iterative DHT node lookup for a target NodeId.
+    /// Returns the k closest nodes found.
+    pub fn dht_find_node(
+        &self,
+        target: &crate::dht::NodeId,
+    ) -> Result<Vec<crate::dht::PeerContact>, NodeError> {
+        let table = self.dht_routing_table().ok_or(NodeError::NotInitialized)?;
+        Ok(table.closest_peers(target, table.k))
+    }
+
+    /// Handle an incoming DHT message from the wire.
+    /// Returns a response message if one should be sent back.
+    pub fn handle_dht_msg(&self, msg: crate::dht::DhtMsg) -> Option<crate::dht::DhtMsg> {
+        let table = self.dht_routing_table()?;
+        match msg {
+            crate::dht::DhtMsg::Ping { sender, nonce } => {
+                Some(crate::dht::DhtMsg::Pong { sender, nonce })
+            }
+            crate::dht::DhtMsg::FindNode {
+                sender,
+                target,
+                nonce,
+            } => {
+                let nodes = table.closest_peers(&target, table.k);
+                Some(crate::dht::DhtMsg::Nodes {
+                    sender,
+                    target,
+                    nonce,
+                    nodes,
+                })
+            }
+            _ => None,
+        }
     }
 }
 

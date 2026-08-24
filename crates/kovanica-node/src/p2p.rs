@@ -14,14 +14,22 @@
 //! a clone pulls with `KOVANICA_PEERS=explorer.kovanica.online:9000`.
 //! Long-lived relay sessions are [`crate::relay`] — tests only, not the
 //! explorer loop.
+//!
+//! **DHT Integration**: Each node in the mesh can have an associated Kademlia
+//! DHT routing table ([`crate::dht::RoutingTable`]) for peer discovery without
+//! hardcoded seeds. The mesh provides discrete-time simulation methods for
+//! DHT bootstrap (`dht_bootstrap`), iterative node lookup (`dht_find_node`),
+//! and peer pruning/replenishment (`prune_unreachable_peers`).
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use kovanica_dag::{Block, BlockId};
 use kovanica_state::{encode_block_payload, Address, Transaction, TxId};
 
+use crate::dht::{DhtMsg, NodeId, PeerContact, RoutingTable};
 use crate::node::{BlockRecord, Node, NodeError};
 use crate::p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
+use crate::relay::{handle_relay_query, RelayMsg};
 
 /// Why a mesh operation failed.
 #[derive(Debug)]
@@ -107,6 +115,8 @@ fn record_id(record: &BlockRecord) -> BlockId {
 #[derive(Default)]
 pub struct Mesh {
     nodes: BTreeMap<String, Node>,
+    /// DHT routing table for each node (optional, for DHT-enabled nodes).
+    dht_tables: BTreeMap<String, RoutingTable>,
     peers: BTreeMap<String, BTreeSet<String>>,
     queue: Vec<Queued>,
     seen_blocks: BTreeMap<String, HashSet<BlockId>>,
@@ -142,6 +152,17 @@ impl Mesh {
         self.peers.entry(name.clone()).or_default();
         self.seen_blocks.entry(name.clone()).or_default();
         self.seen_txs.entry(name).or_default();
+    }
+
+    /// Register `node` under `name` with a DHT `NodeId` for peer discovery.
+    /// Replaces any previous node of that name.
+    pub fn add_with_dht(&mut self, name: impl Into<String>, node: Node, node_id: NodeId) {
+        let name = name.into();
+        self.nodes.insert(name.clone(), node);
+        self.peers.entry(name.clone()).or_default();
+        self.seen_blocks.entry(name.clone()).or_default();
+        self.seen_txs.entry(name.clone()).or_default();
+        self.dht_tables.insert(name, RoutingTable::new(node_id, 8));
     }
 
     /// Registered node names, sorted.
@@ -405,6 +426,196 @@ impl Mesh {
     /// Delivered events, oldest first.
     pub fn events(&self) -> &[GossipEvent] {
         &self.events
+    }
+
+    // ========================================================================
+    // DHT Integration Methods
+    // ========================================================================
+
+    /// Get the DHT routing table for a node, if it has one.
+    pub fn dht_table(&self, name: &str) -> Option<&RoutingTable> {
+        self.dht_tables.get(name)
+    }
+
+    /// Get mutable DHT routing table for a node, if it has one.
+    pub fn dht_table_mut(&mut self, name: &str) -> Option<&mut RoutingTable> {
+        self.dht_tables.get_mut(name)
+    }
+
+    /// Perform a DHT bootstrap for `from` node using `seed` node as the entry point.
+    /// The `from` node will query the `seed` node for its closest peers to the `from` node's own NodeId.
+    /// Returns the number of new contacts added to the routing table.
+    pub fn dht_bootstrap(&mut self, from: &str, seed: &str) -> Result<usize, P2pError> {
+        self.require(from)?;
+        self.require(seed)?;
+
+        let from_id = self
+            .dht_tables
+            .get(from)
+            .map(|t| t.local_id)
+            .ok_or_else(|| P2pError::UnknownNode(format!("{} has no DHT table", from)))?;
+
+        let seed_id = self
+            .dht_tables
+            .get(seed)
+            .map(|t| t.local_id)
+            .ok_or_else(|| P2pError::UnknownNode(format!("{} has no DHT table", seed)))?;
+
+        // Get seed's closest peers to from_id (excluding from itself)
+        let seed_table = self.dht_tables.get(seed).unwrap();
+        let mut contacts = seed_table.closest_peers(&from_id, seed_table.k);
+        // Filter out self
+        contacts.retain(|c| c.node_id != from_id);
+
+        // Add seed itself as a contact
+        let seed_addr = format!("{}:9000", seed); // Simulated address
+        contacts.insert(0, PeerContact::new(seed_id, seed_addr));
+
+        // Update from's routing table
+        let from_table = self.dht_tables.get_mut(from).unwrap();
+        let mut added = 0;
+        for contact in contacts {
+            if from_table.update_contact(contact) != crate::dht::UpdateResult::Cached {
+                added += 1;
+            }
+        }
+
+        Ok(added)
+    }
+
+    /// Add DHT contacts directly to a node's routing table (for testing / bootstrap simulation).
+    /// Returns the number of contacts added.
+    pub fn add_dht_contacts(
+        &mut self,
+        name: &str,
+        contacts: Vec<PeerContact>,
+    ) -> Result<usize, P2pError> {
+        self.require(name)?;
+        let table = self
+            .dht_tables
+            .get_mut(name)
+            .ok_or_else(|| P2pError::UnknownNode(format!("{} has no DHT table", name)))?;
+        let mut added = 0;
+        for contact in contacts {
+            if table.update_contact(contact) != crate::dht::UpdateResult::Cached {
+                added += 1;
+            }
+        }
+        Ok(added)
+    }
+
+    /// Perform an iterative DHT node lookup from `from` node for `target` NodeId.
+    /// Uses α=3 concurrency and returns the k closest nodes found.
+    pub fn dht_find_node(
+        &mut self,
+        from: &str,
+        target: &NodeId,
+    ) -> Result<Vec<PeerContact>, P2pError> {
+        self.require(from)?;
+
+        let from_table = self
+            .dht_tables
+            .get(from)
+            .ok_or_else(|| P2pError::UnknownNode(format!("{} has no DHT table", from)))?;
+        let k = from_table.k;
+        let local_id = from_table.local_id;
+        drop(from_table);
+
+        // Create a lookup
+        let mut lookup = crate::dht::NodeLookup::new(*target, k, 3);
+
+        // Get initial candidates from local routing table
+        let initial_contacts = {
+            let table = self.dht_tables.get(from).unwrap();
+            table.closest_peers(target, k)
+        };
+        lookup.add_initial(initial_contacts);
+
+        // Iterative lookup (simulated in-process)
+        let mut rounds = 0;
+        while !lookup.is_complete() && rounds < 10 {
+            let candidates = lookup.next_candidates();
+            if candidates.is_empty() {
+                break;
+            }
+
+            // For each candidate, simulate querying their routing table
+            // In real network this would be over the wire; here we simulate
+            // by looking up the candidate's routing table if they exist in the mesh
+            let mut found_contacts = Vec::new();
+            for candidate in candidates {
+                // Try to find this candidate as a node in our mesh
+                // In simulation, we check if any node has this NodeId
+                let candidate_name = self.find_node_by_id(&candidate.node_id);
+                if let Some(name) = candidate_name {
+                    if let Some(table) = self.dht_tables.get(&name) {
+                        let contacts = table.closest_peers(target, k);
+                        found_contacts.extend(contacts);
+                    }
+                }
+            }
+
+            if !found_contacts.is_empty() {
+                lookup.add_results(found_contacts);
+            }
+            rounds += 1;
+        }
+
+        Ok(lookup.closest())
+    }
+
+    /// Find a node name by its NodeId in the mesh.
+    fn find_node_by_id(&self, node_id: &NodeId) -> Option<String> {
+        for (name, table) in &self.dht_tables {
+            if table.local_id == *node_id {
+                return Some(name.clone());
+            }
+        }
+        None
+    }
+
+    /// Prune unreachable peers from all DHT routing tables.
+    /// Removes contacts with 3+ failed queries.
+    /// Returns the total number of peers pruned across all tables.
+    pub fn prune_unreachable_peers(&mut self) -> usize {
+        let mut total_pruned = 0;
+        for (_, table) in &mut self.dht_tables {
+            let pruned = table.prune_unresponsive(3);
+            total_pruned += pruned.len();
+        }
+        total_pruned
+    }
+
+    /// Replenish active P2P connections from DHT routing tables.
+    /// For each node with a DHT table, if its active peer count is below target,
+    /// query the DHT for new peers and connect to them.
+    pub fn replenish_peers_from_dht(&mut self, target_peer_count: usize) -> usize {
+        let mut total_added = 0;
+        let node_names: Vec<String> = self.nodes.keys().cloned().collect();
+
+        for name in node_names {
+            let current_peers = self.peers_of(&name).len();
+            if current_peers >= target_peer_count {
+                continue;
+            }
+
+            if let Some(table) = self.dht_tables.get(&name) {
+                let local_id = table.local_id;
+                let needed = target_peer_count - current_peers;
+                let contacts = table.closest_peers(&local_id, needed);
+
+                for contact in contacts {
+                    // Try to find the peer in our mesh by NodeId
+                    if let Some(peer_name) = self.find_node_by_id(&contact.node_id) {
+                        if peer_name != name {
+                            let _ = self.connect(&name, &peer_name);
+                            total_added += 1;
+                        }
+                    }
+                }
+            }
+        }
+        total_added
     }
 
     fn require(&self, name: &str) -> Result<(), P2pError> {

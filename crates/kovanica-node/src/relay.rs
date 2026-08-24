@@ -18,6 +18,9 @@ use kovanica_state::{
     Transaction, TxId,
 };
 
+use crate::dht::{
+    DhtMsg, NodeId, PeerContact, TAG_DHT_FIND_NODE, TAG_DHT_NODES, TAG_DHT_PING, TAG_DHT_PONG,
+};
 use crate::net::{decode_one_record, encode_record, NetError};
 use crate::node::{BlockRecord, Node};
 
@@ -76,6 +79,23 @@ pub enum RelayMsg {
         proof: Option<MerkleProof>,
         matched_tx: Option<Transaction>,
     },
+    /// DHT Ping request.
+    DhtPing { sender: NodeId, nonce: u64 },
+    /// DHT Ping response.
+    DhtPong { sender: NodeId, nonce: u64 },
+    /// DHT FindNode request.
+    DhtFindNode {
+        sender: NodeId,
+        target: NodeId,
+        nonce: u64,
+    },
+    /// DHT FindNode response (closest nodes).
+    DhtNodes {
+        sender: NodeId,
+        target: NodeId,
+        nonce: u64,
+        nodes: Vec<PeerContact>,
+    },
 }
 
 /// A bidirectional, long-lived TCP session carrying [`RelayMsg`]s.
@@ -132,7 +152,7 @@ impl RelaySession {
     }
 }
 
-/// Apply a received relay message to `node`. Hellos and SPV messages are passed
+/// Apply a received relay message to `node`. Hellos, SPV, and DHT messages are passed
 /// through to the caller.
 pub fn apply_relay(node: &mut Node, msg: RelayMsg) -> Result<Option<RelayMsg>, NetError> {
     match msg {
@@ -152,12 +172,16 @@ pub fn apply_relay(node: &mut Node, msg: RelayMsg) -> Result<Option<RelayMsg>, N
         | RelayMsg::GetBlocks { .. }
         | RelayMsg::GetMerkleProof { .. }
         | RelayMsg::MerkleBlock { .. }) => Ok(Some(spv)),
+        dht @ (RelayMsg::DhtPing { .. }
+        | RelayMsg::DhtPong { .. }
+        | RelayMsg::DhtFindNode { .. }
+        | RelayMsg::DhtNodes { .. }) => Ok(Some(dht)),
     }
 }
 
 /// Handle query-type relay messages that require an immediate response back over the wire.
-/// Returns `Some(response)` for queries (`GetHeaders`, `GetBlocks`, `GetMerkleProof`), or `None`
-/// for push/stateful messages (`Hello`, `Block`, `Tx`, `Headers`, `MerkleBlock`).
+/// Returns `Some(response)` for queries (`GetHeaders`, `GetBlocks`, `GetMerkleProof`, `DhtPing`, `DhtFindNode`),
+/// or `None` for push/stateful messages (`Hello`, `Block`, `Tx`, `Headers`, `MerkleBlock`, `DhtPong`, `DhtNodes`).
 pub fn handle_relay_query(node: &Node, msg: &RelayMsg) -> Option<RelayMsg> {
     match msg {
         RelayMsg::GetHeaders {
@@ -192,6 +216,34 @@ pub fn handle_relay_query(node: &Node, msg: &RelayMsg) -> Option<RelayMsg> {
                 })
             } else {
                 None
+            }
+        }
+        RelayMsg::DhtPing { sender, nonce } => Some(RelayMsg::DhtPong {
+            sender: *sender,
+            nonce: *nonce,
+        }),
+        RelayMsg::DhtFindNode {
+            sender,
+            target,
+            nonce,
+        } => {
+            // Use Node's DHT routing table if available
+            if let Some(table) = node.dht_routing_table() {
+                let nodes = table.closest_peers(target, table.k);
+                Some(RelayMsg::DhtNodes {
+                    sender: *sender,
+                    target: *target,
+                    nonce: *nonce,
+                    nodes,
+                })
+            } else {
+                // Node doesn't have DHT routing table; return empty nodes
+                Some(RelayMsg::DhtNodes {
+                    sender: *sender,
+                    target: *target,
+                    nonce: *nonce,
+                    nodes: Vec::new(),
+                })
             }
         }
         _ => None,
@@ -318,6 +370,46 @@ pub fn encode_msg(msg: &RelayMsg) -> Vec<u8> {
                 None => {
                     buf.push(0u8);
                 }
+            }
+        }
+        RelayMsg::DhtPing { sender, nonce } => {
+            buf.push(TAG_DHT_PING);
+            buf.extend_from_slice(sender.as_bytes());
+            buf.extend_from_slice(&nonce.to_le_bytes());
+        }
+        RelayMsg::DhtPong { sender, nonce } => {
+            buf.push(TAG_DHT_PONG);
+            buf.extend_from_slice(sender.as_bytes());
+            buf.extend_from_slice(&nonce.to_le_bytes());
+        }
+        RelayMsg::DhtFindNode {
+            sender,
+            target,
+            nonce,
+        } => {
+            buf.push(TAG_DHT_FIND_NODE);
+            buf.extend_from_slice(sender.as_bytes());
+            buf.extend_from_slice(target.as_bytes());
+            buf.extend_from_slice(&nonce.to_le_bytes());
+        }
+        RelayMsg::DhtNodes {
+            sender,
+            target,
+            nonce,
+            nodes,
+        } => {
+            buf.push(TAG_DHT_NODES);
+            buf.extend_from_slice(sender.as_bytes());
+            buf.extend_from_slice(target.as_bytes());
+            buf.extend_from_slice(&nonce.to_le_bytes());
+            buf.extend_from_slice(&(nodes.len() as u16).to_le_bytes());
+            for node in nodes {
+                buf.extend_from_slice(node.node_id.as_bytes());
+                let addr_bytes = node.addr.as_bytes();
+                buf.extend_from_slice(&(addr_bytes.len() as u16).to_le_bytes());
+                buf.extend_from_slice(addr_bytes);
+                buf.extend_from_slice(&node.last_seen_ms.to_le_bytes());
+                buf.extend_from_slice(&node.failed_queries.to_le_bytes());
             }
         }
     }
@@ -518,6 +610,90 @@ pub fn decode_msg(bytes: &[u8]) -> Result<RelayMsg, NetError> {
                 tx_count,
                 proof,
                 matched_tx,
+            })
+        }
+        TAG_DHT_PING => {
+            if rest.len() < 40 {
+                return Err(NetError::Decode("dht ping truncated".into()));
+            }
+            let sender = NodeId::from_bytes(rest[..32].try_into().unwrap());
+            let nonce = u64::from_le_bytes(rest[32..40].try_into().unwrap());
+            Ok(RelayMsg::DhtPing { sender, nonce })
+        }
+        TAG_DHT_PONG => {
+            if rest.len() < 40 {
+                return Err(NetError::Decode("dht pong truncated".into()));
+            }
+            let sender = NodeId::from_bytes(rest[..32].try_into().unwrap());
+            let nonce = u64::from_le_bytes(rest[32..40].try_into().unwrap());
+            Ok(RelayMsg::DhtPong { sender, nonce })
+        }
+        TAG_DHT_FIND_NODE => {
+            if rest.len() < 72 {
+                return Err(NetError::Decode("dht find_node truncated".into()));
+            }
+            let sender = NodeId::from_bytes(rest[..32].try_into().unwrap());
+            let target = NodeId::from_bytes(rest[32..64].try_into().unwrap());
+            let nonce = u64::from_le_bytes(rest[64..72].try_into().unwrap());
+            Ok(RelayMsg::DhtFindNode {
+                sender,
+                target,
+                nonce,
+            })
+        }
+        TAG_DHT_NODES => {
+            if rest.len() < 72 {
+                return Err(NetError::Decode("dht nodes truncated".into()));
+            }
+            let sender = NodeId::from_bytes(rest[..32].try_into().unwrap());
+            let target = NodeId::from_bytes(rest[32..64].try_into().unwrap());
+            let nonce = u64::from_le_bytes(rest[64..72].try_into().unwrap());
+            let mut pos = 72;
+            if pos + 2 > rest.len() {
+                return Err(NetError::Decode("dht nodes count truncated".into()));
+            }
+            let count = u16::from_le_bytes(rest[pos..pos + 2].try_into().unwrap()) as usize;
+            pos += 2;
+            let mut nodes = Vec::with_capacity(count);
+            for _ in 0..count {
+                if pos + 32 > rest.len() {
+                    return Err(NetError::Decode("dht node id truncated".into()));
+                }
+                let node_id = NodeId::from_bytes(rest[pos..pos + 32].try_into().unwrap());
+                pos += 32;
+                if pos + 2 > rest.len() {
+                    return Err(NetError::Decode("dht addr len truncated".into()));
+                }
+                let addr_len = u16::from_le_bytes(rest[pos..pos + 2].try_into().unwrap()) as usize;
+                pos += 2;
+                if pos + addr_len > rest.len() {
+                    return Err(NetError::Decode("dht addr truncated".into()));
+                }
+                let addr = String::from_utf8(rest[pos..pos + addr_len].to_vec())
+                    .map_err(|_| NetError::Decode("dht addr not utf-8".into()))?;
+                pos += addr_len;
+                if pos + 12 > rest.len() {
+                    return Err(NetError::Decode("dht timestamp/failed truncated".into()));
+                }
+                let last_seen_ms = u64::from_le_bytes(rest[pos..pos + 8].try_into().unwrap());
+                pos += 8;
+                let failed_queries = u32::from_le_bytes(rest[pos..pos + 4].try_into().unwrap());
+                pos += 4;
+                nodes.push(PeerContact {
+                    node_id,
+                    addr,
+                    last_seen_ms,
+                    failed_queries,
+                });
+            }
+            if pos != rest.len() {
+                return Err(NetError::Decode("trailing bytes in dht nodes".into()));
+            }
+            Ok(RelayMsg::DhtNodes {
+                sender,
+                target,
+                nonce,
+                nodes,
             })
         }
         other => Err(NetError::Decode(format!("unknown tag {other}"))),
@@ -753,6 +929,112 @@ mod tests {
             assert!(matched_tx.is_some());
         } else {
             panic!("expected MerkleBlock response");
+        }
+    }
+
+    #[test]
+    fn test_dht_ping_roundtrip() {
+        let sender = NodeId::from_bytes([1u8; 32]);
+        let nonce = 12345u64;
+        let msg = RelayMsg::DhtPing { sender, nonce };
+        let encoded = encode_msg(&msg);
+        let decoded = decode_msg(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn test_dht_pong_roundtrip() {
+        let sender = NodeId::from_bytes([2u8; 32]);
+        let nonce = 54321u64;
+        let msg = RelayMsg::DhtPong { sender, nonce };
+        let encoded = encode_msg(&msg);
+        let decoded = decode_msg(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn test_dht_find_node_roundtrip() {
+        let sender = NodeId::from_bytes([3u8; 32]);
+        let target = NodeId::from_bytes([4u8; 32]);
+        let nonce = 99999u64;
+        let msg = RelayMsg::DhtFindNode {
+            sender,
+            target,
+            nonce,
+        };
+        let encoded = encode_msg(&msg);
+        let decoded = decode_msg(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn test_dht_nodes_roundtrip() {
+        let sender = NodeId::from_bytes([5u8; 32]);
+        let target = NodeId::from_bytes([6u8; 32]);
+        let nonce = 11111u64;
+        let nodes = vec![
+            PeerContact::new(NodeId::from_bytes([7u8; 32]), "127.0.0.1:9001".to_string()),
+            PeerContact::new(NodeId::from_bytes([8u8; 32]), "127.0.0.1:9002".to_string()),
+        ];
+        let msg = RelayMsg::DhtNodes {
+            sender,
+            target,
+            nonce,
+            nodes,
+        };
+        let encoded = encode_msg(&msg);
+        let decoded = decode_msg(&encoded).unwrap();
+        assert_eq!(msg, decoded);
+    }
+
+    #[test]
+    fn test_handle_relay_query_dht_ping() {
+        let mut node = Node::new();
+        node.genesis(3, 1000, 1000, 1).unwrap();
+
+        let sender = NodeId::from_bytes([1u8; 32]);
+        let nonce = 12345u64;
+        let q_ping = RelayMsg::DhtPing { sender, nonce };
+        let resp = handle_relay_query(&node, &q_ping).unwrap();
+        if let RelayMsg::DhtPong {
+            sender: s,
+            nonce: n,
+        } = resp
+        {
+            assert_eq!(s, sender);
+            assert_eq!(n, nonce);
+        } else {
+            panic!("expected DhtPong response");
+        }
+    }
+
+    #[test]
+    fn test_handle_relay_query_dht_find_node() {
+        let mut node = Node::new();
+        node.genesis(3, 1000, 1000, 1).unwrap();
+
+        let sender = NodeId::from_bytes([1u8; 32]);
+        let target = NodeId::from_bytes([2u8; 32]);
+        let nonce = 54321u64;
+        let q_find = RelayMsg::DhtFindNode {
+            sender,
+            target,
+            nonce,
+        };
+        let resp = handle_relay_query(&node, &q_find).unwrap();
+        if let RelayMsg::DhtNodes {
+            sender: s,
+            target: t,
+            nonce: n,
+            nodes,
+        } = resp
+        {
+            assert_eq!(s, sender);
+            assert_eq!(t, target);
+            assert_eq!(n, nonce);
+            assert!(nodes.is_empty());
+        } else {
+            panic!("expected DhtNodes response");
         }
     }
 }

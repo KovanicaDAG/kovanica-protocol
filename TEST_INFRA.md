@@ -1,47 +1,55 @@
-# E2E Test Infra: Kovanica SPV Wire Protocol
+# E2E Test Infra: Kovanica Multi-Seed Discovery & Kademlia DHT
 
 ## Test Philosophy
-- Opaque-box, requirement-driven: test against user specifications and network wire protocols over real TCP sockets.
-- Comprehensive 4-Tier + Tier 5 Adversarial testing methodology.
+- Opaque-box, requirement-driven: test against user specifications and network wire protocols over real TCP sockets and deterministic in-process simulation.
+- Comprehensive 5-Tier testing methodology (Category-Partition, Boundary Value Analysis, Pairwise Combinatorial, Real-World Workload, Adversarial Stress).
 
 ## Feature Inventory
 | # | Feature | Source | Tier 1 | Tier 2 | Tier 3 | Tier 4 |
 |---|---------|--------|:------:|:------:|:------:|:------:|
-| 1 | SPV Wire Messages (`getheaders`, `headers`, `getblocks`, `merkleblock`) | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
-| 2 | Full Node SPV Serving | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
-| 3 | Light Client Header Sync over TCP | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
-| 4 | Merkle Proof Request & Verification | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
-| 5 | Difficulty Retargeting Bounds Enforcement | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
-| 6 | Wall-Clock Future Drift Limits ($\le 2\text{h}$) | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
+| 1 | DNS Multi-Seed Resolver & Fallback Pipeline | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
+| 2 | 256-bit NodeId & XOR Metric Engine | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
+| 3 | K-Bucket Routing Table & LRU Eviction | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
+| 4 | DHT Wire Protocol Messages & Framing | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
+| 5 | Iterative Node Lookup & Routing Algorithm | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
+| 6 | Mesh Simulation & Query Handling | ORIGINAL_REQUEST §R1 | 5 | 5 | ✓ | ✓ |
+| 7 | Multi-Node Dynamic Discovery & Bootstrapping | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
+| 8 | Multi-Hop Isolated Target Routing | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
+| 9 | Unreachable Peer Pruning & Replenishment | ORIGINAL_REQUEST §R2 | 5 | 5 | ✓ | ✓ |
 
 ## Test Architecture
-- Test Suite Location: `crates/kovanica-node/tests/spv_sync.rs`
-- Runner: `cargo test -p kovanica-node --test spv_sync`
-- Network: Real TCP loopback connections (`127.0.0.1:0`), ephemeral ports, bounded timeouts (`set_read_timeout(2s)`).
-- Clocks: Pinned deterministic clocks using `node.set_now_ms(...)`.
+- Test Suite Location: `crates/kovanica-node/tests/dht_discovery.rs`
+- Runner: `cargo test -p kovanica-node --test dht_discovery`
+- Network: Real TCP loopback connections (`127.0.0.1:0`), ephemeral ports, bounded timeouts, plus discrete-time in-process simulation (`Mesh`).
+- DNS: Injectable `MockDnsResolver` ensuring zero external network dependencies and 100% deterministic test execution.
 
 ## Test Tier Coverage
-- **Tier 1 - Feature Coverage**:
-  1. Wire message serialization/deserialization for all SPV message variants.
-  2. Single header response over TCP.
-  3. Batch headers response with locator pagination.
-  4. Merkle proof generation and inclusion verification.
-  5. `merkleblock` wire exchange and verification.
-- **Tier 2 - Boundary & Corner Cases**:
-  1. Empty DAG / genesis-only header sync.
-  2. Maximum batch size limits (`MAX_HEADERS = 10_000`, frame limit `MAX_FRAME = 4MB`).
-  3. Wall-clock future drift exact boundary (`now + 2h` accepted, `now + 2h + 1ms` rejected).
-  4. Difficulty retargeting clamp limits ($4\times$ upward clamp, $1/4\times$ downward clamp).
-  5. Single-transaction block Merkle proof vs multi-transaction odd/even leaf counts.
-  6. Non-existent transaction / non-existent block Merkle proof requests.
+- **Tier 1 - Feature Coverage (>=5 per feature)**:
+  1. 256-bit XOR metric distance properties: identity $d(x, x) = 0$, symmetry $d(x, y) = d(y, x)$, triangle inequality $d(x, z) \le d(x, y) \oplus d(y, z)$.
+  2. Bucket index derivation: exact leading zero bits mapped to 256 buckets.
+  3. K-bucket insertion, LRU ordering, and duplicate contact update.
+  4. DHT wire message binary serialization/deserialization (`Ping`, `Pong`, `FindNode`, `Nodes`) with 64-bit query nonces.
+  5. DNS multi-seed resolver: multiple seeds queried, A/AAAA extraction, duplicate deduplication, shuffling.
+  6. Static IP fallback resolution when all DNS seeds fail.
+- **Tier 2 - Boundary & Corner Cases (>=5 per feature)**:
+  1. Empty routing table lookup returns empty candidate list gracefully without panic.
+  2. Full bucket saturation: insertion triggers replacement cache or ping eviction.
+  3. Self-lookup: searching for local NodeId returns closest neighboring nodes.
+  4. Query nonce mismatch: unsolicited or stale Pong/Nodes messages are ignored.
+  5. Unresponsive intermediate node during iterative lookup: algorithm continues querying alternative candidates.
+  6. Dead peer 3-strike failure accumulation and automatic eviction from bucket.
 - **Tier 3 - Cross-Feature Combinations**:
-  1. Multi-block header chain sync followed by selective Merkle proof verification for specific txs over the same TCP session.
-  2. Concurrent light clients querying full node simultaneously.
-  3. Dynamic block production while SPV client performs incremental sync.
-  4. DAG fork / alternative tip header sync.
-- **Tier 4 - Real-World Application Scenarios**:
-  1. Mobile wallet payment receipt: light client syncs 100 headers with $>90\%$ bandwidth reduction vs full block sync, receives payment, requests and validates Merkle proof.
-  2. Adversarial tampering detection: full node serves altered transaction or invalid Merkle branch, SPV client detects fraud and rejects proof.
-  3. Far-future time-warp attack: malicious peer advertises headers with future timestamps $>2\text{h}$, SPV client rejects headers and terminates sync.
+  1. Multiplexed TCP framing: DHT messages (`Ping`, `FindNode`, `Nodes`) seamlessly interleaved with P2P block/tx gossip and SPV queries on the same connection.
+  2. DHT discovery coupled with P2P mesh connection: discovered peers are automatically dialed and added to active gossip overlay.
+  3. Block and transaction dissemination across dynamically discovered DHT peers.
+- **Tier 4 - Real-World Application Scenarios (>=5 scenarios)**:
+  1. **Multi-Seed Dynamic Bootstrapping**: Cluster of 5 nodes bootstraps via DNS multi-seed resolver and forms a connected DHT routing table.
+  2. **Multi-Hop Isolated Target Discovery**: Node A knows only Seed Node B. Node C knows only Seed Node B. Node A discovers and connects directly to Node C via DHT iterative routing without knowing C's IP upfront.
+  3. **Dynamic Disconnect & Routing Pruning**: An active node in a 6-node cluster crashes. Neighbors detect 3 consecutive query failures, prune it from routing tables, and promote replacement candidates.
+  4. **Routing Table Replenishment**: Node's active peer count drops below target; node queries DHT to replenish active P2P mesh connections.
+  5. **Partition Healing**: Two initially partitioned sub-clusters are bridged by a single mutual contact; iterative lookups merge their routing tables into a single unified overlay.
 - **Tier 5 - Adversarial Coverage Hardening**:
-  - Code-coverage audit, fuzzing malformed wire payloads, edge-case race conditions in TCP buffers.
+  - High churn stress test (nodes rapidly joining and leaving).
+  - Sybil / poisoned routing table defense (rate limiting and IP diversity).
+  - Eclipse attack defense (LRU ping preservation prevents malicious newcomers from evicting established honest nodes).
+

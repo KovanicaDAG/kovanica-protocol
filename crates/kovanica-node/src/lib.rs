@@ -33,6 +33,8 @@
 //! assert_eq!(rpc::execute_line(&mut node, "balance 2"), "ok 200");
 //! ```
 
+pub mod dht;
+pub mod dns_seed;
 pub mod explorer;
 pub mod mempool;
 pub mod mempool_v2;
@@ -44,6 +46,14 @@ pub mod relay;
 pub mod rpc;
 pub mod spv;
 
+pub use dht::{
+    DhtMsg, KBucket, NodeId, NodeLookup, PeerContact, RoutingTable, UpdateResult,
+    TAG_DHT_FIND_NODE, TAG_DHT_NODES, TAG_DHT_PING, TAG_DHT_PONG,
+};
+pub use dns_seed::{
+    mock_resolver, production_resolver, DnsResolver, DnsSeedConfig, DnsSeedResolver,
+    MockDnsResolver, StdDnsResolver,
+};
 pub use explorer::serve as serve_explorer;
 pub use mempool::Mempool;
 pub use mempool_v2::{Added, MempoolConfig, MempoolError, MempoolV2};

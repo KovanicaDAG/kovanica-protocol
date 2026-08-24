@@ -15,6 +15,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use kovanica_dag::BlockId;
 use kovanica_state::{Address, Transaction};
 
+use crate::dht::{NodeId, PeerContact, RoutingTable};
+use crate::dns_seed::{production_resolver, DnsSeedConfig, DnsSeedResolver};
 use crate::net::{
     encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first, sync_headers_first,
 };
@@ -101,6 +103,16 @@ struct Explorer {
     origins: HashMap<String, u64>,
     taps: HashMap<String, (u64, u32)>,
     ws_clients: Arc<Mutex<Vec<Arc<Mutex<TcpStream>>>>>,
+    /// DHT routing table for the explorer's alpha node.
+    dht_table: Option<RoutingTable>,
+    /// DHT NodeId for the explorer.
+    dht_node_id: Option<NodeId>,
+    /// DNS seed resolver for multi-seed discovery.
+    dns_resolver: Option<DnsSeedResolver<crate::dns_seed::StdDnsResolver>>,
+    /// Last time DHT bootstrap was attempted.
+    last_dht_bootstrap: u64,
+    /// Last time DHT peer replenishment was attempted.
+    last_dht_replenish: u64,
 }
 
 impl Explorer {
@@ -125,6 +137,11 @@ impl Explorer {
             origins: HashMap::new(),
             taps: HashMap::new(),
             ws_clients: Arc::new(Mutex::new(Vec::new())),
+            dht_table: None,
+            dht_node_id: None,
+            dns_resolver: None,
+            last_dht_bootstrap: 0,
+            last_dht_replenish: 0,
         }
     }
 
@@ -132,6 +149,7 @@ impl Explorer {
         self.mesh.tick();
         self.ticks += 1;
         self.tick_p2p();
+        self.tick_dht();
         if self.mining && self.mine_every > 0 && self.ticks % self.mine_every == 0 {
             let names = self.mesh.names();
             if !names.is_empty() {
@@ -139,6 +157,79 @@ impl Explorer {
                 let _ = self.mesh.produce_empty(name);
                 self.rotate += 1;
                 persist_all(&self.mesh);
+            }
+        }
+    }
+
+    /// DHT background task: bootstrap from DNS seeds, discover peers, replenish connections.
+    fn tick_dht(&mut self) {
+        // Initialize DHT on first tick
+        if self.dht_table.is_none() {
+            if let Some(n) = self.mesh.node_mut("alpha") {
+                let node_id = NodeId::random();
+                n.init_dht_routing_table(node_id, 8);
+                self.dht_node_id = Some(node_id);
+                self.dht_table = Some(n.dht_routing_table().unwrap().clone());
+
+                // Initialize DNS resolver
+                let config = DnsSeedConfig::default();
+                self.dns_resolver = Some(DnsSeedResolver::new(crate::dns_seed::StdDnsResolver));
+            }
+        }
+
+        // Periodic DHT bootstrap from DNS seeds (every ~5 minutes)
+        if self.ticks > self.last_dht_bootstrap + 7500 {
+            // 7500 ticks * 40ms = 300s = 5min
+            self.last_dht_bootstrap = self.ticks;
+            if let Some(resolver) = &self.dns_resolver {
+                let seed_addrs = resolver.resolve_all();
+                if !seed_addrs.is_empty() {
+                    eprintln!("kovanica dht: resolved {} seed addresses", seed_addrs.len());
+                    // Convert seed addresses to peer contacts for bootstrap
+                    let mut seed_contacts = Vec::new();
+                    for addr in seed_addrs {
+                        // Generate a deterministic NodeId for each seed address
+                        let seed_id = NodeId::from_public_key(addr.to_string().as_bytes());
+                        seed_contacts.push(PeerContact::new(seed_id, addr.to_string()));
+                    }
+                    if let Some(n) = self.mesh.node_mut("alpha") {
+                        if let Ok(added) = n.dht_bootstrap(seed_contacts) {
+                            if added > 0 {
+                                eprintln!(
+                                    "kovanica dht: bootstrapped {} new contacts from DNS seeds",
+                                    added
+                                );
+                                // Sync local dht_table with node's table
+                                self.dht_table = n.dht_routing_table().cloned();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Periodic DHT peer replenishment (every ~2 minutes)
+        if self.ticks > self.last_dht_replenish + 3000 {
+            // 3000 ticks * 40ms = 120s = 2min
+            self.last_dht_replenish = self.ticks;
+            // Prune unreachable peers from DHT tables
+            if let Some(n) = self.mesh.node_mut("alpha") {
+                if let Some(table) = n.dht_routing_table_mut() {
+                    let pruned = table.prune_unresponsive(3);
+                    if !pruned.is_empty() {
+                        eprintln!("kovanica dht: pruned {} unreachable peers", pruned.len());
+                    }
+                    // Sync local dht_table
+                    self.dht_table = n.dht_routing_table().cloned();
+                }
+            }
+            // Replenish peer connections from DHT (separate borrow)
+            let added = self.mesh.replenish_peers_from_dht(8);
+            if added > 0 {
+                eprintln!(
+                    "kovanica dht: replenished {} peer connections from DHT",
+                    added
+                );
             }
         }
     }
@@ -250,7 +341,12 @@ impl Explorer {
         let _ = fs::create_dir_all(data_dir());
         ensure_network();
         let mut mesh = Mesh::new();
-        mesh.add("alpha", load_or_genesis("alpha"));
+        // Create alpha node with DHT
+        let mut alpha_node = load_or_genesis("alpha");
+        let node_id = NodeId::random();
+        alpha_node.init_dht_routing_table(node_id, 8);
+        mesh.add_with_dht("alpha", alpha_node, node_id);
+
         if env_flag("KOVANICA_DEMO_MESH", false) {
             mesh.add("beta", load_or_genesis("beta"));
             mesh.add("gamma", load_or_genesis("gamma"));
@@ -270,6 +366,8 @@ impl Explorer {
         if !listen_addr.is_empty() || !peers.is_empty() {
             eprintln!("kovanica p2p listen={listen_addr} peers={peers:?}");
         }
+        let config = DnsSeedConfig::default();
+        let dns_resolver = Some(DnsSeedResolver::new(crate::dns_seed::StdDnsResolver));
         let mut app = Self {
             mesh,
             selected: "alpha".into(),
@@ -286,6 +384,11 @@ impl Explorer {
             origins: load_origins(),
             taps: load_taps(),
             ws_clients: Arc::new(Mutex::new(Vec::new())),
+            dht_table: None,
+            dht_node_id: Some(node_id),
+            dns_resolver,
+            last_dht_bootstrap: 0,
+            last_dht_replenish: 0,
         };
         app.sync_peers(Duration::from_secs(3), true);
         app
