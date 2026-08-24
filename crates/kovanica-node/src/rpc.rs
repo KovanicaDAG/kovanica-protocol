@@ -29,7 +29,7 @@ pub const HELP: &str = "commands: help | genesis <k> <subsidy> <amount> <seed> |
 genesis_finality <k> <subsidy> <amount> <seed> <finality_depth> | \
 address <seed> | balance <seed|addr-hex> | send <from-seed> <amount> <to-seed> | \
 pool <from-seed> <amount> <to-seed> | produce | pending | tips | tip | len | \
-save <path> | load <path> | checkpoint <path> | load_checkpoint <path>";
+staking [vrf-pk-hex] | save <path> | load <path> | checkpoint <path> | load_checkpoint <path>";
 
 /// Run one command line against `node`, returning the response line. Never
 /// panics on bad input; malformed commands produce an `err ...` response.
@@ -129,6 +129,29 @@ fn run(node: &mut Node, line: &str) -> Result<String, String> {
         }
 
         "tip" => Ok(node.selected_tip().map_err(|e| e.to_string())?.to_string()),
+
+        // Read-only staking summary: hybrid status, this node's validator key,
+        // and bonded stakes (total, plus optionally one key's) at the tip view.
+        "staking" => {
+            let mut out = format!(
+                "hybrid={} total_stake={}",
+                node.hybrid_enabled(),
+                node.total_stake().map_err(|e| e.to_string())?
+            );
+            if let Some(pk) = node.validator_public_key() {
+                out.push_str(&format!(" validator={}", hex::encode(pk.as_bytes())));
+            }
+            if let [pk_hex] = args[..] {
+                let mut pk = [0u8; 32];
+                hex::decode_to_slice(pk_hex, &mut pk)
+                    .map_err(|e| format!("bad vrf-pk-hex: {e}"))?;
+                out.push_str(&format!(
+                    " stake_of={}",
+                    node.stake_of(&pk).map_err(|e| e.to_string())?
+                ));
+            }
+            Ok(out)
+        }
 
         "len" => Ok(node.block_count().map_err(|e| e.to_string())?.to_string()),
 

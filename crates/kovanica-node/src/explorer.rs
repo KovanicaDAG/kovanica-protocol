@@ -616,6 +616,12 @@ fn bind_v6_only(addr: &str) -> std::io::Result<TcpListener> {
     Ok(listener)
 }
 
+pub const DEFAULT_PEERS: &[&str] = &[
+    "seed.kovanica.online:9000",
+    "seed2.kovanica.online:9000",
+    "seed3.kovanica.online:9000",
+];
+
 fn peer_list() -> Vec<String> {
     match std::env::var("KOVANICA_PEERS") {
         Ok(s) if env_off(s.trim()) => Vec::new(),
@@ -624,7 +630,7 @@ fn peer_list() -> Vec<String> {
             .map(|x| x.trim().to_string())
             .filter(|x| !x.is_empty())
             .collect(),
-        Err(_) => vec![P2P_BOOTSTRAP.to_string()],
+        Err(_) => DEFAULT_PEERS.iter().map(|s| s.to_string()).collect(),
     }
 }
 

@@ -72,6 +72,7 @@
 pub mod keys;
 pub mod ledger;
 pub mod spv;
+pub mod stake;
 pub mod store;
 pub mod tx;
 pub mod utxo;
@@ -79,8 +80,9 @@ pub mod validation;
 
 pub use keys::{verify, Address, KeyPair};
 pub use ledger::{
-    apply_block, apply_dag, BlockSummary, HalvingSchedule, Ledger, LedgerCheckpointError,
-    LedgerError, LedgerInsertError, LedgerRun, LedgerSnapshotError, DEFAULT_HALVING_ERA,
+    apply_block, apply_dag, BlockSummary, HalvingSchedule, HybridConfig, Ledger,
+    LedgerCheckpointError, LedgerError, LedgerInsertError, LedgerRun, LedgerSnapshotError,
+    StakedVrf, DEFAULT_HALVING_ERA,
 };
 pub use spv::{
     generate_merkle_proof, merkle_root, BlockFilter, BlockHeader, MerkleProof, SpvClient, SpvError,

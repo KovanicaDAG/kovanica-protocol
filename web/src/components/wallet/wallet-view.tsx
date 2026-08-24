@@ -1,17 +1,26 @@
 import { useEffect, useState } from "react";
-import { Copy, Download, Eye, EyeOff, Trash2 } from "lucide-react";
+import { Copy, Download, Eye, EyeOff, Trash2, Usb, ShieldCheck, HardDrive, Cpu } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { AddressQr } from "@/components/wallet/address-qr";
+import { ConnectHardwareModal } from "@/components/wallet/connect-hardware-modal";
+import { HardwareSignModal } from "@/components/wallet/hardware-sign-modal";
 import { api, useApiSource } from "@/lib/api/client";
 import { MIN_FEE } from "@/lib/api/contract";
 import type { ApiHistory, ApiUtxos } from "@/lib/api/contract";
 import { ATOM } from "@/lib/ledger/types";
+import type { HardwareWalletRec } from "@/lib/ledger/types";
 import { fmtKvnc, parseKvnc } from "@/lib/ledger/format";
 import { isRepeatedHex, shortId } from "@/lib/ledger/hash";
 import { useLedger } from "@/lib/ledger/store";
 import { addressFromMnemonic, createMnemonic, importMnemonic, signSighash } from "@/lib/wallet/keys";
 import { hexToKvnc, parseAddr } from "@/lib/wallet/address";
+import {
+  formatDerivationPath,
+  getActiveHardwareProvider,
+  getHardwareProvider,
+  disconnectActiveHardwareProvider,
+} from "@/lib/wallet/hardware";
 import { useHydrated } from "@/lib/use-hydrated";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +40,17 @@ export function WalletView() {
   const [utxos, setUtxos] = useState<ApiUtxos | null>(null);
   const [hist, setHist] = useState<ApiHistory | null>(null);
   const [feeAtoms, setFeeAtoms] = useState<number | null>(null);
+
+  // Hardware wallet modal states
+  const [showConnectModal, setShowConnectModal] = useState(false);
+  const [signModalState, setSignModalState] = useState<{
+    open: boolean;
+    sighash: string;
+    dest: string;
+    atoms: number;
+    amountKvnc: string;
+    feeKvnc: string;
+  } | null>(null);
 
   const balance = utxos?.balance ?? 0;
   const fee = feeAtoms ?? MIN_FEE;
@@ -52,6 +72,7 @@ export function WalletView() {
 
   useEffect(() => {
     if (!walletStore) return;
+    if (walletStore.type === "hardware") return;
     if (!isRepeatedHex(walletStore.address)) return;
     void addressFromMnemonic(walletStore.mnemonic, walletStore.index).then((address) => {
       if (address !== walletStore.address) {
@@ -105,8 +126,25 @@ export function WalletView() {
     if (!wallet || wallet.index === index) return;
     setBusy(true);
     try {
-      const address = await addressFromMnemonic(wallet.mnemonic, index);
-      setWallet({ ...wallet, address, index });
+      if (wallet.type === "hardware") {
+        const provider = getActiveHardwareProvider() || getHardwareProvider(wallet.deviceType);
+        if (!provider.isConnected()) {
+          const path = formatDerivationPath(index, 0, 0);
+          await provider.connect({ accountIndex: index, path });
+        }
+        const pubResult = await provider.getPublicKey(index);
+        const updated: HardwareWalletRec = {
+          ...wallet,
+          address: pubResult.address,
+          index,
+          path: pubResult.path,
+        };
+        setWallet(updated);
+        toast.success(`Switched to Hardware Account ${index}`);
+      } else {
+        const address = await addressFromMnemonic(wallet.mnemonic, index);
+        setWallet({ ...wallet, address, index });
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not switch account");
     } finally {
@@ -121,7 +159,7 @@ export function WalletView() {
   }
 
   function onDownload() {
-    if (!wallet) return;
+    if (!wallet || wallet.type === "hardware") return;
     const blob = new Blob([`${wallet.mnemonic}\n`], { type: "text/plain" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -166,7 +204,34 @@ export function WalletView() {
         `/api/prepare?from=${wallet.address}&to=${dest}&amount=${atoms}`,
         "POST",
       );
+
+      if (wallet.type === "hardware") {
+        // Open hardware signing modal for device confirmation
+        setSignModalState({
+          open: true,
+          sighash: prep.sighash,
+          dest,
+          atoms,
+          amountKvnc: amount,
+          feeKvnc: fmtKvnc(fee),
+        });
+        setBusy(false);
+        return;
+      }
+
+      // Software wallet path
       const sig = await signSighash(wallet.mnemonic, wallet.index, prep.sighash);
+      await submitTransaction(dest, atoms, sig);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Send failed");
+      setBusy(false);
+    }
+  }
+
+  async function submitTransaction(dest: string, atoms: number, sig: string) {
+    if (!wallet) return;
+    setBusy(true);
+    try {
       const sub = await api<{ tx: string }>(
         `/api/submit?from=${wallet.address}&to=${dest}&amount=${atoms}&sig=${sig}`,
         "POST",
@@ -186,6 +251,13 @@ export function WalletView() {
     }
   }
 
+  async function onHardwareSignSuccess(sig: string) {
+    if (!signModalState || !wallet) return;
+    const { dest, atoms } = signModalState;
+    setSignModalState(null);
+    await submitTransaction(dest, atoms, sig);
+  }
+
   if (!wallet) {
     return (
       <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-8 md:px-6">
@@ -193,13 +265,28 @@ export function WalletView() {
           <p className="font-mono text-[10px] tracking-brand text-subtle uppercase">KVNC</p>
           <h1 className="font-display text-3xl tracking-tight text-fg">Wallet</h1>
           <p className="mt-2 text-sm leading-relaxed text-muted">
-            Keys stay in this browser. Create a 12-word seed or import one. Address is the
+            Secure your KVNC in this browser or connect a hardware wallet. Address is the
             Ed25519 public key.
           </p>
         </header>
-        <Button type="button" className="h-12" disabled={busy} onClick={() => void onCreate()}>
-          {busy ? "Working…" : "Create wallet"}
-        </Button>
+
+        <div className="flex flex-col gap-3">
+          <Button type="button" className="h-12" disabled={busy} onClick={() => void onCreate()}>
+            {busy ? "Working…" : "Create wallet"}
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            className="h-12"
+            disabled={busy}
+            onClick={() => setShowConnectModal(true)}
+          >
+            <Usb className="size-4 text-accent" />
+            Connect Hardware Wallet
+          </Button>
+        </div>
+
         <form onSubmit={(e) => void onImport(e)} className="flex flex-col gap-3">
           <label className="text-[10px] tracking-wide text-subtle uppercase">Import seed</label>
           <textarea
@@ -213,18 +300,35 @@ export function WalletView() {
             Import
           </Button>
         </form>
+
+        <ConnectHardwareModal
+          open={showConnectModal}
+          onOpenChange={setShowConnectModal}
+          onConnected={(rec) => {
+            setWallet(rec);
+          }}
+        />
       </div>
     );
   }
 
+  const isHardware = wallet.type === "hardware";
   const history = hist?.txs ?? [];
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-6 md:px-6 md:py-8">
       <header className="flex items-start justify-between gap-3">
         <div>
-          <p className="font-mono text-[10px] tracking-wide text-subtle uppercase">Balance</p>
-          <p className="font-display text-4xl tabular-nums tracking-tight text-fg">{fmtKvnc(balance)}</p>
+          <div className="flex items-center gap-2">
+            <p className="font-mono text-[10px] tracking-wide text-subtle uppercase">Balance</p>
+            {isHardware && (
+              <span className="flex items-center gap-1 rounded-full border border-border bg-surface-2 px-2 py-0.5 font-mono text-[10px] text-accent">
+                <Usb className="size-3 text-accent" />
+                <span className="capitalize">{wallet.deviceType}</span>
+              </span>
+            )}
+          </div>
+          <p className="mt-1 font-display text-4xl tabular-nums tracking-tight text-fg">{fmtKvnc(balance)}</p>
         </div>
         <Button
           type="button"
@@ -232,6 +336,7 @@ export function WalletView() {
           size="icon"
           aria-label="Forget wallet"
           onClick={() => {
+            void disconnectActiveHardwareProvider();
             setWallet(null);
             toast.message("Wallet removed from this browser");
           }}
@@ -275,7 +380,11 @@ export function WalletView() {
             Copy
           </Button>
           {live ? (
-            <p className="self-center text-xs text-muted">Sends sign Ed25519 in this browser.</p>
+            <p className="self-center text-xs text-muted">
+              {isHardware
+                ? `Sends require confirmation on ${wallet.deviceType}.`
+                : "Sends sign Ed25519 in this browser."}
+            </p>
           ) : (
             <Button type="button" className="h-11" onClick={() => void onFaucet()}>
               Faucet 1 KVNC
@@ -284,7 +393,27 @@ export function WalletView() {
         </div>
       </section>
 
-      {wallet.shown ? (
+      {/* Seed phrase box (software) or Hardware Security info banner (hardware) */}
+      {isHardware ? (
+        <section className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-medium text-fg">
+              <ShieldCheck className="size-4 text-accent" />
+              <span>Hardware Device Security</span>
+            </div>
+            <span className="rounded bg-surface-2 px-2 py-0.5 font-mono text-[10px] text-muted">
+              {wallet.deviceInfo?.model || wallet.deviceType}
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-muted">
+            Private keys are stored securely inside your {wallet.deviceType.toUpperCase()} device and never leave hardware memory.
+          </p>
+          <div className="mt-3 flex items-center justify-between rounded-lg bg-surface-2 px-3 py-2 text-[11px] font-mono text-subtle">
+            <span>BIP-44 Derivation Path</span>
+            <span className="text-fg">{wallet.path}</span>
+          </div>
+        </section>
+      ) : wallet.shown ? (
         <section className="rounded-xl border border-border bg-surface p-4">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[10px] tracking-wide text-subtle uppercase">Seed phrase</p>
@@ -351,7 +480,7 @@ export function WalletView() {
           Fee {fmtKvnc(fee)} (mempool p90 estimate, min {fmtKvnc(MIN_FEE)}). 50 KVNC sends spend two coinbases.
         </p>
         <Button type="submit" className="h-12" disabled={busy}>
-          {busy ? "Sending…" : live ? "Sign & send on Live" : "Send"}
+          {busy ? "Sending…" : isHardware ? `Confirm & send with ${wallet.deviceType}` : live ? "Sign & send on Live" : "Send"}
         </Button>
       </form>
 
@@ -378,6 +507,31 @@ export function WalletView() {
           </ul>
         )}
       </section>
+
+      {/* Hardware Sign Modal Dialog */}
+      {isHardware && signModalState && (
+        <HardwareSignModal
+          open={signModalState.open}
+          deviceType={wallet.deviceType}
+          accountIndex={wallet.index}
+          path={wallet.path}
+          recipient={signModalState.dest}
+          amountKvnc={signModalState.amountKvnc}
+          feeKvnc={signModalState.feeKvnc}
+          sighash={signModalState.sighash}
+          onSuccess={(sig) => void onHardwareSignSuccess(sig)}
+          onCancel={() => setSignModalState(null)}
+        />
+      )}
+
+      {/* Connect Hardware Modal Dialog */}
+      <ConnectHardwareModal
+        open={showConnectModal}
+        onOpenChange={setShowConnectModal}
+        onConnected={(rec) => {
+          setWallet(rec);
+        }}
+      />
     </div>
   );
 }
