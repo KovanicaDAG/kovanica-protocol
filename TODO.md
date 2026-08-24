@@ -23,8 +23,8 @@
 - [ ] **Peers rollout**: `seed3.kovanica.online:9000` into the node binary's
       default `KOVANICA_PEERS` and the public `install.sh` (deploy-seed.sh
       already defaults to `seed…,seed3…`)
-- [ ] Decide `kovanica-cli` publication (mirror workspace deliberately excludes it)
-- [ ] Optional: Windows release assets for `install.ps1` (currently source-build only)
+- [x] Decide `kovanica-cli` publication: included in public mirror workspace and release assets
+- [x] Optional: Windows release assets for `install.ps1`: added Windows x86_64 target to GitHub Actions
 
 ### Next session — Testnet soak kickoff (roadmap item 4 ◀ ACTIVE)
 

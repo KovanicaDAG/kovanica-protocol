@@ -5,7 +5,7 @@ name: sync-public-node
 # then ship prebuilt node binaries as a rolling release there so
 # scripts/install.sh can fetch one instead of compiling from source.
 #
-# Synced: crates/{kovanica-dag,kovanica-state,kovanica-node}, Cargo.lock,
+# Synced: crates/{kovanica-dag,kovanica-state,kovanica-node,kovanica-cli}, Cargo.lock,
 #         root Cargo.toml (filtered — see the sync step).
 # Never touched: everything else in the mirror (README.md, TESTNET.md,
 #         JOIN.md, scripts/install.*, .github/, deploy/) — those live only there.
@@ -67,7 +67,7 @@ jobs:
       - name: Sync workspace into the public mirror
         run: |
           set -euo pipefail
-          for c in kovanica-dag kovanica-state kovanica-node; do
+          for c in kovanica-dag kovanica-state kovanica-node kovanica-cli; do
             mkdir -p "public/crates/$c"
             # --delete drops files removed upstream; data/ and target/ are
             # runtime-only and never published.
@@ -147,6 +147,9 @@ jobs:
           - os: macos-latest
             target: x86_64-apple-darwin
             asset: x86_64-macos
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: x86_64-windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -169,22 +172,32 @@ jobs:
         run: pip3 install ziglang
 
       - name: Build release binary
+        shell: bash
         env:
           TARGET: ${{ matrix.target }}
         run: |
           if [ "${{ matrix.zigbuild }}" = "true" ]; then
-            cargo zigbuild --release --target "$TARGET" -p kovanica-node
+            cargo zigbuild --release --target "$TARGET" -p kovanica-node -p kovanica-cli
           else
-            cargo build --release --target "$TARGET" -p kovanica-node
+            cargo build --release --target "$TARGET" -p kovanica-node -p kovanica-cli
           fi
 
       - name: Package
+        shell: bash
         env:
           ASSET: kovanica-node-${{ matrix.asset }}
           TARGET: ${{ matrix.target }}
         run: |
-          mkdir -p dist && cp "target/$TARGET/release/kovanica-node" dist/
-          tar -czf "$ASSET.tar.gz" -C dist kovanica-node
+          mkdir -p dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/$TARGET/release/kovanica-node.exe" dist/
+            cp "target/$TARGET/release/kovanica-cli.exe" dist/
+            tar -czf "$ASSET.tar.gz" -C dist kovanica-node.exe kovanica-cli.exe
+          else
+            cp "target/$TARGET/release/kovanica-node" dist/
+            cp "target/$TARGET/release/kovanica-cli" dist/
+            tar -czf "$ASSET.tar.gz" -C dist kovanica-node kovanica-cli
+          fi
           sha256sum "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
 
       - uses: actions/upload-artifact@v4
@@ -231,6 +244,6 @@ jobs:
           gh release create "$TAG" ./*.tar.gz ./*.sha256 \
             -R KovanicaDAG/kovanica-node \
             --title "kovanica-node ${TAG}" \
-            --notes "Prebuilt node binaries mirroring kovanica-protocol@${SRC_SHA:0:12}.
-          Linux builds are static (musl); macOS targets Apple Silicon and Intel.
+            --notes "Prebuilt node and cli binaries mirroring kovanica-protocol@${SRC_SHA:0:12}.
+          Linux builds are static (musl); macOS targets Apple Silicon and Intel; Windows targets x86_64.
           Install: curl -sSfL https://raw.githubusercontent.com/KovanicaDAG/kovanica-node/main/scripts/install.sh | bash"
