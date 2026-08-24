@@ -1,0 +1,103 @@
+name: sync-public-node
+
+# Mirror the public-facing subset of this monorepo into the public
+# KovanicaDAG/kovanica-node repo (the "clone this to run a node" entry point).
+#
+# Synced: crates/{kovanica-dag,kovanica-state,kovanica-node}, Cargo.lock,
+#         root Cargo.toml (filtered — see the sync step).
+# Never touched: everything else in the mirror (README.md, TESTNET.md,
+#         JOIN.md, scripts/install.*, .github/, deploy/) — those live only there.
+#
+# Auth: needs a fine-grained PAT with Contents read/write on kovanica-node
+# only, stored as the NODE_PUBLIC_TOKEN secret on this repo.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch: {}
+
+concurrency:
+  group: sync-public-node
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for NODE_PUBLIC_TOKEN
+        env:
+          HAS_TOKEN: ${{ secrets.NODE_PUBLIC_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::NODE_PUBLIC_TOKEN secret is not set."
+            echo "Create a fine-grained PAT (KovanicaDAG/kovanica-node, Contents: Read and write)"
+            echo "and store it: gh secret set NODE_PUBLIC_TOKEN -R KovanicaDAG/kovanica-protocol"
+            exit 1
+          fi
+
+      - name: Checkout public mirror
+        uses: actions/checkout@v4
+        with:
+          repository: KovanicaDAG/kovanica-node
+          token: ${{ secrets.NODE_PUBLIC_TOKEN }}
+          path: public
+
+      - name: Sync workspace into the public mirror
+        run: |
+          set -euo pipefail
+          for c in kovanica-dag kovanica-state kovanica-node; do
+            mkdir -p "public/crates/$c"
+            # --delete drops files removed upstream; data/ and target/ are
+            # runtime-only and never published.
+            rsync -a --delete \
+              --exclude 'data/' --exclude 'target/' \
+              "crates/$c/" "public/crates/$c/"
+          done
+          cp Cargo.lock public/Cargo.lock
+
+          # Root manifest comes from here so there is one source of truth,
+          # but the public workspace keeps its own membership (no kovanica-cli)
+          # and points its repository URL at the mirror.
+          python3 - <<'EOF'
+          import pathlib, re
+
+          src = pathlib.Path("Cargo.toml").read_text()
+
+          def filter_members(m: re.Match) -> str:
+              kept = [
+                  x for x in re.findall(r'"([^"]+)"', m.group(1))
+                  if pathlib.Path("public", x, "Cargo.toml").exists()
+              ]
+              return "members = [" + ", ".join(f'"{x}"' for x in kept) + "]"
+
+          out = re.sub(r"members = \[(.*?)\]", filter_members, src, count=1, flags=re.S)
+          out = out.replace(
+              "repository = \"https://github.com/KovanicaDAG/kovanica-protocol\"",
+              "repository = \"https://github.com/KovanicaDAG/kovanica-node\"",
+          )
+          pathlib.Path("public/Cargo.toml").write_text(out)
+          EOF
+
+      - name: Commit & push if changed
+        working-directory: public
+        env:
+          SRC_SHA: ${{ github.sha }}
+        run: |
+          git config user.name "kovanica-sync-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "mirror already up to date with ${SRC_SHA}"
+            exit 0
+          fi
+          git commit -m "sync: mirror kovanica-protocol@${SRC_SHA:0:12}"
+          git push
