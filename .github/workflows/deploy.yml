@@ -90,10 +90,10 @@ jobs:
             export PATH="$HOME/.cargo/bin:$PATH"
             cd /root/kovanica-protocol
             git pull --ff-only origin main
-            # Replace binary with CI-built artifact
+            # Replace binary with CI-built artifact (stop first: running
+            # binaries cannot be overwritten — ETXTBSY)
             chmod +x ~/bin/kovanica-node
+            pm2 stop kovanica-explorer >/dev/null 2>&1 || true
             cp ~/bin/kovanica-node ./target/release/kovanica-node
-            # Restart the seed process pm2 already knows
-            command -v pm2 >/dev/null || export PATH="$PATH:/usr/local/bin:/usr/lib/node_modules/.bin"
             pm2 restart kovanica-explorer --update-env
             pm2 save
