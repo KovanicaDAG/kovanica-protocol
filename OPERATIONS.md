@@ -28,7 +28,8 @@ data dir was inside a directory that got deleted while the old process held it.
 - Trigger: push to `main`; gated by `DEPLOY_ENABLED=true` repo variable (set).
 - Secrets: `VPS_HOST=145.223.116.178`, `VPS_USERNAME=root`, `VPS_PRIVATE_KEY` (= local `~/.ssh/github_actions`, authorized in `~/.ssh/authorized_keys`).
 - **SSH port is 2222, not 22** — upstream filtering (Hostinger-level) times out GitHub runner connections on :22 after repeated logins. sshd listens on both.
-- Steps: cargo test/clippy/fmt gate → release build artifact → scp to `/root/bin/kovanica-node` → `pm2 stop kovanica-explorer` → cp over `target/release/kovanica-node` → `pm2 restart --update-env` → `pm2 save`.
+- Steps: cargo test/clippy/fmt gate → release build artifact → scp to `/root/bin/kovanica-node` → `systemctl stop kovanica-explorer` → atomic `install`+`mv` to `/usr/local/bin/kovanica-node` (in-place cp hits ETXTBSY — seed2 executes the same path) → `systemctl start kovanica-explorer` → `systemctl restart kovanica-seed2`.
+- **Process manager: systemd everywhere (decision 2026-08-24).** pm2 was retired for Kovanica node processes after a pm2-vs-systemd port fight; it remains only for unrelated apps on the VPS. All three nodes are systemd units now (`kovanica-explorer`, `kovanica-seed2`, `kovanica-seed3`).
 
 ### Web app — manual for now
 ```
@@ -85,28 +86,45 @@ verifies genesis match against seed1.
 7. **DHT handshake contacts**: `Mesh::connect` registers mutual routing-table
    contacts; eclipse resistance depends on it. See AGENTS.md §8.
 
-## 5. Quick commands
+## 5. Monitoring (Prometheus on the VPS, armed 2026-08-24)
+
+- Prometheus 2.45 runs as systemd `prometheus`, UI on `127.0.0.1:19080`
+  (node metrics listener owns :9090). TSDB retention 30d.
+- Targets: `seed.kovanica.online` = local node `127.0.0.1:9090` (direct);
+  `seed3.kovanica.online` via SSH tunnel unit `kovanica-tunnel-seed3`
+  (`127.0.0.1:19090` → seed3 `:9090`; metrics ports stay firewalled).
+- Rules: `/etc/prometheus/alerting_rules.yml` (repo copy is source of truth;
+  keep `humanizeBytes`-style non-existent template functions out — promtool
+  rejects them and the whole file fails to load). 15 alerts + 9 recording rules.
+- `kovanica_peer_count` samples peers that answered the last sync round
+  (`live_peers`), refreshed every ~5 s in the explorer idle tick.
+- **Baseline (2026-08-24 16:20 UTC):** height seed=448 / seed3=447,
+  peer_count 2/2 both, mempool 0, orphans 0, blue_score≈height, no reorgs.
+
+## 6. Quick commands
 
 ```sh
 # Health
 curl -s http://127.0.0.1:8080/api/head          # seed1 head
 systemctl status kovanica-seed2                  # seed2
-curl -s http://127.0.0.1:9090/metrics | head     # Prometheus series
-pm2 ls                                           # web + explorer
+curl -s http://127.0.0.1:19080/api/v1/targets    # Prometheus targets (jq .data)
+curl -s http://127.0.0.1:9090/metrics | head     # seed1 Prometheus series
 
-# Restart after binary swap
-pm2 restart kovanica-explorer --update-env
+# Restart after binary swap (auto-deploy does this; manual equivalent)
+sudo install -m755 ~/bin/kovanica-node /usr/local/bin/kovanica-node.new \
+  && sudo mv -f /usr/local/bin/kovanica-node{.new,}
+sudo systemctl restart kovanica-explorer kovanica-seed2
 
 # Watch sync/mining logs
 journalctl -u kovanica-seed2 -f
-pm2 logs kovanica-explorer --lines 50
+journalctl -u kovanica-explorer -f
 
 # Cold bootstrap check (pristine node pulls from hostname)
 KOVANICA_DATA=/tmp/cbt KOVANICA_LISTEN=127.0.0.1:19000 \
-KOVANICA_PEERS=seed.kovanica.online:9000 ./target/release/kovanica-node explorer 127.0.0.1:18081
+KOVANICA_PEERS=seed.kovanica.online:9000 /usr/local/bin/kovanica-node explorer 127.0.0.1:18081
 ```
 
-## 6. Free hosting candidates for the next off-box seed
+## 7. Free hosting candidates for the next off-box seed
 
 | Provider | Offer | Verdict |
 | --- | --- | --- |
