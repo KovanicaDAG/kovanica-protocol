@@ -20,11 +20,11 @@
 - [x] **Fix default DNS-seed list** (`dns_seed.rs`): defaults are now the three
       live hosts — `seed`/`seed2`/`seed3.kovanica.online`; `seed.kovanica.net`
       is gone and seed2 resolves again (A `145.223.116.178`)
-- [ ] **Peers rollout**: `seed3.kovanica.online:9000` into the node binary's
+- [x] **Peers rollout**: `seed3.kovanica.online:9000` into the node binary's
       default `KOVANICA_PEERS` and the public `install.sh` (deploy-seed.sh
       already defaults to `seed…,seed3…`)
-- [ ] Decide `kovanica-cli` publication (mirror workspace deliberately excludes it)
-- [ ] Optional: Windows release assets for `install.ps1` (currently source-build only)
+- [x] Decide `kovanica-cli` publication (mirror workspace deliberately excludes it)
+- [x] Optional: Windows release assets for `install.ps1` (currently source-build only)
 
 ### Next session — Testnet soak kickoff (roadmap item 4 ◀ ACTIVE)
 
