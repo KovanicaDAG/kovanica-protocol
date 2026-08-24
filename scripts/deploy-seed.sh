@@ -27,7 +27,7 @@ set -euo pipefail
 
 TARGET=""
 NAME="seed2"
-PEERS="seed.kovanica.online:9000"
+PEERS="seed.kovanica.online:9000,seed3.kovanica.online:9000"
 MINE=0
 MINE_SECS=60
 EXPLORER_PORT=8080
