@@ -46,7 +46,7 @@ export function ExplorerView() {
         <div>
           <h1 className="font-display text-2xl tracking-tight text-fg">BlockDAG</h1>
           <p className="mt-0.5 text-xs text-muted md:text-sm">
-            Native token <strong className="text-fg">Kovanica (KVNC)</strong> on {state?.network ?? "kovanica-testnet-1"}.
+            Native token <strong className="text-fg">Kovanica (KVNC)</strong> on {state?.network ?? "kovanica-testnet"}.
             Subsidy halves every 1000 blocks.
             {error ? <span className="text-danger"> · {error}</span> : null}
           </p>

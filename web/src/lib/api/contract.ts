@@ -1,10 +1,10 @@
-/** HTTP contract shared with explorer.kovanica.online (kovanica-testnet-1). */
+/** HTTP contract shared with explorer.kovanica.online (kovanica-testnet). */
 
 export const LIVE_EXPLORER = "https://explorer.kovanica.online";
 export const LIVE_WALLET = "https://wallet.kovanica.online";
 export const LIVE_MAP = "https://map.kovanica.online";
 export const LIVE_SITE = "https://kovanica.online";
-export const NETWORK_ID = "kovanica-testnet-1";
+export const NETWORK_ID = "kovanica-testnet";
 export const TOKEN = "KVNC";
 export const ATOM = 100_000_000;
 export const DECIMALS = 8;
@@ -38,7 +38,7 @@ export type ApiUtxo = { tx: string; index: number; value: number };
 export type ApiHistoryTx = {
   block: string;
   tx: string;
-  kind: "coinbase" | "in" | "out" | "faucet" | "tap";
+  kind: "coinbase" | "in" | "out" | "faucet";
   delta: number;
 };
 export type ApiNode = {
@@ -132,7 +132,6 @@ export const WRITE_PATHS = [
   "submit",
   "produce",
   "faucet",
-  "tap",
   "mine",
   "miner",
   "mining",

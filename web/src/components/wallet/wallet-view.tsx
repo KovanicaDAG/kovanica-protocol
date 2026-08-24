@@ -12,7 +12,6 @@ import { isRepeatedHex, shortId } from "@/lib/ledger/hash";
 import { useLedger } from "@/lib/ledger/store";
 import { addressFromMnemonic, createMnemonic, importMnemonic, signSighash } from "@/lib/wallet/keys";
 import { hexToKvnc, parseAddr } from "@/lib/wallet/address";
-import { creditPreview } from "@/lib/wallet/credit";
 import { useHydrated } from "@/lib/use-hydrated";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +24,6 @@ export function WalletView() {
   const walletStore = useLedger((s) => s.wallet);
   const wallet = hydrated ? walletStore : null;
   const setWallet = useLedger((s) => s.setWallet);
-  const claimTaps = useLedger((s) => s.claimTaps);
   const [busy, setBusy] = useState(false);
   const [phrase, setPhrase] = useState("");
   const [to, setTo] = useState("");
@@ -69,29 +67,15 @@ export function WalletView() {
       return;
     }
     void (async () => {
-      if (!live) await settlePendingTaps(wallet.address);
       await refreshChain(wallet.address);
     })();
   }, [wallet?.address, source]);
-
-  async function settlePendingTaps(address: string) {
-    const { tapBalance, claimedTapAtoms } = useLedger.getState();
-    const unclaimed = tapBalance - claimedTapAtoms;
-    if (unclaimed <= 0) return;
-    try {
-      const ok = await creditPreview(address, unclaimed, "tap");
-      if (ok) claimTaps(unclaimed);
-    } catch {
-      /* stay pending until next visit */
-    }
-  }
 
   async function onCreate() {
     setBusy(true);
     try {
       const mnemonic = await createMnemonic();
       const address = await addressFromMnemonic(mnemonic, 0);
-      if (!live) await settlePendingTaps(address);
       setWallet({ mnemonic, address, index: 0, shown: true });
       toast.success("Wallet created — write down the 12 words");
     } catch (e) {
@@ -107,7 +91,6 @@ export function WalletView() {
     try {
       const mnemonic = await importMnemonic(phrase);
       const address = await addressFromMnemonic(mnemonic, 0);
-      if (!live) await settlePendingTaps(address);
       setWallet({ mnemonic, address, index: 0, shown: false });
       setPhrase("");
       toast.success("Imported");
@@ -211,7 +194,7 @@ export function WalletView() {
           <h1 className="font-display text-3xl tracking-tight text-fg">Wallet</h1>
           <p className="mt-2 text-sm leading-relaxed text-muted">
             Keys stay in this browser. Create a 12-word seed or import one. Address is the
-            Ed25519 public key. Pending taps credit account 0 on Preview only.
+            Ed25519 public key.
           </p>
         </header>
         <Button type="button" className="h-12" disabled={busy} onClick={() => void onCreate()}>
@@ -234,7 +217,7 @@ export function WalletView() {
     );
   }
 
-  const history = live ? (hist?.txs.filter((row) => row.kind !== "tap") ?? []) : (hist?.txs ?? []);
+  const history = hist?.txs ?? [];
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-6 md:px-6 md:py-8">
@@ -292,7 +275,7 @@ export function WalletView() {
             Copy
           </Button>
           {live ? (
-            <p className="self-center text-xs text-muted">Home tap: 0.01 KVNC, 40/day. Send signs Ed25519.</p>
+            <p className="self-center text-xs text-muted">Sends sign Ed25519 in this browser.</p>
           ) : (
             <Button type="button" className="h-11" onClick={() => void onFaucet()}>
               Faucet 1 KVNC
@@ -376,7 +359,7 @@ export function WalletView() {
         <p className="mb-2 text-[10px] tracking-wide text-subtle uppercase">History</p>
         {history.length === 0 ? (
           <p className="text-sm text-muted">
-            {live ? "No movements on Live yet. Send after the seed is up." : "No movements yet. Tap the coin, use faucet, or send."}
+            {live ? "No movements on Live yet. Send after the seed is up." : "No movements yet. Use faucet, or send."}
           </p>
         ) : (
           <ul className="divide-y divide-border rounded-xl border border-border">

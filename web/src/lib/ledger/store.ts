@@ -22,10 +22,6 @@ export type LedgerSnapshot = {
   balances: Record<string, number>;
   history: HistoryRow[];
   selectedBlock: string | null;
-  tapBalance: number;
-  tapsToday: number;
-  tapDay: string;
-  claimedTapAtoms: number;
   originPulses: Record<string, number>;
 };
 
@@ -37,17 +33,8 @@ type Actions = {
   setWallet: (w: WalletRec | null) => void;
   faucet: () => string;
   send: (to: string, amountAtoms: number) => string;
-  addTap: () => { ok: boolean; remaining: number };
-  claimTaps: (atoms: number) => void;
   pulseOrigin: (iso3: string) => void;
 };
-
-export const TAP_LIMIT = 40;
-export const TAP_REWARD = Math.round(ATOM * 0.01);
-
-function todayUtc(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function freshDag() {
   const blocks = recast(seedDag());
@@ -66,10 +53,6 @@ export const useLedger = create<LedgerSnapshot & Actions>()(
       wallet: null,
       balances: {},
       history: [],
-      tapBalance: 0,
-      tapsToday: 0,
-      tapDay: todayUtc(),
-      claimedTapAtoms: 0,
       originPulses: {},
 
       mine: (miner) => {
@@ -156,43 +139,6 @@ export const useLedger = create<LedgerSnapshot & Actions>()(
         return `Sent · ${id.slice(0, 8)}`;
       },
 
-      addTap: () => {
-        const day = todayUtc();
-        const state = get();
-        const used = state.tapDay === day ? state.tapsToday : 0;
-        if (used >= TAP_LIMIT) return { ok: false, remaining: 0 };
-        const next = used + 1;
-        const reward = TAP_REWARD;
-        const addr = state.wallet?.address;
-        const balances = { ...state.balances };
-        if (addr) balances[addr] = (balances[addr] ?? 0) + reward;
-        set({
-          tapDay: day,
-          tapsToday: next,
-          tapBalance: state.tapBalance + reward,
-          balances,
-          history: addr
-            ? [
-                {
-                  id: hashHex(`tap:${next}:${day}`),
-                  from: "tap",
-                  to: addr,
-                  amount: reward,
-                  ts: Date.now(),
-                  kind: "tap",
-                } satisfies HistoryRow,
-                ...state.history,
-              ].slice(0, 40)
-            : state.history,
-        });
-        return { ok: true, remaining: TAP_LIMIT - next };
-      },
-
-      claimTaps: (atoms) => {
-        if (atoms <= 0) return;
-        set({ claimedTapAtoms: get().claimedTapAtoms + atoms });
-      },
-
       pulseOrigin: (iso3) => {
         const cur = get().originPulses;
         set({ originPulses: { ...cur, [iso3]: (cur[iso3] ?? 0) + 1 } });
@@ -204,10 +150,6 @@ export const useLedger = create<LedgerSnapshot & Actions>()(
         wallet: s.wallet,
         balances: s.balances,
         history: s.history,
-        tapBalance: s.tapBalance,
-        tapsToday: s.tapsToday,
-        tapDay: s.tapDay,
-        claimedTapAtoms: s.claimedTapAtoms,
         originPulses: s.originPulses,
       }),
     },
