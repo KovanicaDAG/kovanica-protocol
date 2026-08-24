@@ -1,15 +1,22 @@
 name: sync-public-node
 
 # Mirror the public-facing subset of this monorepo into the public
-# KovanicaDAG/kovanica-node repo (the "clone this to run a node" entry point).
+# KovanicaDAG/kovanica-node repo (the "clone this to run a node" entry point),
+# then ship prebuilt node binaries as a rolling release there so
+# scripts/install.sh can fetch one instead of compiling from source.
 #
 # Synced: crates/{kovanica-dag,kovanica-state,kovanica-node}, Cargo.lock,
 #         root Cargo.toml (filtered — see the sync step).
 # Never touched: everything else in the mirror (README.md, TESTNET.md,
 #         JOIN.md, scripts/install.*, .github/, deploy/) — those live only there.
 #
-# Auth: needs a fine-grained PAT with Contents read/write on kovanica-node
-# only, stored as the NODE_PUBLIC_TOKEN secret on this repo.
+# Release: tag v<workspace version> (e.g. v0.1.0), replaced in place on every
+#         run that mirrors new commits — one current release per version.
+# Assets: kovanica-node-{x86_64,aarch64}-{linux,macos}.tar.gz (static musl on
+#         Linux). Windows stays source-build only via install.ps1.
+#
+# Auth: needs NODE_PUBLIC_TOKEN (Contents read/write on kovanica-node) as a
+# secret on this repo.
 
 on:
   push:
@@ -30,6 +37,8 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    outputs:
+      pushed: ${{ steps.push.outputs.pushed }}
     steps:
       # persist-credentials: false — keep the default GITHUB_TOKEN out of git
       # config so it can never shadow the PAT on the mirror push below.
@@ -92,6 +101,7 @@ jobs:
           EOF
 
       - name: Commit & push if changed
+        id: push
         working-directory: public
         env:
           SRC_SHA: ${{ github.sha }}
@@ -111,3 +121,113 @@ jobs:
           git remote set-url origin \
             "https://x-access-token:${NODE_PUBLIC_TOKEN}@github.com/KovanicaDAG/kovanica-node.git"
           git push
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+  # Prebuilt binaries for the mirror's install.sh — only when something was
+  # actually mirrored (or on a manual run). Built from THIS repo, which is the
+  # source of truth; the mirror gets them as release assets, not commits.
+  build:
+    needs: sync
+    if: needs.sync.outputs.pushed == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: x86_64-linux
+            zigbuild: false
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            asset: aarch64-linux
+            zigbuild: true   # cross via cargo-zigbuild; static, no glibc pinning
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: aarch64-macos
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: x86_64-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cargo-zigbuild (aarch64 musl cross)
+        if: matrix.zigbuild
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Build release binary
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          if [ "${{ matrix.zigbuild }}" = "true" ]; then
+            cargo zigbuild --release --target "$TARGET" -p kovanica-node
+          else
+            cargo build --release --target "$TARGET" -p kovanica-node
+          fi
+
+      - name: Package
+        env:
+          ASSET: kovanica-node-${{ matrix.asset }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p dist && cp "target/$TARGET/release/kovanica-node" dist/
+          tar -czf "$ASSET.tar.gz" -C dist kovanica-node
+          sha256sum "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            kovanica-node-${{ matrix.asset }}.tar.gz
+            kovanica-node-${{ matrix.asset }}.tar.gz.sha256
+          retention-days: 3
+
+  publish:
+    needs: [sync, build]
+    if: needs.sync.outputs.pushed == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      # No full checkout: this job only needs the workspace version, fetched
+      # as the single Cargo.toml blob at the exact SHA being released.
+      - name: Read workspace version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL \
+            "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_SHA}/Cargo.toml" \
+            -o Cargo.toml
+          VER="$(python3 - <<'EOF'
+          import re, pathlib
+          text = pathlib.Path("Cargo.toml").read_text()
+          block = re.search(r"\[workspace\.package\](.*?)(?:\n\[|\Z)", text, re.S).group(1)
+          print(re.search(r'^version\s*=\s*"([^"]+)"', block, re.M).group(1))
+          EOF
+          )"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish rolling v${{ env.VER }} release to KovanicaDAG/kovanica-node
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ secrets.NODE_PUBLIC_TOKEN }}
+          SRC_SHA: ${{ github.sha }}
+        run: |
+          TAG="v${VER}"
+          gh release delete "$TAG" -R KovanicaDAG/kovanica-node --yes --cleanup-tag || true
+          gh release create "$TAG" ./*.tar.gz ./*.sha256 \
+            -R KovanicaDAG/kovanica-node \
+            --title "kovanica-node ${TAG}" \
+            --notes "Prebuilt node binaries mirroring kovanica-protocol@${SRC_SHA:0:12}.
+          Linux builds are static (musl); macOS targets Apple Silicon and Intel.
+          Install: curl -sSfL https://raw.githubusercontent.com/KovanicaDAG/kovanica-node/main/scripts/install.sh | bash"
