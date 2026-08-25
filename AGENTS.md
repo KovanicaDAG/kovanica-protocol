@@ -643,6 +643,17 @@ deterministic + adversarial tests per the conventions above.
     spend-after-receive debit, window bound) and two ffi.rs cases
     (`history_over_ffi_matches_utxo_semantics`,
     `filter_matches_any_batches_watch_addresses`).
+- **Slice 8 — docs & release**:
+  - Plan file marked landed (`docs/plans/mobile-light-node.md`); slice-4/5
+    surprises promoted into §8 hard-won lessons.
+  - Root `README.md` rewritten for the protocol repo with a
+    "Run a light node from Kotlin/Swift" section — copy-paste snippets
+    mirroring the ffi.rs two-node blob-sync convergence test, plus the SPV
+    light-sync surface and packaging pointers.
+  - Workspace version bumped to **0.2.0** (Stage 3 close-out: VRF leader
+    eligibility, hybrid PoW+staked admission, stake registry, P2P hardening,
+    mempool v2, metrics/observability, DHT+DNS discovery, mobile FFI slices
+    1–8).
 
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.
@@ -650,6 +661,8 @@ deterministic + adversarial tests per the conventions above.
 - **Identity-preserving block replay**: never rebuild a received/decoded block with a fresh `Block::new` template — once VRF fields exist, re-encoding silently changes the id and every child referencing the original parent fails with MissingParent. Use `insert_prepared_block` / `insert_raw_block`, and replay hybrid-era snapshots/checkpoints only through the `_with_hybrid` readers (plain readers deliberately strip VRF for legacy data).
 - **DHT handshake contacts**: `Mesh::connect` must register both endpoints as mutual DHT routing-table contacts — a verified handshake exchanges NodeId + address, and established contacts claiming bucket slots first is what gives eclipse resistance its footing (Tier 5 `test_adversarial_eclipse_resistance` asserts this). Do not decouple P2P connect from DHT contact registration.
 - **Metrics crate version**: `kovanica-node`'s `metrics` dependency must stay on the same minor version that `metrics-exporter-prometheus` depends on; otherwise emissions land in a noop recorder of the other version's global slot and `/metrics` renders nothing.
+- **Unbond maturity gate**: a release's own block advances the chain, so maturity windows are measured from the post-release tip — bonds close together in height can both mature by the time the second release applies. The gate is `>=`, equality included.
+- **Single-tx merkle proofs**: single-payload-tx blocks prove as bare leaves — empty merkle path, 84-byte proof blob. Tamper tests must hit the root region; path/index bytes don't exist there.
 
 ---
 

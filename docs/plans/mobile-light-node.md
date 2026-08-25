@@ -265,7 +265,7 @@ Only after 4–6 land:
   (`history_over_ffi_matches_utxo_semantics`,
   `filter_matches_any_batches_watch_addresses`). Gate green at landing.
 
-## Slice 8 — Docs & release
+## Slice 8 — Docs & release ✅ LANDED
 
 - Update this plan file: mark slices landed, move surprises into AGENTS.md
   hard-won lessons (per-slice rule).
