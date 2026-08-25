@@ -109,6 +109,31 @@ pub struct SendReceipt {
     pub tx_id_hex: String,
 }
 
+/// Direction of a [`HistoryEntry`] relative to the queried address.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TxDirection {
+    /// The address received value.
+    Received,
+    /// The address spent previously-received value.
+    Sent,
+}
+
+/// One reconstructed history event for an address.
+///
+/// Entries come back in canonical (linearized) block order; a send's change
+/// back to the sender appears as its own `Received` entry.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct HistoryEntry {
+    /// Sealing block id (lowercase hex).
+    pub block_id_hex: String,
+    /// Transaction id (lowercase hex).
+    pub tx_id_hex: String,
+    /// Credit or debit.
+    pub direction: TxDirection,
+    /// Value moved, in base units (decimal string).
+    pub amount: String,
+}
+
 /// Genesis parameters for a fresh light node.
 #[derive(uniffi::Record, Clone, Debug)]
 pub struct LightConfig {
@@ -569,6 +594,50 @@ impl LightNode {
         let addr = kovanica_state::Address::parse(&address)
             .map_err(|e| invalid(format!("bad address: {e}")))?;
         Ok(filter.contains(addr.as_bytes()))
+    }
+
+    /// Batch form of [`Self::filter_matches`]: does the filter match ANY of
+    /// `addresses`? Decodes the filter once — use this when watching several
+    /// addresses per block (multi-address watch wallets).
+    pub fn filter_matches_any(
+        &self,
+        filter_blob: Vec<u8>,
+        addresses: Vec<String>,
+    ) -> Result<bool, LightNodeError> {
+        let filter = decode_filter(&filter_blob)?;
+        let addrs = addresses
+            .iter()
+            .map(|a| {
+                kovanica_state::Address::parse(a).map_err(|e| invalid(format!("bad address: {e}")))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(addrs.iter().any(|addr| filter.contains(addr.as_bytes())))
+    }
+
+    /// Reconstruct the transaction history of `address` by scanning stored
+    /// blocks in canonical order. Scanning stops after the first
+    /// `max_blocks` blocks (`0` = scan everything). A send's change back to
+    /// the sender appears as its own `Received` entry.
+    pub fn history_of(
+        &self,
+        address: String,
+        max_blocks: u32,
+    ) -> Result<Vec<HistoryEntry>, LightNodeError> {
+        let addr = kovanica_state::Address::parse(&address)
+            .map_err(|e| invalid(format!("bad address: {e}")))?;
+        let events = self.lock().history_of(&addr, max_blocks as usize)?;
+        Ok(events
+            .into_iter()
+            .map(|ev| HistoryEntry {
+                block_id_hex: ev.block_id.to_hex(),
+                tx_id_hex: ev.tx_id.to_hex(),
+                direction: match ev.direction {
+                    kovanica_node::WalletDirection::Received => TxDirection::Received,
+                    kovanica_node::WalletDirection::Sent => TxDirection::Sent,
+                },
+                amount: ev.amount.to_string(),
+            })
+            .collect())
     }
 
     /// The selected chain as verified headers + per-block filters: everything

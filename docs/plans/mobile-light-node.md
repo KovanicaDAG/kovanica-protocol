@@ -240,7 +240,7 @@ rejected (mirror adversarial_spv.rs cases through FFI types).
 
 ---
 
-## Slice 7 — Wallet UX layer (thin)
+## Slice 7 — Wallet UX layer (thin) ✅ LANDED
 
 Only after 4–6 land:
 - Balance/history helpers over FFI: `history_of(address, max_blocks)` scanning
@@ -249,6 +249,21 @@ Only after 4–6 land:
   `set_fee_floor` if testnet soak shows congestion (defer unless needed).
 - Multi-address watch support comes free via Slice 5 filters (one query per
   address; batch helper `filter_matches_any(blob, [addresses])`).
+
+### Landed as built (deviations & additions)
+
+- `Node::history_of(owner, max_blocks)`: scans `dag.linearize()` canonically,
+  tracking seen outpoints owned by the address — spends become `Sent` events,
+  owned outputs `Received` events (change back to the sender is its own
+  `Received`). `max_blocks` bounds the window from the tip (`0` = all);
+  exports `WalletEvent`/`WalletDirection`.
+- FFI: `history_of` passthrough returning `HistoryEntry` records (hex ids,
+  decimal-string amounts), plus `filter_matches_any(blob, [addresses])`
+  decoding the filter once for multi-address watch; empty list never matches.
+- Fee-floor knob deferred as planned (no congestion signal yet).
+- Tests: `crates/kovanica-node/tests/wallet_history.rs` (3) + two ffi.rs cases
+  (`history_over_ffi_matches_utxo_semantics`,
+  `filter_matches_any_batches_watch_addresses`). Gate green at landing.
 
 ## Slice 8 — Docs & release
 

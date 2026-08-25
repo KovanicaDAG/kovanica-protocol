@@ -169,6 +169,29 @@ pub struct BlockRecord {
     pub txs: Vec<Transaction>,
 }
 
+/// Direction of a [`WalletEvent`] relative to the queried address.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WalletDirection {
+    /// The address received value (an output pays to it).
+    Received,
+    /// The address spent previously-received value.
+    Sent,
+}
+
+/// One history entry for an address, as reconstructed by
+/// [`Node::history_of`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WalletEvent {
+    /// Transaction the event comes from.
+    pub tx_id: TxId,
+    /// Block that sealed the transaction.
+    pub block_id: BlockId,
+    /// Credit or debit, relative to the queried address.
+    pub direction: WalletDirection,
+    /// Value moved, in base units.
+    pub amount: u64,
+}
+
 /// A MerkleBlock response for SPV clients: proves transaction inclusion in a block
 /// with zero full-payload leakage.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1259,6 +1282,78 @@ impl Node {
         let txs = decode_block_payload(block.payload()).ok()?;
         let index = txs.iter().position(|tx| &tx.id() == tx_id)?;
         kovanica_state::spv::generate_merkle_proof(&txs, index)
+    }
+
+    /// Reconstruct the transaction history of `owner` by scanning stored
+    /// blocks in linearized (canonical) order.
+    ///
+    /// A **credit** ([`WalletDirection::Received`]) is emitted for every
+    /// output paying to `owner`; a **debit** ([`WalletDirection::Sent`]) for
+    /// every transaction consuming an output previously seen as owned by
+    /// `owner` during the scan. Change back to the sender shows up as a
+    /// credit, matching plain UTXO accounting. Blocks with pruned payloads
+    /// are skipped. Scanning stops after `max_blocks` blocks; `0` scans all
+    /// of them.
+    ///
+    /// This is a full rescan per call — cheap at light-node scale; callers
+    /// wanting incremental history should cache results app-side.
+    pub fn history_of(
+        &self,
+        owner: &Address,
+        max_blocks: usize,
+    ) -> Result<Vec<WalletEvent>, NodeError> {
+        use std::collections::HashMap;
+
+        let ledger = self.ledger()?;
+        let dag = ledger.dag();
+
+        // outpoint -> value of outputs the scan has seen owned by `owner`.
+        let mut mine: HashMap<OutPoint, u64> = HashMap::new();
+        let mut events = Vec::new();
+
+        for (scanned, id) in dag.linearize().into_iter().enumerate() {
+            if max_blocks > 0 && scanned >= max_blocks {
+                break;
+            }
+
+            let Some(block) = dag.block(&id) else {
+                continue;
+            };
+            let Ok(txs) = decode_block_payload(block.payload()) else {
+                continue;
+            };
+
+            for tx in &txs {
+                let mut spent = 0u64;
+                for input in tx.inputs() {
+                    if let Some(value) = mine.get(&input.outpoint) {
+                        spent += *value;
+                    }
+                }
+                if spent > 0 {
+                    events.push(WalletEvent {
+                        tx_id: tx.id(),
+                        block_id: id,
+                        direction: WalletDirection::Sent,
+                        amount: spent,
+                    });
+                }
+
+                for (index, output) in tx.outputs().iter().enumerate() {
+                    if output.owner == *owner {
+                        mine.insert(OutPoint::new(tx.id(), index as u32), output.value);
+                        events.push(WalletEvent {
+                            tx_id: tx.id(),
+                            block_id: id,
+                            direction: WalletDirection::Received,
+                            amount: output.value,
+                        });
+                    }
+                }
+            }
+        }
+
+        Ok(events)
     }
 
     /// Export SPV block headers along the selected chain starting after the common

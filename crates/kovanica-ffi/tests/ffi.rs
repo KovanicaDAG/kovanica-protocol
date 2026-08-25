@@ -342,3 +342,71 @@ fn garbage_light_sync_is_rejected_not_panicked_on() {
     let phone = fresh();
     assert!(phone.receive_light_sync(vec![0u8; 40]).is_err());
 }
+
+#[test]
+fn history_over_ffi_matches_utxo_semantics() {
+    let node = fresh();
+    node.send(1, 400, 2).unwrap();
+
+    let founder_hex = kovanica_node::Node::address(1).to_hex();
+    let hist = node.history_of(founder_hex.clone(), 0).unwrap();
+    let summary: Vec<(String, bool)> = hist
+        .iter()
+        .map(|e| {
+            (
+                e.amount.clone(),
+                e.direction == kovanica_ffi::TxDirection::Received,
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        vec![
+            ("1000".into(), true),  // genesis coinbase
+            ("1000".into(), false), // coin consumed by the send
+            ("599".into(), true),   // change (fee = 1)
+        ]
+    );
+    for e in &hist {
+        assert_eq!(hex::decode(&e.tx_id_hex).unwrap().len(), 32);
+        assert_eq!(hex::decode(&e.block_id_hex).unwrap().len(), 32);
+    }
+
+    // The human `kvnc…dag` address form parses too.
+    let kvnc = kovanica_node::Node::address(1).to_kvnc();
+    assert_eq!(node.history_of(kvnc, 0).unwrap().len(), 3);
+
+    // Uninvolved address and bounded scans behave.
+    assert!(node
+        .history_of(kovanica_node::Node::address(9).to_hex(), 0)
+        .unwrap()
+        .is_empty());
+    assert_eq!(node.history_of(founder_hex, 1).unwrap().len(), 1);
+}
+
+#[test]
+fn filter_matches_any_batches_watch_addresses() {
+    let node = fresh();
+    let tip = node.selected_tip().unwrap(); // genesis
+    let blob = node.block_filter(tip).unwrap();
+
+    let founder = kovanica_node::Node::address(1).to_hex();
+    let bystander = kovanica_node::Node::address(7).to_hex();
+
+    // Batch hit when any watched address matches…
+    assert!(node
+        .filter_matches_any(blob.clone(), vec![bystander.clone(), founder.clone()])
+        .unwrap());
+    // …and batch agrees with the single-address query.
+    assert_eq!(
+        node.filter_matches_any(blob.clone(), vec![founder.clone()])
+            .unwrap(),
+        node.filter_matches(blob.clone(), founder.clone()).unwrap()
+    );
+
+    // Empty watch list never matches; malformed filters error cleanly.
+    assert!(!node.filter_matches_any(blob.clone(), vec![]).unwrap());
+    assert!(node
+        .filter_matches_any(vec![0u8; 9], vec![founder])
+        .is_err());
+}

@@ -626,6 +626,23 @@ deterministic + adversarial tests per the conventions above.
     scripts. Verified byte-identical at landing.
   - Mirror decision resolved as recommended: `kovanica-ffi` now rides
     `sync-public-node.yml`; kovanica-cli stays excluded.
+- **Slice 7 — wallet UX layer (node + FFI)**:
+  - `Node::history_of(owner, max_blocks)` (`crates/kovanica-node/src/node.rs`):
+    reconstructs an address's history by scanning `dag.linearize()` in canonical
+    order while tracking outpoints owned by `owner`; spending a seen outpoint is
+    a `Sent` event, each owned output a `Received` event (a send's change back to
+    the sender appears as its own `Received`). `max_blocks` bounds the scan
+    window from the tip (`0` = all). Exports `WalletEvent`/`WalletDirection`.
+  - FFI (`crates/kovanica-ffi/src/light_node.rs`): `history_of(address,
+    max_blocks) -> Vec<HistoryEntry>` passthrough (hex ids, decimal-string
+    amounts), plus the batched watch helper `filter_matches_any(blob,
+    [addresses])` that decodes the Golomb-Rice filter once for multi-address
+    watch wallets; an empty list never matches and malformed blobs error cleanly.
+  - Fee-floor knob deferred per plan — soak hasn't shown congestion.
+  - Tests: `crates/kovanica-node/tests/wallet_history.rs` (canonical order,
+    spend-after-receive debit, window bound) and two ffi.rs cases
+    (`history_over_ffi_matches_utxo_semantics`,
+    `filter_matches_any_batches_watch_addresses`).
 
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.
