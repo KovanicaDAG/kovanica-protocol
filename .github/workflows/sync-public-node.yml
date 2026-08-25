@@ -5,8 +5,11 @@ name: sync-public-node
 # then ship prebuilt node binaries as a rolling release there so
 # scripts/install.sh can fetch one instead of compiling from source.
 #
-# Synced: crates/{kovanica-dag,kovanica-state,kovanica-node}, Cargo.lock,
-#         root Cargo.toml (filtered — see the sync step).
+# Synced: crates/{kovanica-dag,kovanica-state,kovanica-node,kovanica-ffi},
+#         Cargo.lock, root Cargo.toml (filtered — see the sync step).
+#         kovanica-ffi joins deliberately: the generated Kotlin/Swift
+#         bindings ARE the public mobile integration surface, and the crate
+#         carries no server secrets. kovanica-cli stays excluded.
 # Never touched: everything else in the mirror (README.md, TESTNET.md,
 #         JOIN.md, scripts/install.*, .github/, deploy/) — those live only there.
 #
@@ -67,7 +70,7 @@ jobs:
       - name: Sync workspace into the public mirror
         run: |
           set -euo pipefail
-          for c in kovanica-dag kovanica-state kovanica-node; do
+          for c in kovanica-dag kovanica-state kovanica-node kovanica-ffi; do
             mkdir -p "public/crates/$c"
             # --delete drops files removed upstream; data/ and target/ are
             # runtime-only and never published.

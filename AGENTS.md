@@ -607,6 +607,25 @@ deterministic + adversarial tests per the conventions above.
   - Lesson: single-payload-tx blocks prove as bare leaves — empty merkle path,
     84-byte proof blob. Tamper tests must hit the root region; path/index
     bytes don't exist there.
+- **Slice 6 — mobile packaging & CI drift guard**:
+  - `crates/kovanica-ffi/build-android.sh` (cargo-ndk, `--platform 24`,
+    arm64-v8a + x86_64 → `android/src/main/jniLibs/`) and
+    `build-apple.sh` (iOS/macOS staticlibs → one
+    `target/kovanica.xcframework` with the uniffi header + modulemap per
+    slice). The apple path required `"staticlib"` in the FFI crate-type list
+    (App Store forbids shipping our own dylibs on iOS); cdylib stays for
+    Android/JNA and the drift-guard build.
+  - `crates/kovanica-ffi/android/`: minimal Gradle library module (namespace
+    `uniffi.kovanica`, minSdk 24) compiling the committed `bindings/kotlin`
+    tree via `sourceSets`; sole runtime dep `net.java.dev.jna:jna:5.14.0@aar`;
+    consumer R8 rules included.
+  - Drift guard: `.github/workflows/bindings.yml` regenerates kotlin+swift
+    into a temp dir on every PR touching `crates/kovanica-ffi/**` and fails
+    on any difference (`diff -r -x README.md` — the hand-written READMEs sit
+    beside generated output and must not trip it), plus shellcheck of both
+    scripts. Verified byte-identical at landing.
+  - Mirror decision resolved as recommended: `kovanica-ffi` now rides
+    `sync-public-node.yml`; kovanica-cli stays excluded.
 
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.

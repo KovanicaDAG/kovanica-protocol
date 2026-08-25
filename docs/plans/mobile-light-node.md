@@ -212,31 +212,31 @@ rejected (mirror adversarial_spv.rs cases through FFI types).
 
 ---
 
-## Slice 6 — Mobile packaging & CI drift guard
+## Slice 6 — Mobile packaging & CI drift guard ✅ LANDED
 
-**Android**
-- `crates/kovanica-ffi/build-android.sh`: `cargo ndk -t arm64-v8a -t x86_64
-  build --release` (targets `aarch64-linux-android`, `x86_64-linux-android`;
-  document `rustup target add` + cargo-ndk install in script header).
-- Gradle module `bindings/kotlin/` (or `android/`): AAR packaging `kovanica.kt`
-  + `jniLibs/<abi>/libkovanica_ffi.so`. Keep generated kt committed.
+### Landed as built (deviations & additions)
 
-**iOS/macOS**
-- `build-apple.sh`: `cargo build --release -t aarch64-apple-ios -t
-  aarch64-apple-darwin` → `xcodebuild -create-xcframework` per target;
-  `kovanicaFFI.modulemap` already emitted by uniffi into `bindings/swift/`.
-
-**CI drift guard (`.github/workflows/bindings.yml`)**
-- Job: `cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate …` for both
-  languages into a temp dir → `diff -r` against committed `bindings/` → fail
-  on drift. Runs on every PR touching `crates/kovanica-ffi/**`.
-
-**Notes**
-- Don't vendor uniffi runtime pods/mavens yet; note the required
-  `uniffi` runtime dependency versions (0.32) in each package's README.
-- Public mirror pipeline currently excludes kovanica-cli deliberately — decide
-  there whether `kovanica-ffi` joins the mirror (recommend yes: bindings are
-  the public integration surface; no server secrets inside).
+- `build-android.sh`: cargo-ndk (`--platform 24`), default ABIs
+  `arm64-v8a x86_64` (mapping table includes armeabi-v7a for later); lays
+  `.so` files straight into `android/src/main/jniLibs/`.
+- `android/` Gradle module (library, namespace `uniffi.kovanica`, minSdk 24)
+  compiles the **committed** `bindings/kotlin` tree via `sourceSets` and
+  packages jniLibs into the AAR. Sole runtime dep:
+  `net.java.dev.jna:jna:5.14.0@aar`; consumer R8 rules ship alongside.
+- `build-apple.sh`: iOS arm64 + macOS arm64/x86_64 → one
+  `target/kovanica.xcframework` from **staticlibs**, with the uniffi-emitted
+  header + modulemap embedded per slice. Required adding `"staticlib"` to
+  the crate-type list (App Store rules forbid shipping our own dylibs on
+  iOS; cdylib stays for Android/JNA).
+- Drift guard (`.github/workflows/bindings.yml`): release-build the cdylib,
+  regenerate kotlin+swift into /tmp, `diff -r -x README.md` against the
+  committed trees (READMEs are hand-written neighbours, not bindgen output),
+  plus shellcheck of both scripts. Verified locally: generated output is
+  byte-identical today.
+- Mirror decision resolved as recommended: `kovanica-ffi` now rides
+  `sync-public-node.yml` (rsync loop + header note); kovanica-cli stays out.
+- Un-vendored as planned: no pods/mavens; runtime versions documented in
+  `bindings/{kotlin,swift}/README.md` (uniffi 0.32, JNA 5.14).
 
 ---
 

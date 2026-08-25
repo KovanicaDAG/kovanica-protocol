@@ -8,7 +8,10 @@ description = "UniFFI bindings: Kovanica light node (SPV-style sync + hybrid PoW
 
 [lib]
 name = "kovanica_ffi"
-crate-type = ["lib", "cdylib"]
+# staticlib: linked into the iOS/macOS xcframework (App Store forbids shipping
+# our own dylibs on iOS). cdylib: Android (JNA) + the bindgen/drift-guard
+# library build. "lib": the workspace test suite.
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
 kovanica-dag = { path = "../kovanica-dag" }
