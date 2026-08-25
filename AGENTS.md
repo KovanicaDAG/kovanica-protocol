@@ -709,13 +709,13 @@ the testnet teaches us it needs.
    `seed.kovanica.online:9000`, and rolling seed3 into the public `install.sh`
    default is tracked in TODO.md.
 
-4. **Mobile light-node slices 4–8** (◀ ACTIVE) — full plan with per-slice
-   implementation notes in `docs/plans/mobile-light-node.md`: imported signing
-   keys (`Node::send_with`, FFI `set_validator_key`/`send_from`), unbond
-   surface (ledger already enforces KVU1 tag + UNBOND_MATURITY=100; only
-   Node+FFI builders missing), retarget-enabled hybrid e2e, SPV/filter FFI
-   over the existing spv modules, Android/iOS packaging + binding-drift CI,
-   wallet UX helpers, docs/release.
+4. ~~**Mobile light-node slices 4–8**:~~ ✅ landed 2026-08-25 (workspace v0.2.0)
+   - Full plan with per-slice implementation notes: `docs/plans/mobile-light-node.md`
+   - Slice 4 custody & unbond FFI (`send_from`, `unbond`, FIFO maturity) ·
+     Slice 5 SPV/filter FFI (`KVLS`v1 light-sync blobs, merkle proofs,
+     Golomb-Rice filters) · Slice 6 Android/iOS packaging + bindings
+     drift-guard CI · Slice 7 wallet UX (`history_of`, batched watch filters) ·
+     Slice 8 docs & release (README light-node guide, hard-won lessons).
 
 3. ~~**Observability & reliability** — production readiness:~~ ✅
    - `kovanica-node::metrics`: real Prometheus recording (metrics 0.22, unified
