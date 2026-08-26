@@ -1149,16 +1149,39 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
     respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found")
 }
 
-fn estimate_fee(node: &Node, _amount: u64) -> Result<u64, String> {
+fn estimate_fee(node: &Node, _amount: u64) -> Result<(u64, u64, u64), String> {
+    let mut block_tx_count = 0;
+    let mut blocks_scanned = 0;
+    
+    if let Ok(mut current) = node.selected_tip() {
+        for _ in 0..10 {
+            if let Some(record) = node.block_record(&current) {
+                block_tx_count += record.txs.len();
+                blocks_scanned += 1;
+                if let Some(parent) = record.parents.first() {
+                    current = *parent;
+                } else {
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    let min = node.min_fee();
+    // Assuming > 20 txs per block average is congested for this testnet
+    let is_congested = blocks_scanned > 0 && (block_tx_count as f64 / blocks_scanned as f64) > 20.0;
+    
     let pending = node.pending_txs();
     if pending.is_empty() {
-        return Ok(node.min_fee());
+        let base = if is_congested { min * 2 } else { min };
+        return Ok((base, std::cmp::max(min + 1, base * 2), std::cmp::max(min + 2, base * 3)));
     }
 
     let mut fees: Vec<u64> = pending
         .iter()
         .filter_map(|t| {
-            // Approximate fee from transaction
             if let Ok(ledger) = node.ledger() {
                 let utxo = ledger.ledger_state();
                 let mut sum_in = 0u64;
@@ -1180,17 +1203,28 @@ fn estimate_fee(node: &Node, _amount: u64) -> Result<u64, String> {
         .collect();
 
     if fees.is_empty() {
-        return Ok(node.min_fee());
+        let base = if is_congested { min * 2 } else { min };
+        return Ok((base, std::cmp::max(min + 1, base * 2), std::cmp::max(min + 2, base * 3)));
     }
 
     fees.sort();
-    let _median = fees[fees.len() / 2];
+    let p50_idx = (fees.len() as f64 * 0.5).floor() as usize;
     let p90_idx = (fees.len() as f64 * 0.9).floor() as usize;
+    
+    let p50 = fees[p50_idx.min(fees.len() - 1)];
     let p90 = fees[p90_idx.min(fees.len() - 1)];
 
-    // Use p90 fee for faster confirmation, minimum at node's min_fee
-    let base = std::cmp::max(node.min_fee(), p90);
-    Ok(base)
+    let mut slow = std::cmp::max(min, p50);
+    let mut normal = std::cmp::max(min, p90);
+    let mut fast = std::cmp::max(min, (p90 as f64 * 1.2) as u64);
+
+    if is_congested {
+        slow = std::cmp::max(slow, min * 2);
+        normal = std::cmp::max(normal, min * 3);
+        fast = std::cmp::max(fast, min * 5);
+    }
+
+    Ok((slow, normal, fast))
 }
 
 fn dispatch(
@@ -1337,8 +1371,8 @@ fn dispatch(
         "fee_estimate" => {
             let amount = parse_u64(q, "amount", 0)?;
             let n = app.mesh.node(&node).ok_or("unknown node")?;
-            let fee = estimate_fee(n, amount)?;
-            return Ok(format!("{{\"ok\":true,\"fee\":{}}}", fee));
+            let (slow, normal, fast) = estimate_fee(n, amount)?;
+            return Ok(format!("{{\"ok\":true,\"slow\":{},\"normal\":{},\"fast\":{}}}", slow, normal, fast));
         }
         other => return Err(format!("unknown action {other}")),
     }
