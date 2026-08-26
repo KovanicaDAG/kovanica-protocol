@@ -686,7 +686,7 @@ impl Mesh {
         self.enqueue(from, to, Envelope::Hello { advertised });
     }
 
-    fn announce_block(&mut self, from: &str, record: BlockRecord) {
+    pub fn announce_block(&mut self, from: &str, record: BlockRecord) {
         let id = record_id(&record);
         self.seen_blocks
             .entry(from.to_string())

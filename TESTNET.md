@@ -8,9 +8,9 @@ Public BlockDAG testnet. Native token **KVNC** (8 decimals).
 | Wallet | https://wallet.kovanica.online |
 | Node source | https://github.com/KovanicaDAG/kovanica-node |
 | Network | `kovanica-testnet` |
-| Premine | 50 KVNC (founder) |
-| Subsidy cap | 50 KVNC / block, halves every 1000 blocks |
-| Min fee | 0.0001 KVNC at genesis |
+| Premine | 200 KVNC (founder) |
+| Subsidy cap | 200 KVNC / block, halves every 500000 blocks |
+| Min fee | 0.0004 KVNC at genesis |
 | k | 3 (GHOSTDAG) |
 | PoW | on (`KOVANICA_POW=1`) |
 | P2P | **TCP only** `KOVANICA_LISTEN` (default `0.0.0.0:9000`) |

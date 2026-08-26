@@ -208,6 +208,84 @@ pub struct MerkleBlock {
     pub matched_tx: Option<Transaction>,
 }
 
+/// A candidate block template for external miners/stratum pools.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MiningTemplate {
+    /// Current tips of the DAG that will be the parents of the new block.
+    pub parents: Vec<BlockId>,
+    /// Proof-of-work target difficulty weight.
+    pub work: u128,
+    /// Candidate timestamp in milliseconds (monotonically advanced beyond parents).
+    pub timestamp_ms: u64,
+    /// Canonical binary block payload encoded as lowercase hexadecimal string.
+    pub payload: String,
+    /// Transactions included in the candidate block (coinbase first, then selected mempool txs).
+    pub transactions: Vec<Transaction>,
+    /// Address receiving the coinbase subsidy + fees, if configured.
+    pub miner: Option<Address>,
+    /// Block subsidy at current height in atoms.
+    pub subsidy: u64,
+    /// Total collected transaction fees in atoms.
+    pub fees: u64,
+}
+
+impl MiningTemplate {
+    /// Serialize this mining template to a JSON string matching the API schema.
+    pub fn to_json(&self) -> String {
+        let parents_json = format!(
+            "[{}]",
+            self.parents
+                .iter()
+                .map(|p| format!("\"{}\"", p.to_hex()))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let miner_json = match self.miner {
+            Some(m) => format!("\"{}\"", m.to_hex()),
+            None => "null".to_string(),
+        };
+        let txs_json = format!(
+            "[{}]",
+            self.transactions
+                .iter()
+                .map(|tx| {
+                    let outputs_json = format!(
+                        "[{}]",
+                        tx.outputs()
+                            .iter()
+                            .map(|o| format!(
+                                "{{\"value\":{},\"owner\":\"{}\"}}",
+                                o.value,
+                                o.owner.to_hex()
+                            ))
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
+                    format!(
+                        "{{\"id\":\"{}\",\"coinbase\":{},\"inputs\":{},\"outputs\":{}}}",
+                        tx.id(),
+                        tx.is_coinbase(),
+                        tx.inputs().len(),
+                        outputs_json
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        format!(
+            "{{\"ok\":true,\"parents\":{},\"work\":{},\"timestamp_ms\":{},\"payload\":\"{}\",\"transactions\":{},\"miner\":{},\"subsidy\":{},\"fees\":{}}}",
+            parents_json,
+            self.work,
+            self.timestamp_ms,
+            self.payload,
+            txs_json,
+            miner_json,
+            self.subsidy,
+            self.fees,
+        )
+    }
+}
+
 /// A block header: the block's consensus fields plus a commitment to its
 /// payload, but without the payload itself. Headers are **untrusted inventory**
 /// — a peer advertises which blocks it has by sending headers; the receiver
@@ -253,8 +331,8 @@ pub struct Node {
 }
 
 /// Blocks per subsidy-halving era. Issuance is `cap >> (height / HALVING_ERA)`.
-pub const HALVING_ERA: u64 = 1_000;
-/// Floor: `max(1, subsidy / 500_000)`. On the 50 KVNC testnet that is 0.0001 KVNC.
+pub const HALVING_ERA: u64 = 500_000;
+/// Floor: `max(1, subsidy / 500_000)`. On the 200 KVNC testnet that is 0.0004 KVNC.
 pub const MIN_FEE_DIVISOR: u64 = 500_000;
 
 impl Default for Node {
@@ -317,7 +395,7 @@ impl Node {
     /// keeps them monotone even if the clock is behind or a parent is ahead, so
     /// they still satisfy the difficulty layer's "not older than any parent" rule
     /// (see [`kovanica_dag::Dag::set_difficulty`]).
-    fn next_timestamp(&self, dag: &Dag, parents: &[BlockId]) -> u64 {
+    pub fn next_timestamp(&self, dag: &Dag, parents: &[BlockId]) -> u64 {
         let floor = parents
             .iter()
             .filter_map(|p| dag.block(p).map(|b| b.timestamp_ms()))
@@ -1081,9 +1159,57 @@ impl Node {
         Ok(id)
     }
 
+    /// Build a candidate block template on current DAG tips with valid mempool
+    /// transactions and coinbase issuance, without searching for a nonce.
+    pub fn mining_template(&self) -> Result<MiningTemplate, NodeError> {
+        self.mining_template_for(self.miner)
+    }
+
+    /// Build a candidate block template paying coinbase to the specified miner.
+    pub fn mining_template_for(&self, miner: Option<Address>) -> Result<MiningTemplate, NodeError> {
+        let ledger = self.ledger.as_ref().ok_or(NodeError::NotInitialized)?;
+        let subsidy = ledger.subsidy();
+        let mut working = ledger.ledger_state();
+        let original = ledger.ledger_state();
+
+        let mut selected = Vec::new();
+        for tx in self.mempool.ordered_pending() {
+            if apply_block(&mut working, std::slice::from_ref(&tx), subsidy).is_ok() {
+                selected.push(tx);
+            }
+        }
+        let fees: u64 = selected.iter().map(|tx| fee_of(&original, tx)).sum();
+
+        let parents = ledger.dag().tips();
+        let timestamp_ms = self.next_timestamp(ledger.dag(), &parents);
+        let work = ledger.dag().next_work_target(&parents).unwrap_or(1);
+
+        let mut block_txs = self.issuance_txs_for(miner, timestamp_ms, fees);
+        block_txs.extend(selected);
+
+        let payload_bytes = encode_block_payload(&block_txs);
+        let payload = hex::encode(payload_bytes);
+
+        Ok(MiningTemplate {
+            parents,
+            work,
+            timestamp_ms,
+            payload,
+            transactions: block_txs,
+            miner,
+            subsidy,
+            fees,
+        })
+    }
+
     /// Coinbase claiming subsidy + `extra_fees` for `miner`. Empty if nothing to mint.
-    fn issuance_txs(&self, timestamp_ms: u64, extra_fees: u64) -> Vec<Transaction> {
-        let Some(miner) = self.miner else {
+    pub fn issuance_txs_for(
+        &self,
+        miner: Option<Address>,
+        timestamp_ms: u64,
+        extra_fees: u64,
+    ) -> Vec<Transaction> {
+        let Some(miner) = miner else {
             return Vec::new();
         };
         let subsidy = self.issuance().unwrap_or(0);
@@ -1095,6 +1221,11 @@ impl Node {
             vec![TxOutput::new(total, miner)],
             timestamp_ms.to_le_bytes().to_vec(),
         )]
+    }
+
+    /// Coinbase claiming subsidy + `extra_fees` for `self.miner`. Empty if nothing to mint.
+    fn issuance_txs(&self, timestamp_ms: u64, extra_fees: u64) -> Vec<Transaction> {
+        self.issuance_txs_for(self.miner, timestamp_ms, extra_fees)
     }
 
     /// A pending mempool transaction by id, if present.
@@ -1263,7 +1394,7 @@ impl Node {
         let txs = decode_block_payload(block.payload()).ok()?;
         let mut addrs: Vec<[u8; 32]> = txs
             .iter()
-            .flat_map(|tx| tx.outputs().iter().map(|o| *o.owner.as_bytes()))
+            .flat_map(|tx| tx.outputs().iter().map(|o| *o.owner.payload()))
             .collect();
         addrs.sort_unstable();
         addrs.dedup();
@@ -1899,5 +2030,70 @@ mod tests {
         // Non-existent block
         let unknown_block = BlockId::from_bytes([99u8; 32]);
         assert!(node.merkle_block(&unknown_block, &sent.tx).is_err());
+    }
+
+    #[test]
+    fn test_mining_template_uninitialized() {
+        let node = Node::new();
+        assert!(matches!(
+            node.mining_template(),
+            Err(NodeError::NotInitialized)
+        ));
+    }
+
+    #[test]
+    fn test_mining_template_genesis_and_coinbase() {
+        let mut node = Node::new();
+        let miner_kp = KeyPair::from_u64(1);
+        node.set_miner(miner_kp.address());
+        let (genesis, _) = node.genesis(3, 1000, 1000, 1).unwrap();
+
+        let template = node.mining_template().unwrap();
+        assert_eq!(template.parents, vec![genesis]);
+        assert!(template.work >= 1);
+        assert!(template.timestamp_ms > 0);
+        assert_eq!(template.subsidy, 1000);
+        assert_eq!(template.fees, 0);
+        assert_eq!(template.miner, Some(miner_kp.address()));
+        assert_eq!(template.transactions.len(), 1);
+        assert!(template.transactions[0].is_coinbase());
+
+        let decoded_txs =
+            decode_block_payload(&hex::decode(&template.payload).unwrap()).unwrap();
+        assert_eq!(decoded_txs, template.transactions);
+
+        let json = template.to_json();
+        assert!(json.contains("\"ok\":true"));
+        assert!(json.contains(&genesis.to_hex()));
+        assert!(json.contains(&template.payload));
+        assert!(json.contains(&miner_kp.address().to_hex()));
+        assert!(json.contains("\"subsidy\":1000"));
+    }
+
+    #[test]
+    fn test_mining_template_with_mempool_tx_and_fees() {
+        let mut node = Node::new();
+        let miner_kp = KeyPair::from_u64(1);
+        node.set_miner(miner_kp.address());
+        node.genesis(3, 1000, 1000, 1).unwrap();
+
+        // Submit a spend to the mempool
+        node.pool(1, 100, 2).unwrap();
+        assert_eq!(node.mempool.len_pending(), 1);
+
+        let template = node.mining_template().unwrap();
+        assert_eq!(template.transactions.len(), 2);
+        assert!(template.transactions[0].is_coinbase());
+        assert!(!template.transactions[1].is_coinbase());
+        assert!(template.fees >= node.min_fee());
+
+        // Custom miner check
+        let custom_miner = KeyPair::from_u64(99).address();
+        let custom_template = node.mining_template_for(Some(custom_miner)).unwrap();
+        assert_eq!(custom_template.miner, Some(custom_miner));
+        assert_eq!(
+            custom_template.transactions[0].outputs()[0].owner,
+            custom_miner
+        );
     }
 }

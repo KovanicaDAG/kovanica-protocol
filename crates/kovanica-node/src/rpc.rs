@@ -201,14 +201,10 @@ fn u16_arg(s: &str) -> Result<u16, String> {
         .map_err(|_| format!("'{s}' is not a small number"))
 }
 
-/// A balance target is either a 64-char hex address or an actor seed.
+/// A balance target is either an address (Base58, versioned/legacy hex) or an actor seed.
 fn parse_target(token: &str) -> Result<Address, String> {
-    if token.len() == 64 {
-        let bytes = hex::decode(token).map_err(|_| format!("'{token}' is not hex"))?;
-        let arr: [u8; 32] = bytes
-            .try_into()
-            .map_err(|_| "address must be 32 bytes".to_string())?;
-        Ok(Address::from_bytes(arr))
+    if let Ok(addr) = Address::parse(token) {
+        Ok(addr)
     } else {
         Ok(Node::address(u64_arg(token)?))
     }

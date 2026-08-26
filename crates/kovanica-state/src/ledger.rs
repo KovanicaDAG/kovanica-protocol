@@ -49,7 +49,11 @@ use kovanica_dag::{
 };
 
 use crate::keys::{verify, Address};
+use crate::multisig::{verify_threshold_signatures, MultisigScript};
 use crate::stake::{is_unbond_tag, parse_bond_tag, StakeError, StakeState};
+
+/// Default blue-score threshold for RFC-001 multisig activation.
+pub const MULTISIG_ACTIVATION_SCORE: u64 = 0;
 
 /// Halving schedule for block subsidy.
 ///
@@ -84,7 +88,7 @@ impl HalvingSchedule {
 }
 
 /// Default halving era: 1000 blocks.
-pub const DEFAULT_HALVING_ERA: u64 = 1_000;
+pub const DEFAULT_HALVING_ERA: u64 = 500_000;
 
 /// The VRF bundle a bonded validator attaches to a staked block: the public key
 /// the bonded stake is registered under, the ECVRF proof over the block's
@@ -170,6 +174,37 @@ pub enum LedgerError {
     /// The transaction violated a stake-registry rule (bond shape/ownership,
     /// frozen-input spend, or immature/non-frozen unbond).
     Stake { tx: TxId, reason: StakeError },
+
+    // Multisig & Witness Upgrade Variants
+    /// Witness stack does not match address requirements (e.g. count != 1 for V0 or != 1+M for V1)
+    InvalidWitnessCount {
+        tx: TxId,
+        input: usize,
+        expected: usize,
+        actual: usize,
+    },
+    /// Script hash does not match the P2SH address hash
+    ScriptHashMismatch { tx: TxId, input: usize },
+    /// Malformed Redeem Script (invalid M/N ratio, length mismatch, or M=0)
+    InvalidRedeemScript {
+        tx: TxId,
+        input: usize,
+        reason: &'static str,
+    },
+    /// Witness item has invalid signature length
+    BadSignatureSize {
+        tx: TxId,
+        input: usize,
+        len: usize,
+    },
+    /// Duplicate signature found in witness stack
+    DuplicateSignature { tx: TxId, input: usize },
+    /// Multisig transaction submitted prior to consensus activation blue score
+    PreActivationMultisig {
+        tx: TxId,
+        blue_score: u64,
+        activation_score: u64,
+    },
 }
 
 impl core::fmt::Display for LedgerError {
@@ -201,6 +236,38 @@ impl core::fmt::Display for LedgerError {
             }
             LedgerError::Payload(e) => write!(f, "payload decode: {e}"),
             LedgerError::Stake { tx, reason } => write!(f, "stake rule violated in {tx}: {reason}"),
+            LedgerError::InvalidWitnessCount {
+                tx,
+                input,
+                expected,
+                actual,
+            } => write!(
+                f,
+                "invalid witness count on input {input} of {tx}: expected {expected}, got {actual}"
+            ),
+            LedgerError::ScriptHashMismatch { tx, input } => {
+                write!(f, "script hash mismatch on input {input} of {tx}")
+            }
+            LedgerError::InvalidRedeemScript { tx, input, reason } => {
+                write!(f, "invalid redeem script on input {input} of {tx}: {reason}")
+            }
+            LedgerError::BadSignatureSize { tx, input, len } => {
+                write!(
+                    f,
+                    "bad signature size {len} (expected 64) on input {input} of {tx}"
+                )
+            }
+            LedgerError::DuplicateSignature { tx, input } => {
+                write!(f, "duplicate signature in witness on input {input} of {tx}")
+            }
+            LedgerError::PreActivationMultisig {
+                tx,
+                blue_score,
+                activation_score,
+            } => write!(
+                f,
+                "multisig tx {tx} rejected before activation: blue score {blue_score} <= activation {activation_score}"
+            ),
         }
     }
 }
@@ -226,12 +293,29 @@ pub struct BlockSummary {
 /// Stake rules are not enforced by this function — use
 /// [`apply_block_with_stake`] when the block's view has a
 /// [`StakeState`] (i.e. always, through [`Ledger`]).
+/// Apply one block's transactions to `utxo`, atomically.
+///
+/// `txs` is the block's transaction list; if the first has no inputs it is the
+/// coinbase. `subsidy` is the issuance allowance for this block. Returns a
+/// [`BlockSummary`] on success. On any error, `utxo` is left exactly as it was.
+///
+/// Stake rules are not enforced by this function — use
+/// [`apply_block_with_stake`] when the block's view has a
+/// [`StakeState`] (i.e. always, through [`Ledger`]).
 pub fn apply_block(
     utxo: &mut UtxoSet,
     txs: &[Transaction],
     subsidy: u64,
 ) -> Result<BlockSummary, LedgerError> {
-    apply_block_inner(utxo, None, txs, subsidy, 0)
+    apply_block_inner(
+        utxo,
+        None,
+        txs,
+        subsidy,
+        0,
+        u64::MAX,
+        MULTISIG_ACTIVATION_SCORE,
+    )
 }
 
 /// Like [`apply_block`], but additionally enforces the **stake registry**
@@ -252,7 +336,15 @@ pub fn apply_block_with_stake(
     subsidy: u64,
     height: u64,
 ) -> Result<BlockSummary, LedgerError> {
-    apply_block_inner(utxo, Some(stake), txs, subsidy, height)
+    apply_block_inner(
+        utxo,
+        Some(stake),
+        txs,
+        subsidy,
+        height,
+        u64::MAX,
+        MULTISIG_ACTIVATION_SCORE,
+    )
 }
 
 /// Shared implementation behind [`apply_block`] / [`apply_block_with_stake`].
@@ -262,6 +354,8 @@ fn apply_block_inner(
     txs: &[Transaction],
     subsidy: u64,
     height: u64,
+    blue_score: u64,
+    activation_score: u64,
 ) -> Result<BlockSummary, LedgerError> {
     // Stage all changes on a copy; only commit if the whole block validates, so
     // a rejected block has no effect (atomicity).
@@ -278,7 +372,14 @@ fn apply_block_inner(
             coinbase = Some(tx);
             continue; // applied last, after fees are known
         }
-        let fee = apply_regular(&mut staging, tx, stake.as_deref_mut(), height)?;
+        let fee = apply_regular(
+            &mut staging,
+            tx,
+            stake.as_deref_mut(),
+            height,
+            blue_score,
+            activation_score,
+        )?;
         total_fees = total_fees
             .checked_add(fee)
             .ok_or(LedgerError::ValueOverflow)?;
@@ -288,7 +389,7 @@ fn apply_block_inner(
         .checked_add(total_fees)
         .ok_or(LedgerError::ValueOverflow)?;
     let minted = match coinbase {
-        Some(cb) => apply_coinbase(&mut staging, cb, allowed)?,
+        Some(cb) => apply_coinbase(&mut staging, cb, allowed, blue_score, activation_score)?,
         None => 0,
     };
 
@@ -308,9 +409,24 @@ fn apply_regular(
     tx: &Transaction,
     stake: Option<&mut StakeState>,
     height: u64,
+    blue_score: u64,
+    activation_score: u64,
 ) -> Result<u64, LedgerError> {
     if tx.inputs().is_empty() || tx.outputs().is_empty() {
         return Err(LedgerError::EmptyTransaction(tx.id()));
+    }
+
+    // Pre-activation gating on outputs:
+    if blue_score <= activation_score {
+        for output in tx.outputs() {
+            if output.owner.is_p2sh() {
+                return Err(LedgerError::PreActivationMultisig {
+                    tx: tx.id(),
+                    blue_score,
+                    activation_score,
+                });
+            }
+        }
     }
 
     // Tag-driven stake roles. A tag that matches neither convention is an
@@ -333,12 +449,111 @@ fn apply_regular(
         let prev = staging
             .get(&input.outpoint)
             .ok_or(LedgerError::MissingInput(input.outpoint))?;
-        if !verify(&prev.owner, &sighash, &input.signature.to_bytes()) {
+
+        // Pre-activation gating on spends:
+        if blue_score <= activation_score && (prev.owner.is_p2sh() || input.witness.len() > 1) {
+            return Err(LedgerError::PreActivationMultisig {
+                tx: tx.id(),
+                blue_score,
+                activation_score,
+            });
+        }
+
+        // Branch on address version:
+        if prev.owner.is_p2pk() {
+            if input.witness.len() != 1 {
+                return Err(LedgerError::InvalidWitnessCount {
+                    tx: tx.id(),
+                    input: i,
+                    expected: 1,
+                    actual: input.witness.len(),
+                });
+            }
+            let sig_bytes = &input.witness[0];
+            if sig_bytes.len() != 64 {
+                return Err(LedgerError::BadSignatureSize {
+                    tx: tx.id(),
+                    input: i,
+                    len: sig_bytes.len(),
+                });
+            }
+            let mut sig_arr = [0u8; 64];
+            sig_arr.copy_from_slice(sig_bytes);
+            if !verify(&prev.owner, &sighash, &sig_arr) {
+                return Err(LedgerError::BadSignature {
+                    tx: tx.id(),
+                    input: i,
+                });
+            }
+        } else if prev.owner.is_p2sh() {
+            if input.witness.is_empty() {
+                return Err(LedgerError::InvalidWitnessCount {
+                    tx: tx.id(),
+                    input: i,
+                    expected: 1,
+                    actual: 0,
+                });
+            }
+            let redeem_script_bytes = &input.witness[0];
+            let script_hash = *blake3::hash(redeem_script_bytes).as_bytes();
+            if script_hash != *prev.owner.payload() {
+                return Err(LedgerError::ScriptHashMismatch {
+                    tx: tx.id(),
+                    input: i,
+                });
+            }
+            let script = MultisigScript::parse(redeem_script_bytes).map_err(|reason| {
+                LedgerError::InvalidRedeemScript {
+                    tx: tx.id(),
+                    input: i,
+                    reason,
+                }
+            })?;
+            let expected_witness_count = 1 + script.m as usize;
+            if input.witness.len() != expected_witness_count {
+                return Err(LedgerError::InvalidWitnessCount {
+                    tx: tx.id(),
+                    input: i,
+                    expected: expected_witness_count,
+                    actual: input.witness.len(),
+                });
+            }
+            let signatures = &input.witness[1..];
+            for sig in signatures {
+                if sig.len() != 64 {
+                    return Err(LedgerError::BadSignatureSize {
+                        tx: tx.id(),
+                        input: i,
+                        len: sig.len(),
+                    });
+                }
+            }
+            verify_threshold_signatures(&script, signatures, &sighash).map_err(|err_str| {
+                if err_str == "duplicate signature in witness" {
+                    LedgerError::DuplicateSignature {
+                        tx: tx.id(),
+                        input: i,
+                    }
+                } else if err_str == "signature must be 64 bytes" {
+                    LedgerError::BadSignatureSize {
+                        tx: tx.id(),
+                        input: i,
+                        len: 0,
+                    }
+                } else {
+                    LedgerError::BadSignature {
+                        tx: tx.id(),
+                        input: i,
+                    }
+                }
+            })?;
+        } else {
             return Err(LedgerError::BadSignature {
                 tx: tx.id(),
                 input: i,
             });
         }
+
         if let Some(st) = stake_view {
             // Frozen value moves only through an unbond transaction; an unbond
             // may move *only* frozen value (checked after validation below).
@@ -436,7 +651,20 @@ fn apply_coinbase(
     staging: &mut UtxoSet,
     cb: &Transaction,
     allowed: u64,
+    blue_score: u64,
+    activation_score: u64,
 ) -> Result<u64, LedgerError> {
+    if blue_score <= activation_score {
+        for output in cb.outputs() {
+            if output.owner.is_p2sh() {
+                return Err(LedgerError::PreActivationMultisig {
+                    tx: cb.id(),
+                    blue_score,
+                    activation_score,
+                });
+            }
+        }
+    }
     let mut claimed: u64 = 0;
     for output in cb.outputs() {
         if output.value == 0 {
@@ -493,8 +721,17 @@ pub fn apply_dag(dag: &Dag, subsidy: u64) -> LedgerRun {
             .block(&id)
             .expect("linearized id is present in the DAG")
             .payload();
+        let blue_score = dag.ghostdag(&id).map_or(0, |g| g.blue_score);
         match decode_block_payload(payload) {
-            Ok(txs) => match apply_block(&mut run.utxo, &txs, subsidy) {
+            Ok(txs) => match apply_block_inner(
+                &mut run.utxo,
+                None,
+                &txs,
+                subsidy,
+                0,
+                blue_score,
+                MULTISIG_ACTIVATION_SCORE,
+            ) {
                 Ok(_) => run.accepted.push(id),
                 Err(e) => run.rejected.push((id, e)),
             },
@@ -715,6 +952,8 @@ pub struct Ledger {
     staked_seen: HashMap<([u8; 32], BlockId), BlockId>,
     /// Block heights: `heights[&b]` is the height of block `b` in the selected chain.
     heights: HashMap<BlockId, u64>,
+    /// Blue score activation threshold for Version 0x01 multisig transactions.
+    multisig_activation_score: u64,
 }
 
 impl Ledger {
@@ -754,7 +993,18 @@ impl Ledger {
             hybrid: None,
             staked_seen: HashMap::new(),
             heights,
+            multisig_activation_score: MULTISIG_ACTIVATION_SCORE,
         })
+    }
+
+    /// Set the blue-score activation threshold for Version 0x01 multisig transactions.
+    pub fn set_multisig_activation_score(&mut self, score: u64) {
+        self.multisig_activation_score = score;
+    }
+
+    /// The blue-score activation threshold for Version 0x01 multisig transactions.
+    pub fn multisig_activation_score(&self) -> u64 {
+        self.multisig_activation_score
     }
 
     /// Like [`Ledger::new`], but with a finite finality depth: blocks more than
@@ -1100,6 +1350,7 @@ impl Ledger {
 
         let parent_height = self.heights.get(&sp).copied().unwrap_or(0);
         let new_height = parent_height + 1;
+        let block_blue_score = parent_score + 1;
 
         let mut state = self
             .states
@@ -1109,6 +1360,7 @@ impl Ledger {
         let mut stake = self.stakes.get(&sp).cloned().unwrap_or_default();
         for merged in &preview.mergeset {
             let merged_height = self.heights.get(merged).copied().unwrap_or(0);
+            let merged_blue_score = self.dag.ghostdag(merged).map_or(0, |g| g.blue_score);
             let payload = self
                 .dag
                 .block(merged)
@@ -1118,24 +1370,28 @@ impl Ledger {
                 // A merged block that conflicts in this view simply does not
                 // apply — its transactions were valid in their own view, not
                 // necessarily here. This mirrors apply_dag's per-block reject.
-                let _ = apply_block_with_stake(
+                let _ = apply_block_inner(
                     &mut state,
-                    &mut stake,
+                    Some(&mut stake),
                     &merged_txs,
                     self.schedule.subsidy_at(merged_height),
                     merged_height,
+                    merged_blue_score,
+                    self.multisig_activation_score,
                 );
             }
         }
 
         // Stateful validation: the block's own transactions must be valid against
         // its view pre-state. Failure rejects the block before it enters the DAG.
-        apply_block_with_stake(
+        apply_block_inner(
             &mut state,
-            &mut stake,
+            Some(&mut stake),
             txs,
             self.schedule.subsidy_at(new_height),
             new_height,
+            block_blue_score,
+            self.multisig_activation_score,
         )?;
 
         // Commit: add to the DAG (structural checks run here) and store the state.
@@ -1635,6 +1891,7 @@ impl Ledger {
             hybrid: None,
             staked_seen: HashMap::new(),
             heights: HashMap::new(),
+            multisig_activation_score: MULTISIG_ACTIVATION_SCORE,
         };
         // Apply checkpoint state as the ledger's current state and the checkpoint block's view state.
         ledger

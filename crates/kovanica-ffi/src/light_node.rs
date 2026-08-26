@@ -593,7 +593,7 @@ impl LightNode {
         let filter = decode_filter(&filter_blob)?;
         let addr = kovanica_state::Address::parse(&address)
             .map_err(|e| invalid(format!("bad address: {e}")))?;
-        Ok(filter.contains(addr.as_bytes()))
+        Ok(filter.contains(addr.payload()))
     }
 
     /// Batch form of [`Self::filter_matches`]: does the filter match ANY of
@@ -611,7 +611,7 @@ impl LightNode {
                 kovanica_state::Address::parse(a).map_err(|e| invalid(format!("bad address: {e}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(addrs.iter().any(|addr| filter.contains(addr.as_bytes())))
+        Ok(addrs.iter().any(|addr| filter.contains(addr.payload())))
     }
 
     /// Reconstruct the transaction history of `address` by scanning stored
@@ -711,7 +711,7 @@ impl LightNode {
         Ok(light
             .headers
             .get(&id)
-            .map(|e| e.filter.contains(addr.as_bytes())))
+            .map(|e| e.filter.contains(addr.payload())))
     }
 
     /// A Merkle-inclusion proof for `tx_id` inside block `block_id_hex`,

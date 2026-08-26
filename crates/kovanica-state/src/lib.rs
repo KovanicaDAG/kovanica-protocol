@@ -71,6 +71,7 @@
 
 pub mod keys;
 pub mod ledger;
+pub mod multisig;
 pub mod spv;
 pub mod stake;
 pub mod store;
@@ -82,7 +83,10 @@ pub use keys::{verify, Address, KeyPair};
 pub use ledger::{
     apply_block, apply_dag, BlockSummary, HalvingSchedule, HybridConfig, Ledger,
     LedgerCheckpointError, LedgerError, LedgerInsertError, LedgerRun, LedgerSnapshotError,
-    StakedVrf, DEFAULT_HALVING_ERA,
+    StakedVrf, DEFAULT_HALVING_ERA, MULTISIG_ACTIVATION_SCORE,
+};
+pub use multisig::{
+    verify_threshold_signatures, MultisigScript, MAX_MULTISIG_KEYS,
 };
 pub use spv::{
     generate_merkle_proof, merkle_root, BlockFilter, BlockHeader, MerkleProof, SpvClient, SpvError,

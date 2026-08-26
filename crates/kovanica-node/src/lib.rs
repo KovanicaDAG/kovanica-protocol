@@ -77,8 +77,8 @@ pub use net::{
     exchange_full_dump, serve_headers_first, sync_headers_first, NetError, SyncStats,
 };
 pub use node::{
-    BlockHeader, BlockRecord, MerkleBlock, Node, NodeError, Prepared, Sent, WalletDirection,
-    WalletEvent,
+    BlockHeader, BlockRecord, MerkleBlock, MiningTemplate, Node, NodeError, Prepared, Sent,
+    WalletDirection, WalletEvent,
 };
 pub use p2p::{GossipEvent, GossipKind, Mesh, P2pError};
 pub use p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
