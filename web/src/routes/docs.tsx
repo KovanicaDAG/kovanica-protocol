@@ -38,7 +38,7 @@ const ROWS = [
   { method: "POST", path: "/api/submit", note: "queue signed tx" },
   { method: "POST", path: "/api/produce", note: "pack mempool" },
   { method: "POST", path: "/api/mine", note: "preview coinbase block" },
-  { method: "POST", path: "/api/faucet", note: "preview mint; live disabled" },
+  { method: "POST", path: "/api/faucet", note: "testnet open faucet" },
   { method: "POST", path: "/api/origin", note: "pulse a country" },
   { method: "GET", path: "/api/spec", note: "this document, text/plain" },
 ];
@@ -63,7 +63,7 @@ function DocsBody() {
           <p className="font-mono text-[10px] tracking-brand text-subtle uppercase">{NETWORK_ID}</p>
           <h1 className="font-display text-3xl tracking-tight text-fg md:text-4xl">Technical details</h1>
           <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted">
-            HTTP API that matches the public explorer. Preview is this app. Live proxies{" "}
+            HTTP API that matches the public testnet node. This app proxies{" "}
             <a className="text-fg underline-offset-2 hover:underline" href={LIVE_EXPLORER}>
               explorer.kovanica.online
             </a>
@@ -73,22 +73,14 @@ function DocsBody() {
         <SourceSwitch />
       </header>
 
-      <section className="grid gap-px overflow-hidden rounded-xl bg-border sm:grid-cols-2">
+      <section className="overflow-hidden rounded-xl border border-border">
         <StatusCard
-          title="Preview node"
-          ok
-          lines={[
-            boot ? `${boot.blocks} blocks · tip ${boot.tip.slice(0, 8)}` : "loading…",
-            "faucet on · operator on · PoW off",
-          ]}
-        />
-        <StatusCard
-          title="Live testnet"
+          title="Testnet"
           ok={up?.ok === true}
           lines={
             up?.ok
               ? [`${up.head.blocks} blocks · ${up.head.network}`, `genesis ${up.head.genesis.slice(0, 8)}`]
-              : [up?.error ?? err ?? "probing…", "CORS closed — we proxy it"]
+              : [up?.error ?? err ?? "probing…", "P2P :9000 · kovanica-testnet"]
           }
         />
       </section>
@@ -108,7 +100,7 @@ function DocsBody() {
       <section>
         <h2 className="font-display text-xl tracking-tight text-fg">Endpoints</h2>
         <p className="mt-1 text-sm text-muted">
-          Same paths as the live explorer. Add <code className="font-mono text-fg">?source=live</code> to proxy.
+          Same paths as the live explorer, proxied server-side (CORS closed on the node).
         </p>
         <div className="mt-3 overflow-x-auto rounded-xl border border-border">
           <table className="w-full min-w-[520px] text-left text-sm">
@@ -142,12 +134,12 @@ function DocsBody() {
       <section>
         <h2 className="font-display text-xl tracking-tight text-fg">Going live</h2>
         <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-muted">
-          <li>Flip the header to Live — reads already hit the public node through this app.</li>
+          <li>Reads already hit the public testnet node through this app.</li>
           <li>
             Sends need an Ed25519 signature (128 hex) over the <code className="font-mono text-fg">sighash</code> bytes
-            from prepare. The wallet does this for you. Preview and Live both verify 64-byte sigs.
+            from prepare. The wallet does this for you. All nodes verify 64-byte sigs.
           </li>
-          <li>Faucet, reset, and empty-block mining stay off on the public explorer.</li>
+          <li>Reset and empty-block mining stay off on the public explorer.</li>
           <li>
             Seed node: listen on TCP 9000, set <code className="font-mono text-fg">KOVANICA_PEERS=off</code> so it does
             not dial itself. Clones must dial a <strong className="text-fg">DNS-only</strong> hostname or the origin

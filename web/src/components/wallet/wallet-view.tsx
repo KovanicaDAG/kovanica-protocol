@@ -531,7 +531,7 @@ export function WalletView() {
           </p>
         </div>
         <Button type="submit" className="h-12" disabled={busy}>
-          {busy ? "Sending…" : isHardware ? `Confirm & send with ${wallet.deviceType}` : live ? "Sign & send on Live" : "Send"}
+          {busy ? "Sending…" : isHardware ? `Confirm & send with ${wallet.deviceType}` : live ? "Sign & send on Testnet" : "Send"}
         </Button>
       </form>
 
@@ -539,7 +539,7 @@ export function WalletView() {
         <p className="mb-2 text-[10px] tracking-wide text-subtle uppercase">History</p>
         {history.length === 0 ? (
           <p className="text-sm text-muted">
-            {live ? "No movements on Live yet. Send after the seed is up." : "No movements yet. Use faucet or send."}
+            {live ? "No movements on Testnet yet. Send after the seed is up." : "No movements yet. Use faucet or send."}
           </p>
         ) : (
           <ul className="divide-y divide-border rounded-xl border border-border">

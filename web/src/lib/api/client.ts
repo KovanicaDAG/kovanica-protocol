@@ -5,8 +5,8 @@ const KEY = "kovanica.source";
 const listeners = new Set<() => void>();
 
 function read(): ApiSource {
-  if (typeof window === "undefined") return "local";
-  return window.localStorage.getItem(KEY) === "live" ? "live" : "local";
+  // Preview was removed; the app always talks to the testnet proxy.
+  return "live";
 }
 
 export function getApiSource(): ApiSource {

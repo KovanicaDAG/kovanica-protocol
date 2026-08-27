@@ -91,7 +91,7 @@ POST /api/miner?addr=
   operator: set coinbase payee
 
 POST /api/faucet?to=&amount=&kind=
-  preview mint (live 403). kind=faucet (default).
+  testnet open faucet. kind=faucet (default).
 
 POST /api/reset
   preview only

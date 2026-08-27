@@ -35,7 +35,7 @@ export function HomeLanding() {
 
       {!wallet && (
         <p className="mt-6 text-center text-xs text-subtle">
-          Create a wallet to get started with faucet funds on Preview.
+          Create a wallet to get started with faucet funds on Testnet.
         </p>
       )}
 
@@ -50,7 +50,7 @@ export function HomeLanding() {
           to="/wallet"
           icon={Wallet}
           title="Wallet"
-          body="Create or import a seed, switch accounts 0–2, scan the QR. Faucet on Preview; Ed25519 send on Live."
+          body="Create or import a seed, switch accounts 0–2, scan the QR. Faucet and Ed25519 sends on Testnet."
         />
         <ProductCard
           to="/map"
