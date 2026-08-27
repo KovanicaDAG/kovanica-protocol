@@ -12,7 +12,7 @@ export function HomeLanding() {
   return (
     <main className="relative mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-10 pt-6 md:px-8 md:pt-10">
       <p className="text-center font-mono text-[11px] tracking-brand text-subtle uppercase">
-        kovanica-testnet-1 · KVNC
+        kovanica-testnet · KVNC
       </p>
       <h1 className="mt-2 text-center font-display text-4xl tracking-tight text-fg italic md:text-6xl">
         Kovanica
