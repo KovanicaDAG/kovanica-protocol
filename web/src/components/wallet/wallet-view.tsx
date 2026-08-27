@@ -8,10 +8,12 @@ import { MIN_FEE } from "@/lib/api/contract";
 import type { ApiHistory, ApiUtxos } from "@/lib/api/contract";
 import { ATOM } from "@/lib/ledger/types";
 import { fmtKvnc, parseKvnc } from "@/lib/ledger/format";
+import { HardwareWalletFlow } from "./hw-wallet-flow";
 import { isRepeatedHex, shortId } from "@/lib/ledger/hash";
 import { useLedger } from "@/lib/ledger/store";
 import { addressFromMnemonic, createMnemonic, importMnemonic, signSighash } from "@/lib/wallet/keys";
 import { hexToKvnc, parseAddr } from "@/lib/wallet/address";
+import { creditPreview } from "@/lib/wallet/credit";
 import { useHydrated } from "@/lib/use-hydrated";
 import { cn } from "@/lib/utils";
 
@@ -24,27 +26,29 @@ export function WalletView() {
   const walletStore = useLedger((s) => s.wallet);
   const wallet = hydrated ? walletStore : null;
   const setWallet = useLedger((s) => s.setWallet);
+  const claimTaps = useLedger((s) => s.claimTaps);
   const [busy, setBusy] = useState(false);
   const [phrase, setPhrase] = useState("");
   const [to, setTo] = useState("");
   const [amount, setAmount] = useState("1");
   const [utxos, setUtxos] = useState<ApiUtxos | null>(null);
   const [hist, setHist] = useState<ApiHistory | null>(null);
-  const [feeAtoms, setFeeAtoms] = useState<number | null>(null);
+  const [feeRates, setFeeRates] = useState<{ slow: number; normal: number; fast: number } | null>(null);
+  const [feeTier, setFeeTier] = useState<"slow" | "normal" | "fast">("normal");
 
   const balance = utxos?.balance ?? 0;
-  const fee = feeAtoms ?? MIN_FEE;
+  const fee = feeRates ? feeRates[feeTier] : MIN_FEE;
 
   async function refreshChain(address: string) {
     try {
       const [u, h, f] = await Promise.all([
         api<ApiUtxos>(`/api/utxos?address=${address}`),
         api<ApiHistory>(`/api/history?address=${address}`),
-        api<{ ok: boolean; fee: number }>("/api/fee_estimate", "POST"),
+        api<{ ok: boolean; slow: number; normal: number; fast: number }>("/api/fee_estimate", "POST"),
       ]);
       setUtxos(u);
       setHist(h);
-      if (typeof f.fee === "number" && f.fee > 0) setFeeAtoms(f.fee);
+      if (typeof f.normal === "number") setFeeRates({ slow: f.slow, normal: f.normal, fast: f.fast });
     } catch {
       /* keep last */
     }
@@ -53,11 +57,13 @@ export function WalletView() {
   useEffect(() => {
     if (!walletStore) return;
     if (!isRepeatedHex(walletStore.address)) return;
-    void addressFromMnemonic(walletStore.mnemonic, walletStore.index).then((address) => {
-      if (address !== walletStore.address) {
-        setWallet({ ...walletStore, address });
-      }
-    });
+    if (walletStore.mnemonic) {
+      void addressFromMnemonic(walletStore.mnemonic, walletStore.index).then((address) => {
+        if (address !== walletStore.address) {
+          setWallet({ ...walletStore, address });
+        }
+      });
+    }
   }, [walletStore, setWallet]);
 
   useEffect(() => {
@@ -67,15 +73,29 @@ export function WalletView() {
       return;
     }
     void (async () => {
+      if (!live) await settlePendingTaps(wallet.address);
       await refreshChain(wallet.address);
     })();
   }, [wallet?.address, source]);
+
+  async function settlePendingTaps(address: string) {
+    const { tapBalance, claimedTapAtoms } = useLedger.getState();
+    const unclaimed = tapBalance - claimedTapAtoms;
+    if (unclaimed <= 0) return;
+    try {
+      const ok = await creditPreview(address, unclaimed, "tap");
+      if (ok) claimTaps(unclaimed);
+    } catch {
+      /* stay pending until next visit */
+    }
+  }
 
   async function onCreate() {
     setBusy(true);
     try {
       const mnemonic = await createMnemonic();
       const address = await addressFromMnemonic(mnemonic, 0);
+      if (!live) await settlePendingTaps(address);
       setWallet({ mnemonic, address, index: 0, shown: true });
       toast.success("Wallet created — write down the 12 words");
     } catch (e) {
@@ -89,11 +109,20 @@ export function WalletView() {
     e.preventDefault();
     setBusy(true);
     try {
-      const mnemonic = await importMnemonic(phrase);
-      const address = await addressFromMnemonic(mnemonic, 0);
-      setWallet({ mnemonic, address, index: 0, shown: false });
-      setPhrase("");
-      toast.success("Imported");
+      if (phrase.trim().startsWith("kvnc1") || /^[0-9a-f]{64}$/i.test(phrase.trim())) {
+        const dest = parseAddr(phrase.trim());
+        if (!dest) throw new Error("Invalid watch-only address");
+        setWallet({ address: dest, index: 0, shown: false, kind: "watch" });
+        setPhrase("");
+        toast.success("Watch-only wallet connected");
+      } else {
+        const mnemonic = await importMnemonic(phrase);
+        const address = await addressFromMnemonic(mnemonic, 0);
+        if (!live) await settlePendingTaps(address);
+        setWallet({ mnemonic, address, index: 0, shown: false, kind: "local" });
+        setPhrase("");
+        toast.success("Imported");
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Import failed");
     } finally {
@@ -102,7 +131,7 @@ export function WalletView() {
   }
 
   async function onAccount(index: number) {
-    if (!wallet || wallet.index === index) return;
+    if (!wallet || wallet.index === index || !wallet.mnemonic) return;
     setBusy(true);
     try {
       const address = await addressFromMnemonic(wallet.mnemonic, index);
@@ -141,6 +170,8 @@ export function WalletView() {
     }
   }
 
+  const [hwFlow, setHwFlow] = useState<{ sighash: string; dest: string; atoms: number } | null>(null);
+
   async function onSend(e: React.FormEvent) {
     e.preventDefault();
     if (!wallet) return;
@@ -166,7 +197,23 @@ export function WalletView() {
         `/api/prepare?from=${wallet.address}&to=${dest}&amount=${atoms}`,
         "POST",
       );
+      if (wallet.kind === "watch" || !wallet.mnemonic) {
+        setHwFlow({ sighash: prep.sighash, dest, atoms });
+        setBusy(false);
+        return;
+      }
       const sig = await signSighash(wallet.mnemonic, wallet.index, prep.sighash);
+      await submitTx(dest, atoms, sig);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Send failed");
+      setBusy(false);
+    }
+  }
+
+  async function submitTx(dest: string, atoms: number, sig: string) {
+    if (!wallet) return;
+    try {
+      setBusy(true);
       const sub = await api<{ tx: string }>(
         `/api/submit?from=${wallet.address}&to=${dest}&amount=${atoms}&sig=${sig}`,
         "POST",
@@ -179,11 +226,22 @@ export function WalletView() {
       await refreshChain(wallet.address);
       toast.success(`Sent · ${shortId(sub.tx)}`);
       setTo("");
+      setHwFlow(null);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Send failed");
     } finally {
       setBusy(false);
     }
+  }
+
+  if (hwFlow) {
+    return (
+      <HardwareWalletFlow
+        sighash={hwFlow.sighash}
+        onSign={(sig) => void submitTx(hwFlow.dest, hwFlow.atoms, sig)}
+        onCancel={() => setHwFlow(null)}
+      />
+    );
   }
 
   if (!wallet) {
@@ -194,18 +252,18 @@ export function WalletView() {
           <h1 className="font-display text-3xl tracking-tight text-fg">Wallet</h1>
           <p className="mt-2 text-sm leading-relaxed text-muted">
             Keys stay in this browser. Create a 12-word seed or import one. Address is the
-            Ed25519 public key.
+            Ed25519 public key. Pending taps credit account 0 on Preview only.
           </p>
         </header>
         <Button type="button" className="h-12" disabled={busy} onClick={() => void onCreate()}>
           {busy ? "Working…" : "Create wallet"}
         </Button>
         <form onSubmit={(e) => void onImport(e)} className="flex flex-col gap-3">
-          <label className="text-[10px] tracking-wide text-subtle uppercase">Import seed</label>
+          <label className="text-[10px] tracking-wide text-subtle uppercase">Import seed or Address</label>
           <textarea
             value={phrase}
             onChange={(e) => setPhrase(e.target.value)}
-            placeholder="twelve words…"
+            placeholder="twelve words or kvnc1..."
             rows={3}
             className="min-h-20 rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg outline-none focus-visible:shadow-[var(--shadow-border-hover)]"
           />
@@ -217,7 +275,7 @@ export function WalletView() {
     );
   }
 
-  const history = hist?.txs ?? [];
+  const history = live ? (hist?.txs.filter((row) => row.kind !== "tap") ?? []) : (hist?.txs ?? []);
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-6 md:px-6 md:py-8">
@@ -243,28 +301,35 @@ export function WalletView() {
       <section className="rounded-xl border border-border bg-surface p-4">
         <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 w-full">
-            <p className="text-[10px] tracking-wide text-subtle uppercase">Account</p>
-            <div className="mt-2 flex gap-1 rounded-lg bg-surface-2 p-1" role="tablist" aria-label="Account index">
-              {ACCOUNTS.map((i) => {
-                const on = wallet.index === i;
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    role="tab"
-                    aria-selected={on}
-                    disabled={busy}
-                    onClick={() => void onAccount(i)}
-                    className={cn(
-                      "h-11 min-w-11 flex-1 rounded-md px-3 font-mono text-sm transition-colors duration-150 sm:flex-none",
-                      on ? "bg-surface text-fg shadow-border" : "text-muted hover:text-fg",
-                    )}
-                  >
-                    {i === 0 ? "Acc 0" : i === 1 ? "Acc 1" : `Acc ${i}`}
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2">
+              <p className="text-[10px] tracking-wide text-subtle uppercase">Account</p>
+              {wallet.kind === "watch" && (
+                <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">Watch Only</span>
+              )}
             </div>
+            {wallet.mnemonic && (
+              <div className="mt-2 flex gap-1 rounded-lg bg-surface-2 p-1" role="tablist" aria-label="Account index">
+                {ACCOUNTS.map((i) => {
+                  const on = wallet.index === i;
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      role="tab"
+                      aria-selected={on}
+                      disabled={busy}
+                      onClick={() => void onAccount(i)}
+                      className={cn(
+                        "h-11 min-w-11 flex-1 rounded-md px-3 font-mono text-sm transition-colors duration-150 sm:flex-none",
+                        on ? "bg-surface text-fg shadow-border" : "text-muted hover:text-fg",
+                      )}
+                    >
+                      {i === 0 ? "Acc 0" : i === 1 ? "Acc 1" : `Acc ${i}`}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
           <AddressQr value={hexToKvnc(wallet.address)} className="shrink-0" />
         </div>
@@ -275,7 +340,7 @@ export function WalletView() {
             Copy
           </Button>
           {live ? (
-            <p className="self-center text-xs text-muted">Sends sign Ed25519 in this browser.</p>
+            <p className="self-center text-xs text-muted">Home tap: 0.01 KVNC, 40/day. Send signs Ed25519.</p>
           ) : (
             <Button type="button" className="h-11" onClick={() => void onFaucet()}>
               Faucet 1 KVNC
@@ -284,32 +349,34 @@ export function WalletView() {
         </div>
       </section>
 
-      {wallet.shown ? (
-        <section className="rounded-xl border border-border bg-surface p-4">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] tracking-wide text-subtle uppercase">Seed phrase</p>
-            <div className="flex gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={wallet.shown ? "Hide seed" : "Show seed"}
-                onClick={() => setWallet({ ...wallet, shown: !wallet.shown })}
-              >
-                {wallet.shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-              </Button>
-              <Button type="button" variant="ghost" size="icon" aria-label="Download seed" onClick={onDownload}>
-                <Download className="size-4" />
-              </Button>
+      {wallet.mnemonic && (
+        wallet.shown ? (
+          <section className="rounded-xl border border-border bg-surface p-4">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] tracking-wide text-subtle uppercase">Seed phrase</p>
+              <div className="flex gap-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={wallet.shown ? "Hide seed" : "Show seed"}
+                  onClick={() => setWallet({ ...wallet, shown: !wallet.shown })}
+                >
+                  {wallet.shown ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                </Button>
+                <Button type="button" variant="ghost" size="icon" aria-label="Download seed" onClick={onDownload}>
+                  <Download className="size-4" />
+                </Button>
+              </div>
             </div>
-          </div>
-          <p className="mt-2 font-mono text-sm leading-relaxed text-fg">{wallet.mnemonic}</p>
-          <p className="mt-2 text-xs text-muted">Write these 12 words down. Anyone with them can spend.</p>
-        </section>
-      ) : (
-        <Button type="button" variant="ghost" className="self-start" onClick={() => setWallet({ ...wallet, shown: true })}>
-          Reveal seed
-        </Button>
+            <p className="mt-2 font-mono text-sm leading-relaxed text-fg">{wallet.mnemonic}</p>
+            <p className="mt-2 text-xs text-muted">Write these 12 words down. Anyone with them can spend.</p>
+          </section>
+        ) : (
+          <Button type="button" variant="ghost" className="self-start" onClick={() => setWallet({ ...wallet, shown: true })}>
+            Reveal seed
+          </Button>
+        )
       )}
 
       <form onSubmit={(e) => void onSend(e)} className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
@@ -347,9 +414,31 @@ export function WalletView() {
             </Button>
           </div>
         </label>
-        <p className="text-[11px] text-muted">
-          Fee {fmtKvnc(fee)} (mempool p90 estimate, min {fmtKvnc(MIN_FEE)}). 50 KVNC sends spend two coinbases.
-        </p>
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs text-muted">Network Fee</label>
+          <div className="grid grid-cols-3 gap-2">
+            {(["slow", "normal", "fast"] as const).map((tier) => (
+              <button
+                key={tier}
+                type="button"
+                onClick={() => setFeeTier(tier)}
+                className={`flex flex-col items-center justify-center rounded-md border p-2 text-[11px] transition-colors ${
+                  feeTier === tier
+                    ? "border-accent bg-accent/10 text-accent"
+                    : "border-border bg-bg text-muted hover:border-border-hover hover:text-fg"
+                }`}
+              >
+                <span className="font-medium capitalize">{tier}</span>
+                <span className="mt-0.5 font-mono">
+                  {feeRates ? fmtKvnc(feeRates[tier]) : fmtKvnc(MIN_FEE)}
+                </span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted text-center mt-1">
+            Dynamic fee estimated from recent block congestion.
+          </p>
+        </div>
         <Button type="submit" className="h-12" disabled={busy}>
           {busy ? "Sending…" : live ? "Sign & send on Live" : "Send"}
         </Button>
@@ -359,7 +448,7 @@ export function WalletView() {
         <p className="mb-2 text-[10px] tracking-wide text-subtle uppercase">History</p>
         {history.length === 0 ? (
           <p className="text-sm text-muted">
-            {live ? "No movements on Live yet. Send after the seed is up." : "No movements yet. Use faucet, or send."}
+            {live ? "No movements on Live yet. Send after the seed is up." : "No movements yet. Tap the coin, use faucet, or send."}
           </p>
         ) : (
           <ul className="divide-y divide-border rounded-xl border border-border">

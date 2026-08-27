@@ -10,36 +10,36 @@ Kovanica owns `127.0.0.1:3010` (web), `127.0.0.1:8080` (explorer HTTP),
 
 ## Seed
 
-Explorer listens on TCP 9000. Current effective config (matches `/api/state`
-on the live box):
+Explorer listens on TCP 9000. Keep:
 
 ```
 KOVANICA_LISTEN=0.0.0.0:9000
-KOVANICA_PEERS=seed2.kovanica.online:9001,seed3.kovanica.online:9000
-KOVANICA_MINE=1
-KOVANICA_MINE_SECS=60
-KOVANICA_FAUCET=1
+KOVANICA_PEERS=off
+KOVANICA_MINE=0
+KOVANICA_FAUCET=0
 KOVANICA_ALLOW_RESET=0
-KOVANICA_OPERATOR=1
+KOVANICA_OPERATOR=0
 KOVANICA_POW=1
-KOVANICA_DATA=/root/kovanica-data
+KOVANICA_DATA=/root/kovanica-ledger/data
 ```
-
-(`KOVANICA_TAP` is gone — the tap micro-faucet was removed from the node.)
 
 ufw `9000/tcp` is open. **That is not enough:** `explorer.kovanica.online` is
 Cloudflare-proxied (orange cloud). A clone that dials that hostname:9000 hits
 Cloudflare, not this box.
 
-Clones dial the **DNS-only** (grey cloud) record, which exists:
+Publish a **DNS-only** (grey cloud) A record:
 
 ```
-seed.kovanica.online  →  A 145.223.116.178 / AAAA 2a02:4780:41:1f43::1   # proxy OFF
+seed.kovanica.online  →  $(curl -s ifconfig.me)   # DNS only, proxy OFF
 ```
+
+Clones:
 
 ```
 KOVANICA_PEERS=seed.kovanica.online:9000
 ```
+
+Until that record exists, use the origin IP: `KOVANICA_PEERS=<ip>:9000`.
 
 ---
 

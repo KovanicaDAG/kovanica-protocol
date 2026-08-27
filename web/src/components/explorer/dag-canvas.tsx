@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as d3 from "d3-selection";
+import { zoom, ZoomBehavior } from "d3-zoom";
 import type { Block, Colour } from "@/lib/ledger/types";
 import { shortId } from "@/lib/ledger/hash";
 import { cn } from "@/lib/utils";
@@ -18,6 +20,8 @@ type Props = {
 
 export function DagCanvas({ blocks, selectedId, onSelect }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const gRef = useRef<SVGGElement>(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
 
   useEffect(() => {
@@ -37,50 +41,75 @@ export function DagCanvas({ blocks, selectedId, onSelect }: Props) {
 
   const layout = useMemo(() => layoutBlocks(blocks, size.w, size.h), [blocks, size]);
 
+  // Setup D3 Zoom & Pan
+  useEffect(() => {
+    if (!svgRef.current || !gRef.current) return;
+    const svg = d3.select(svgRef.current);
+    const g = d3.select(gRef.current);
+
+    const zoomBehavior = zoom<SVGSVGElement, unknown>()
+      .scaleExtent([0.1, 4])
+      .on("zoom", (event) => {
+        g.attr("transform", event.transform);
+      });
+
+    svg.call(zoomBehavior);
+    
+    // Default transform: start at the bottom of the graph (latest blocks) if it overflows
+    if (layout.height > size.h) {
+        svg.call(zoomBehavior.translateTo, size.w / 2, layout.height - size.h / 2);
+    }
+  }, [layout.width, layout.height, size.w, size.h]);
+
   return (
-    <div ref={wrapRef} className="h-full min-h-[280px] overflow-auto rounded-lg border border-border bg-bg">
+    <div ref={wrapRef} className="h-full min-h-[280px] overflow-hidden rounded-lg border border-border bg-bg cursor-grab active:cursor-grabbing">
       {size.w > 0 ? (
         <svg
+          ref={svgRef}
           role="img"
           aria-label="BlockDAG"
-          width={layout.width}
-          height={layout.height}
-          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          width="100%"
+          height="100%"
           className="block"
         >
-          {layout.edges.map((e) => (
-            <path
-              key={e.key}
-              d={e.d}
-              fill="none"
-              stroke="var(--color-border)"
-              strokeWidth={1.4}
-            />
-          ))}
-          {layout.nodes.map((n) => {
-            const active = n.id === selectedId;
-            return (
-              <g
-                key={n.id}
-                transform={`translate(${n.x} ${n.y})`}
-                className="cursor-pointer"
-                onClick={() => onSelect(n.id)}
-              >
-                {active ? (
-                  <circle r="15" fill="none" stroke="var(--color-fg)" strokeWidth="1.2" opacity="0.5" />
-                ) : null}
-                <circle r="9" fill={FILL[n.colour]} />
-                <text
-                  y="24"
-                  textAnchor="middle"
-                  className="fill-muted"
-                  style={{ fontFamily: "var(--font-mono)", fontSize: 10 }}
+          <g ref={gRef}>
+            {layout.edges.map((e) => (
+              <path
+                key={e.key}
+                d={e.d}
+                fill="none"
+                stroke="var(--color-border)"
+                strokeWidth={1.4}
+              />
+            ))}
+            {layout.nodes.map((n) => {
+              const active = n.id === selectedId;
+              return (
+                <g
+                  key={n.id}
+                  transform={`translate(${n.x} ${n.y})`}
+                  className="cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelect(n.id);
+                  }}
                 >
-                  {shortId(n.id, 6)}
-                </text>
-              </g>
-            );
-          })}
+                  {active ? (
+                    <circle r="15" fill="none" stroke="var(--color-fg)" strokeWidth="1.2" opacity="0.5" />
+                  ) : null}
+                  <circle r="9" fill={FILL[n.colour]} />
+                  <text
+                    y="24"
+                    textAnchor="middle"
+                    className="fill-muted"
+                    style={{ fontFamily: "var(--font-mono)", fontSize: 10 }}
+                  >
+                    {shortId(n.id, 6)}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
         </svg>
       ) : null}
     </div>

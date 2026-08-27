@@ -16,7 +16,7 @@ export const Route = createRootRoute({
       { name: "color-scheme", content: "dark" },
       {
         name: "description",
-        content: "Kovanica DAG explorer, wallet, and origins map for KVNC on kovanica-testnet.",
+        content: "Kovanica DAG explorer, wallet, and origins map for KVNC on kovanica-testnet-1.",
       },
     ],
     links: [
