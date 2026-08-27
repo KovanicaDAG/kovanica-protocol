@@ -654,6 +654,21 @@ deterministic + adversarial tests per the conventions above.
     eligibility, hybrid PoW+staked admission, stake registry, P2P hardening,
     mempool v2, metrics/observability, DHT+DNS discovery, mobile FFI slices
     1–8).
+- **Slice 9 — Android LightNode app (plan + genesis gate)**:
+  - Plan: `docs/plans/android-light-node-app.md` (slices 9a–9f). Owner-locked
+    decisions: full `/api/blocks` pull in v0.1 (SPV node endpoint later);
+    extend `POST /api/mine/submit` for staked blocks; project-dir AAR link;
+    debug-signed v0.1 APKs. No Android SDK on this host — APK builds must run
+    in GitHub Actions (mirrors `build-web`).
+  - **9a genesis gate landed**: `crates/kovanica-ffi/tests/live_sync_spike.rs`
+    + `tests/fixtures/live-alpha-blocks.bin` (captured `GET /api/blocks` from
+    seed1). Proof a phone `LightNode` boots to the live genesis and imports the
+    live chain: default `LightConfig` diverges; live params are `LightConfig {
+    k:3, subsidy:200*ATOM, founder_amount:200*ATOM, founder_seed:1, pruning
+    MAX }` (ATOM=100_000_000, explorer `genesis_node()`), which reproduces the
+    network genesis byte-for-byte; then `receive_blocks` converges to the live
+    tip. v0.1 pins these params as app constants (`/api/bootstrap` doesn't
+    expose subsidy/premine/seed); add them to the endpoint before mainnet.
 
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.

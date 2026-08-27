@@ -194,13 +194,44 @@ Recommended order: **9a (genesis gate) → 9b → 9c → 9d (uplink gate) → 9e
 9d's uplink spike can jump ahead (does not block on wallet UI) to de-risk the
 hardest unknown earliest.
 
-## Open decisions for the user
+## Decisions (locked by owner)
 
-1. **Sync transport (9c):** default (a) `/api/blocks` pull now + node
-   `/api/light_sync` endpoint later — or (b) build the node endpoint first?
-2. **Staked uplink (9d):** default (a) extend `POST /api/mine/submit` to accept
-   the gossip wire format — or (b) P2P-relay path?
-3. **AAR consumption:** project-dir link during dev (recommended) → published
-   AAR artifact for CI/release.
-4. **Signing:** debug-signed APKs for testnet v0.1 (recommended) vs a real
-   release keystore now.
+1. **Sync transport (9c):** (a) full `/api/blocks` pull in v0.1; node
+   `GET /api/light_sync` endpoint is the first post-v0.1 slice.
+2. **Staked uplink (9d):** (a) extend `POST /api/mine/submit` to accept the
+   gossip wire format (encode_records) for staked blocks.
+3. **AAR consumption:** project-dir link during dev → published AAR for CI.
+4. **Signing:** debug-signed APKs for testnet v0.1.
+
+## Landed as built (deviations & additions)
+
+### Slice 9a — genesis gate: **LANDED (proof first)**
+
+`crates/kovanica-ffi/tests/live_sync_spike.rs` + committed fixture
+`tests/fixtures/live-alpha-blocks.bin` (fresh `GET /api/blocks` capture from
+seed1, 1,466 bytes, 10 blocks). Three tests prove the whole phone sync path
+at the Rust layer — the exact flow the Android app will run:
+
+1. `default_config_genesis_diverges_from_live_network` — `LightConfig::default()`
+   (subsidy 1000) does NOT reproduce the live network genesis (divergence risk
+   was real).
+2. `live_params_reproduce_testnet_genesis` — with `LightConfig { k:3,
+   subsidy: 200*ATOM, founder_amount: 200*ATOM, founder_seed:1,
+   finality_depth: MAX, payload_pruning_depth: MAX }` (ATOM=100_000_000) the
+   node boots to the exact live genesis `596874ea…`, founder balance
+   `20000000000` atoms (200 KVNC).
+3. `light_node_imports_live_testnet_chain` — `receive_blocks(live blob)` → 10
+   blocks applied/known, `selected_tip` == live tip `4927b982…`, tip block
+   present.
+
+**Live genesis parameters (hard requirement for the app):** `k=3`,
+`subsidy=200*ATOM`, `founder_amount=200*ATOM`, `founder_seed=1`, pruning MAX.
+Derived from `crates/kovanica-node/src/explorer.rs` `genesis_node()` +
+`GENESIS_SUBSIDY/GENESIS_PREMINE` constants. `GET /api/bootstrap` exposes `k`,
+`atom`, `pow` but **not** subsidy/premine/seed — so v0.1 testnet pins these
+params as app constants; a node slice should add them to `/api/bootstrap`
+before mainnet. Genesis is deterministic (no wall-clock), so param-equality
+⇒ genesis-equality, proven above.
+
+**Self-healing of the fixture:** if the network boots a new chain the fixture
+becomes stale; re-capture `GET /api/blocks` and update the `LIVE_*` constants.
