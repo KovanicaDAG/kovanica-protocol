@@ -1,0 +1,59 @@
+name: Android Light Node
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android-light-node/**"
+      - "crates/kovanica-ffi/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "android-light-node/**"
+      - "crates/kovanica-ffi/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK + NDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Build the FFI cdylib for Android
+        working-directory: crates/kovanica-ffi
+        run: ./build-android.sh
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+          gradle-home-cache-cleanup: true
+
+      - name: Assemble debug APK
+        run: gradle -p android-light-node :app:assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-light-node-apk
+          path: android-light-node/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
