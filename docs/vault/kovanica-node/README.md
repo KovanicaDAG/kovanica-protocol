@@ -60,14 +60,14 @@ First start writes genesis into `KOVANICA_DATA`. Keep that directory.
 **One path:** plaintext TCP on **9000**. There is no libp2p / 30333.
 
 ```
-KOVANICA_PEERS=seed.kovanica.online:9000
+KOVANICA_PEERS=seed.kovanica.online:9000,seed3.kovanica.online:9000
 ```
 
 That is the default when `KOVANICA_PEERS` is unset.
 
 ```sh
 export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000
+export KOVANICA_PEERS=seed.kovanica.online:9000,seed3.kovanica.online:9000
 export KOVANICA_POW=1
 export KOVANICA_MINE=0
 export KOVANICA_MINE_SECS=120
