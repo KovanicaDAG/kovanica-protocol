@@ -172,11 +172,10 @@ mod tests {
 
     #[test]
     fn zero_address_kvnc_is_a_known_vector() {
-        // base58 of 32 zero bytes is 32 leading-zero markers ('1'), so the
-        // human address is `kvnc` + 32×'1' + `dag`. Derived from keys.rs's
-        // b58_encode: all-zero input yields one '1' per leading zero byte.
+        // base58 of 33 zero bytes (version 0x00 + 32-byte payload) is 33 leading-zero markers ('1'),
+        // so the human address is `kvnc` + 33×'1' + `dag`.
         let addr = Address::from_bytes([0u8; 32]);
-        assert_eq!(addr.to_kvnc(), format!("kvnc{}dag", "1".repeat(32)));
+        assert_eq!(addr.to_kvnc(), format!("kvnc{}dag", "1".repeat(33)));
     }
 
     #[test]

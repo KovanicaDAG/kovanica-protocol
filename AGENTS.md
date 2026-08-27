@@ -493,18 +493,176 @@ deterministic + adversarial tests per the conventions above.
     `StakeState::eligibility_threshold(stake, total, num, den)` /
     `is_eligible(output, …)` — Algorand/Praos-style sortition comparing
     `VrfOutput::as_u64()` against `(stake << 64)/total × rate`.
-  - NOT yet wired: Dag/Node enforcement of "PoW OR eligible-VRF" hybrid insert,
-    node-side VRF block production, RPC endpoints, epoch randomness beacon
-    (VRF input is still parent tips — grinding-resistant beacon is follow-up).
+  - NOT yet wired: epoch randomness beacon (VRF input is still parent tips —
+    grinding-resistant beacon is follow-up), FFI/mobile bindings.
   - Tests: freeze/unfreeze accounting, maturity gate, frozen-input rejection,
     per-block stake across heights, threshold/sortition distribution,
     encode/decode roundtrip.
+- [x] Hybrid PoW + VRF-staked block admission (slice 2: enforcement layer).
+  - Rationale: keeps PoW as the chain-selection work source while letting a
+    bonded validator win slots by stake-weighted sortition — the phone-friendly
+    production path (sign one VRF over the tip input; no mining rig). Kaspa-
+    style mergeability is untouched; Algorand/Praos-style eligibility decides
+    *who may add*, GHOSTDAG blue-work still decides *what wins*.
+  - All admission lives in `Ledger` (`crates/kovanica-state/src/ledger.rs`);
+    the DAG core's own PoW/difficulty/VRF switches are CLEARED by
+    `Ledger::set_hybrid(HybridConfig)` to avoid double standards.
+  - Two paths per block: **PoW** (no VRF fields) requires
+    `pow::meets_target(id, work)` AND — when `HybridConfig::retarget` is set —
+    `work == Dag::work_target_with(parents, retarget)` (new dag helper;
+    `next_work_target` delegates to it). **Staked** (`StakedVrf{vrf_pk,proof,
+    output}`) requires a verifying proof over `Dag::vrf_input(parents)`,
+    `output < StakeState::eligibility_threshold(...)` against the SELECTED
+    PARENT's pre-state registry (a bond in the same block cannot vote for its
+    own producer), `timestamp_ms >= max(parent ts)`, and at most ONE staked
+    block per `(vrf_pk, selected_parent)` (`staked_seen` map, pruned with
+    finality) — the sibling-spam/grinding guards.
+  - Staked blocks pin `work == HybridConfig::stake_nominal_work` (default 1):
+    cheaply-inflatable blue weight stays out of chain selection no matter how
+    a winner grinds parent combinations.
+  - Insert API split: `insert()` (legacy PoW template), `insert_with_vrf()`
+    (forces nominal work), `insert_prepared_block(block, txs)` /
+    `insert_raw_block(block)` — identity-preserving paths for wire receive and
+    snapshot/checkpoint replay. Snapshot restore of hybrid-era chains needs
+    `Ledger::read_snapshot_with_hybrid(bytes, cfg)` (checkpoint:
+    `read_checkpoint_with_hybrid`); plain readers keep legacy strip-VRF
+    behaviour for old snapshots. Wire format: `BlockRecord` gained
+    `Option<StakedVrf>`, encoded as a flag byte after nonce (0 none / 1 =
+    pk32+proof96+output32) in net.rs encode/decode (min record 49 bytes).
+  - Node layer: `set_validator_seed([u8;32])`, `enable_hybrid(cfg)`,
+    `validator_public_key()`, `total_stake()`, `stake_of()`; `produce_block`
+    and `produce_empty` try the staked draw first and fall back to PoW when
+    uneligible; `receive_block` builds the received block once with VRF fields
+    and inserts via `insert_prepared_block`. RPC read-only command:
+    `staking [vrf-pk-hex]`.
+  - Tests: `crates/kovanica-state/tests/hybrid.rs` (12: admission matrix,
+    pins, sibling guard, timestamp rule, bad proofs, hybrid snapshot/
+    checkpoint roundtrips) and `crates/kovanica-node/tests/hybrid_node.rs`
+    (3: produce→gossip→readmit convergence incl. wire VRF bytes, PoW fallback,
+    RPC reporting).
+- **Slice 3 — `kovanica-ffi` (UniFFI bindings for mobile light nodes)**:
+  - New workspace crate wrapping `Node` behind one exported object,
+    `LightNode` (`Mutex<Node>` inside; poison-tolerant lock). Full surface:
+    genesis config (`LightConfig`), validator/miner seed setup, hybrid
+    enablement, `bond_stake` (auto-splits an oversized coin via two mined
+    blocks, then bonds), production (`produce_block` / `produce_empty_block`
+    — staked draw first, PoW fallback), transfers, byte-blob sync
+    (`export_blocks` → wire format, `receive_blocks(blob)` → count of records
+    processed), queries (balances as decimal strings, block ids as hex),
+    snapshot save/load. u128 values cross the FFI as hi/lo pairs
+    (`U128Parts{high,low}`) or decimal strings.
+  - Binding generation: build the cdylib then
+    `cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate --library
+    target/release/libkovanica_ffi.so --language kotlin|swift --out-dir
+    crates/kovanica-ffi/bindings/{kotlin,swift}` (uniffi 0.32). Generated
+    Kotlin/Swift are committed under `bindings/`.
+  - Supporting API additions: `Ledger::hybrid_config()` getter,
+    `Node::hybrid_config()`, `Node::load_with_hybrid(path, cfg)` — FFI
+    `load_snapshot` restores hybrid-era chains with their policy so staked
+    ids survive replay; `BlockValidator` now requires `Send` (a DAG may cross
+    threads) and its closure impl gained the same bound.
+  - Tests: `crates/kovanica-ffi/tests/ffi.rs` (9: lifecycle, seed validation,
+    bond split/freeze + staked win, rebond skipping frozen outputs, PoW
+    fallback work semantics, two-node blob sync convergence, garbage-blob
+    rejection, hybrid-aware snapshot roundtrip that keeps producing).
+  - Semantics surfaced by the tests (do not re-litigate): bonding internally
+    mines founder coinbase, so a miner-founder can keep bonding after its
+    unfrozen supply is exhausted; in un-retargeted hybrid mode PoW-fallback
+    blocks carry the legacy fixed work target (1), not nominal stake work;
+    `receive_blocks` counts records processed — known blocks re-validate as
+    no-ops (ledger insert is idempotent), so idempotent re-sync is measured
+    by `block_count`, not by the return value.
+- **Slice 4 — custody & unbond (FFI + node)**:
+  - Spending keys: `Node::send_with(kp, amount, to)` signs with an explicit
+    keypair (`send`/`send_to` delegate); FFI `send_from(secret_hex, amount,
+    to_address)` — secrets cross the bridge per call and are never stored.
+    Validator identity needed no change: `set_validator_seed` already takes
+    client-generated 32-byte secrets.
+  - Unbond: ledger rules pre-existed (`KVU1` whole-tag txs only, inputs must
+    all be matured frozen outpoints, `height >= bond_height +
+    UNBOND_MATURITY(100)` with height = selected-parent height + 1). New:
+    `Ledger::tip_blue_score`, `Node::{chain_height, pending_unbond_height,
+    unbond_with}` (FIFO over matured owned coins, fee-0 value-conserving,
+    change unfrozen), `NodeError::{InsufficientStake, UnbondOwnerMismatch}`;
+    FFI `unbond(from_seed, amount)` / `pending_unbond_height()` /
+    `chain_height()`. Retarget-enabled hybrid e2e via peer-rejection symmetry.
+  - Tests: `crates/kovanica-node/tests/unbond_node.rs` (lifecycle, FIFO
+    partial maturity, foreign-signer guard) and 3 new ffi.rs cases
+    (`send_from`, FFI unbond immaturity, retarget pin+sync).
+  - Lesson: a release's own block advances the chain, so maturity windows are
+    measured from the post-release tip — bonds close together in height can
+    both mature by the time the second release applies (the gate is
+    `>=`, equality included).
+- **Slice 5 — SPV / filters over FFI**:
+  - Node helpers: `block_filter(id, k)` (distinct payload output addresses →
+    Golomb-Rice `BlockFilter`) and `merkle_proof(id, tx_id)`; header chain was
+    already covered by `export_spv_headers()`.
+  - FFI: versioned light-sync blob (`KVLS`v1: fixed-160-byte headers + filters)
+    via `export_light_sync`/`receive_light_sync` (verified through real
+    `SpvClient`, require_pow=false), local watch queries
+    `synced_filter_matches`/`synced_height`, standalone `block_filter` +
+    `filter_matches`, and inclusion proofs `prove_tx`/`verify_tx_proof`
+    (root must match the synced header; unknown block errors). Serialization
+    is hand-rolled BE in the FFI layer — protocol structs stay wire-free.
+  - Lesson: single-payload-tx blocks prove as bare leaves — empty merkle path,
+    84-byte proof blob. Tamper tests must hit the root region; path/index
+    bytes don't exist there.
+- **Slice 6 — mobile packaging & CI drift guard**:
+  - `crates/kovanica-ffi/build-android.sh` (cargo-ndk, `--platform 24`,
+    arm64-v8a + x86_64 → `android/src/main/jniLibs/`) and
+    `build-apple.sh` (iOS/macOS staticlibs → one
+    `target/kovanica.xcframework` with the uniffi header + modulemap per
+    slice). The apple path required `"staticlib"` in the FFI crate-type list
+    (App Store forbids shipping our own dylibs on iOS); cdylib stays for
+    Android/JNA and the drift-guard build.
+  - `crates/kovanica-ffi/android/`: minimal Gradle library module (namespace
+    `uniffi.kovanica`, minSdk 24) compiling the committed `bindings/kotlin`
+    tree via `sourceSets`; sole runtime dep `net.java.dev.jna:jna:5.14.0@aar`;
+    consumer R8 rules included.
+  - Drift guard: `.github/workflows/bindings.yml` regenerates kotlin+swift
+    into a temp dir on every PR touching `crates/kovanica-ffi/**` and fails
+    on any difference (`diff -r -x README.md` — the hand-written READMEs sit
+    beside generated output and must not trip it), plus shellcheck of both
+    scripts. Verified byte-identical at landing.
+  - Mirror decision resolved as recommended: `kovanica-ffi` now rides
+    `sync-public-node.yml`; kovanica-cli stays excluded.
+- **Slice 7 — wallet UX layer (node + FFI)**:
+  - `Node::history_of(owner, max_blocks)` (`crates/kovanica-node/src/node.rs`):
+    reconstructs an address's history by scanning `dag.linearize()` in canonical
+    order while tracking outpoints owned by `owner`; spending a seen outpoint is
+    a `Sent` event, each owned output a `Received` event (a send's change back to
+    the sender appears as its own `Received`). `max_blocks` bounds the scan
+    window from the tip (`0` = all). Exports `WalletEvent`/`WalletDirection`.
+  - FFI (`crates/kovanica-ffi/src/light_node.rs`): `history_of(address,
+    max_blocks) -> Vec<HistoryEntry>` passthrough (hex ids, decimal-string
+    amounts), plus the batched watch helper `filter_matches_any(blob,
+    [addresses])` that decodes the Golomb-Rice filter once for multi-address
+    watch wallets; an empty list never matches and malformed blobs error cleanly.
+  - Fee-floor knob deferred per plan — soak hasn't shown congestion.
+  - Tests: `crates/kovanica-node/tests/wallet_history.rs` (canonical order,
+    spend-after-receive debit, window bound) and two ffi.rs cases
+    (`history_over_ffi_matches_utxo_semantics`,
+    `filter_matches_any_batches_watch_addresses`).
+- **Slice 8 — docs & release**:
+  - Plan file marked landed (`docs/plans/mobile-light-node.md`); slice-4/5
+    surprises promoted into §8 hard-won lessons.
+  - Root `README.md` rewritten for the protocol repo with a
+    "Run a light node from Kotlin/Swift" section — copy-paste snippets
+    mirroring the ffi.rs two-node blob-sync convergence test, plus the SPV
+    light-sync surface and packaging pointers.
+  - Workspace version bumped to **0.2.0** (Stage 3 close-out: VRF leader
+    eligibility, hybrid PoW+staked admission, stake registry, P2P hardening,
+    mempool v2, metrics/observability, DHT+DNS discovery, mobile FFI slices
+    1–8).
 
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.
 - **Finality Checkpointing**: When writing a checkpoint block's payload to the disk (e.g., in `Ledger::write_checkpoint`), you must strictly explicitly prune it via `Block::new_pruned_with_vrf` so the bytes exactly match the reconstructed block from `read_checkpoint`.
+- **Identity-preserving block replay**: never rebuild a received/decoded block with a fresh `Block::new` template — once VRF fields exist, re-encoding silently changes the id and every child referencing the original parent fails with MissingParent. Use `insert_prepared_block` / `insert_raw_block`, and replay hybrid-era snapshots/checkpoints only through the `_with_hybrid` readers (plain readers deliberately strip VRF for legacy data).
 - **DHT handshake contacts**: `Mesh::connect` must register both endpoints as mutual DHT routing-table contacts — a verified handshake exchanges NodeId + address, and established contacts claiming bucket slots first is what gives eclipse resistance its footing (Tier 5 `test_adversarial_eclipse_resistance` asserts this). Do not decouple P2P connect from DHT contact registration.
 - **Metrics crate version**: `kovanica-node`'s `metrics` dependency must stay on the same minor version that `metrics-exporter-prometheus` depends on; otherwise emissions land in a noop recorder of the other version's global slot and `/metrics` renders nothing.
+- **Unbond maturity gate**: a release's own block advances the chain, so maturity windows are measured from the post-release tip — bonds close together in height can both mature by the time the second release applies. The gate is `>=`, equality included.
+- **Single-tx merkle proofs**: single-payload-tx blocks prove as bare leaves — empty merkle path, 84-byte proof blob. Tamper tests must hit the root region; path/index bytes don't exist there.
 
 ---
 
@@ -550,6 +708,14 @@ the testnet teaches us it needs.
    Remaining wiring: the node binary's default `KOVANICA_PEERS` still names only
    `seed.kovanica.online:9000`, and rolling seed3 into the public `install.sh`
    default is tracked in TODO.md.
+
+4. ~~**Mobile light-node slices 4–8**:~~ ✅ landed 2026-08-25 (workspace v0.2.0)
+   - Full plan with per-slice implementation notes: `docs/plans/mobile-light-node.md`
+   - Slice 4 custody & unbond FFI (`send_from`, `unbond`, FIFO maturity) ·
+     Slice 5 SPV/filter FFI (`KVLS`v1 light-sync blobs, merkle proofs,
+     Golomb-Rice filters) · Slice 6 Android/iOS packaging + bindings
+     drift-guard CI · Slice 7 wallet UX (`history_of`, batched watch filters) ·
+     Slice 8 docs & release (README light-node guide, hard-won lessons).
 
 3. ~~**Observability & reliability** — production readiness:~~ ✅
    - `kovanica-node::metrics`: real Prometheus recording (metrics 0.22, unified

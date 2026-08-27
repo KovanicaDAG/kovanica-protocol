@@ -21,13 +21,33 @@ export type Block = {
   txs: Tx[];
 };
 
-export type WalletRec = {
-  mnemonic?: string;
+import type { HardwareDeviceType } from "@/lib/wallet/hardware/types";
+
+export type SoftwareWalletRec = {
+  type?: "mnemonic";
+  mnemonic: string;
   address: string;
   index: number;
   shown: boolean;
   kind?: "local" | "hardware" | "watch";
 };
+
+export type HardwareWalletRec = {
+  type: "hardware";
+  deviceType: HardwareDeviceType;
+  address: string;
+  index: number;
+  path: string;
+  mnemonic?: undefined;
+  shown?: boolean;
+  deviceInfo?: {
+    model?: string;
+    label?: string;
+    version?: string;
+  };
+};
+
+export type WalletRec = SoftwareWalletRec | HardwareWalletRec;
 
 export type HistoryRow = {
   id: string;
