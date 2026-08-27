@@ -23,7 +23,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             Kovanica
           </span>
           <span className="font-mono text-[10px] tracking-brand text-blue uppercase md:text-xs">
-            DAG
+            Protocol
           </span>
         </Link>
         <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">
