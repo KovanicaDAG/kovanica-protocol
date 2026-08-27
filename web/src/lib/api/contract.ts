@@ -8,8 +8,8 @@ export const NETWORK_ID = "kovanica-testnet-1";
 export const TOKEN = "KVNC";
 export const ATOM = 100_000_000;
 export const DECIMALS = 8;
-export const SUBSIDY = 50 * ATOM;
-export const HALVING_ERA = 1000;
+export const SUBSIDY = 200 * ATOM;
+export const HALVING_ERA = 500_000;
 export const MIN_FEE = 10_000;
 export const K = 3;
 export const TREASURY = "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc";
@@ -38,7 +38,7 @@ export type ApiUtxo = { tx: string; index: number; value: number };
 export type ApiHistoryTx = {
   block: string;
   tx: string;
-  kind: "coinbase" | "in" | "out" | "faucet" | "tap";
+  kind: "coinbase" | "in" | "out" | "faucet";
   delta: number;
 };
 export type ApiNode = {
@@ -132,7 +132,6 @@ export const WRITE_PATHS = [
   "submit",
   "produce",
   "faucet",
-  "tap",
   "mine",
   "miner",
   "mining",

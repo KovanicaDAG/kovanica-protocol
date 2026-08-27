@@ -147,7 +147,7 @@ function DocsBody() {
             Sends need an Ed25519 signature (128 hex) over the <code className="font-mono text-fg">sighash</code> bytes
             from prepare. The wallet does this for you. Preview and Live both verify 64-byte sigs.
           </li>
-          <li>Faucet, tap-mint, reset, and empty-block mining stay off on the public explorer.</li>
+          <li>Faucet, reset, and empty-block mining stay off on the public explorer.</li>
           <li>
             Seed node: listen on TCP 9000, set <code className="font-mono text-fg">KOVANICA_PEERS=off</code> so it does
             not dial itself. Clones must dial a <strong className="text-fg">DNS-only</strong> hostname or the origin

@@ -136,16 +136,7 @@
   }
 }
 
-@keyframes tap-float {
-  0% {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -36px);
-  }
-}
+
 
 .coin-spin {
   animation: coin-idle 8s var(--ease-smooth-out) infinite;

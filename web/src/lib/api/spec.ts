@@ -91,7 +91,7 @@ POST /api/miner?addr=
   operator: set coinbase payee
 
 POST /api/faucet?to=&amount=&kind=
-  preview mint (live 403). kind=tap|faucet (default faucet). kind=tap is Preview only.
+  preview mint (live 403). kind=faucet (default).
 
 POST /api/reset
   preview only
@@ -103,7 +103,7 @@ POST /api/origin?iso3=HRV
 
 Address = Ed25519 public key (64 hex), seed = SHA-256(mnemonic|index|kovanica-wallet-v2).
 Browser signs prepare's sighash; submit never receives the 12 words.
-Faucet and tap-mint stay off on the public explorer.
+Faucet stays off on the public explorer.
 
 ## Line RPC (Rust node stdin)
 

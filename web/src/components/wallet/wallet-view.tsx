@@ -34,7 +34,6 @@ export function WalletView() {
   const walletStore = useLedger((s) => s.wallet);
   const wallet = hydrated ? walletStore : null;
   const setWallet = useLedger((s) => s.setWallet);
-  const claimTaps = useLedger((s) => s.claimTaps);
   const [busy, setBusy] = useState(false);
   const [phrase, setPhrase] = useState("");
   const [to, setTo] = useState("");
@@ -93,29 +92,15 @@ export function WalletView() {
       return;
     }
     void (async () => {
-      if (!live) await settlePendingTaps(wallet.address);
       await refreshChain(wallet.address);
     })();
   }, [wallet?.address, source]);
-
-  async function settlePendingTaps(address: string) {
-    const { tapBalance, claimedTapAtoms } = useLedger.getState();
-    const unclaimed = tapBalance - claimedTapAtoms;
-    if (unclaimed <= 0) return;
-    try {
-      const ok = await creditPreview(address, unclaimed, "tap");
-      if (ok) claimTaps(unclaimed);
-    } catch {
-      /* stay pending until next visit */
-    }
-  }
 
   async function onCreate() {
     setBusy(true);
     try {
       const mnemonic = await createMnemonic();
       const address = await addressFromMnemonic(mnemonic, 0);
-      if (!live) await settlePendingTaps(address);
       setWallet({ mnemonic, address, index: 0, shown: true });
       toast.success("Wallet created — write down the 12 words");
     } catch (e) {
@@ -138,7 +123,6 @@ export function WalletView() {
       } else {
         const mnemonic = await importMnemonic(phrase);
         const address = await addressFromMnemonic(mnemonic, 0);
-        if (!live) await settlePendingTaps(address);
         setWallet({ mnemonic, address, index: 0, shown: false, kind: "local" });
         setPhrase("");
         toast.success("Imported");
@@ -344,7 +328,7 @@ export function WalletView() {
   }
 
   const isHardware = wallet.type === "hardware";
-  const history = live ? (hist?.txs.filter((row) => row.kind !== "tap") ?? []) : (hist?.txs ?? []);
+  const history = hist?.txs ?? [];
 
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-6 px-4 py-6 md:px-6 md:py-8">
@@ -471,12 +455,12 @@ export function WalletView() {
             </div>
             <p className="mt-2 font-mono text-sm leading-relaxed text-fg">{wallet.mnemonic}</p>
             <p className="mt-2 text-xs text-muted">Write these 12 words down. Anyone with them can spend.</p>
-          </section>
-        ) : (
-          <Button type="button" variant="ghost" className="self-start" onClick={() => setWallet({ ...wallet, shown: true })}>
-            Reveal seed
-          </Button>
-        )
+          </div>
+        </section>
+      ) : (
+        <Button type="button" variant="ghost" className="self-start" onClick={() => setWallet({ ...wallet, shown: true })}>
+          Reveal seed
+        </Button>
       )}
 
       <form onSubmit={(e) => void onSend(e)} className="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4">
@@ -548,7 +532,7 @@ export function WalletView() {
         <p className="mb-2 text-[10px] tracking-wide text-subtle uppercase">History</p>
         {history.length === 0 ? (
           <p className="text-sm text-muted">
-            {live ? "No movements on Live yet. Send after the seed is up." : "No movements yet. Tap the coin, use faucet, or send."}
+            {live ? "No movements on Live yet. Send after the seed is up." : "No movements yet. Use faucet or send."}
           </p>
         ) : (
           <ul className="divide-y divide-border rounded-xl border border-border">

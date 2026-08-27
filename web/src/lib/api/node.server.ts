@@ -397,12 +397,12 @@ export function localMine(): { ok: true; block: string } {
 export function localFaucet(
   to: string | null,
   amountRaw: string | null,
-  kindRaw: string | null = null,
+  _kindRaw: string | null = null,
 ): { ok: true; tx: string } | string {
   if (!isAddr(to)) return "to address required";
   const amount = Number(amountRaw ?? ATOM);
   if (!Number.isFinite(amount) || amount <= 0) return "amount required";
-  const kind = kindRaw === "tap" ? "tap" : "faucet";
+  const kind = "faucet";
   const s = store();
   const block = mineBlock(s.blocks, [selectedTip(s.blocks)], s.miner);
   const id = hashHex(`faucet:${kind}:${to}:${amount}:${Date.now()}`);
