@@ -1,4 +1,4 @@
-name: CI & Deploy Kovanica Node
+name: CI & Deploy
 
 on:
   push:
@@ -7,8 +7,8 @@ on:
   pull_request:
 
 jobs:
-  test:
-    name: Build, Test, Lint
+  test-rust:
+    name: Rust — Build, Test, Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -41,20 +41,54 @@ jobs:
           path: target/release/kovanica-node
           retention-days: 7
 
+  build-web:
+    name: Web — Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (node-server preset)
+        run: npm run build:vps
+
+      - name: Upload .output
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-web-output
+          path: web/.output/
+          retention-days: 7
+
   deploy:
     name: Deploy to VPS
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test-rust, build-web]
     # Arm by adding the VPS_* secrets AND setting the DEPLOY_ENABLED repo
     # variable to "true" (Settings -> Secrets and variables -> Actions ->
     # Variables). Until then this job is skipped instead of failing.
     #
-    # Deploy is non-blocking: the Build/Test job above is the real CI gate.
+    # Deploy is non-blocking: the Build/Test jobs above are the real CI gate.
     # A deploy failure here (e.g. the VPS being temporarily unreachable over
     # SSH) is surfaced as a warning on this job but does NOT fail the overall
-    # workflow run, so an infrastructure outage can't red a green build. The
-    # deploy is still attempted on every qualifying push and its failure stays
-    # visible in the job's logs and status.
+    # workflow run, so an infrastructure outage can't red a green build.
     continue-on-error: true
     if: >-
       github.event_name == 'push'
@@ -67,17 +101,23 @@ jobs:
           name: kovanica-node
           path: bin/
 
-      - name: Upload binary to VPS
+      - name: Download web output
+        uses: actions/download-artifact@v4
+        with:
+          name: kovanica-web-output
+          path: web-output/
+
+      - name: Upload artifacts to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USERNAME }}
           key: ${{ secrets.VPS_PRIVATE_KEY }}
           port: 2222
-          source: "bin/kovanica-node"
+          source: "bin/kovanica-node,web-output/"
           target: /root/
 
-      - name: Deploy via SSH
+      - name: Deploy node + web via SSH
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -86,19 +126,22 @@ jobs:
           port: 2222
           script: |
             set -e
-            # Non-interactive SSH does not source ~/.profile
             export PATH="$HOME/.cargo/bin:$PATH"
+
+            # --- Rust node ---
             cd /root/kovanica-protocol
             git pull --ff-only origin main
-            # Replace binary with CI-built artifact (stop first: running
-            # binaries cannot be overwritten — ETXTBSY). The node runs as a
-            # systemd service — same supervisor as seed2/seed3. pm2 is
-            # retired for Kovanica processes (2026-08-24).
             chmod +x ~/bin/kovanica-node
             systemctl stop kovanica-explorer || true
-            # Atomic replace: seed2 executes the same path, so an in-place
-            # copy would hit ETXTBSY. mv swaps the directory entry instead.
             install -m 0755 ~/bin/kovanica-node /usr/local/bin/kovanica-node.new
             mv -f /usr/local/bin/kovanica-node.new /usr/local/bin/kovanica-node
             systemctl start kovanica-explorer
             systemctl restart kovanica-seed2 || true
+
+            # --- Web app ---
+            mkdir -p /root/kovanica-web/.output
+            rsync -a --delete /root/web-output/ /root/kovanica-web/.output/
+            pm2 delete kovanica-web 2>/dev/null || true
+            cd /root/kovanica-web
+            HOST=127.0.0.1 PORT=3010 pm2 start .output/server/index.mjs --name kovanica-web
+            pm2 save
