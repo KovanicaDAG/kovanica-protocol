@@ -75,6 +75,7 @@ jobs:
         with:
           name: kovanica-web-output
           path: web/.output/
+          include-hidden-files: true
           retention-days: 7
 
   deploy:
