@@ -20,7 +20,7 @@
 - [x] **Fix default DNS-seed list** (`dns_seed.rs`): defaults are now the three
       live hosts — `seed`/`seed2`/`seed3.kovanica.online`; `seed.kovanica.net`
       is gone and seed2 resolves again (A `145.223.116.178`)
-- [ ] **Peers rollout**: `seed3.kovanica.online:9000` into the node binary's
+- [x] **Peers rollout**: `seed3.kovanica.online:9000` into the node binary's
       default `KOVANICA_PEERS` and the public `install.sh` (deploy-seed.sh
       already defaults to `seed…,seed3…`)
 - [x] Decide `kovanica-cli` publication: included in public mirror workspace and release assets
@@ -40,8 +40,13 @@ Also this session: process manager unified on systemd — pm2 retired for node
 processes after a supervisor port fight; auto-deploy now swaps the binary
 atomically into `/usr/local/bin/kovanica-node` and restarts units (#25, #26).
 Branch hygiene: every merged feature branch deleted; one archive tag
-(`archive/geo-origin-node-policy`) preserves the only unique unshipped patch. (`k`, finality depth,
-   payload pruning depth, difficulty window)
+(`archive/geo-origin-node-policy`) preserves the only unique unshipped patch.
+
+### Cleanup (scanned 2026-08-27)
+
+- [x] Remove stale `KOVANICA_TAP=0` from `testnet-orchestrate.sh` (TAP removed project-wide 2026-08-24)
+- [x] Implement real metrics collection in `testnet-tune.py` (was placeholder returning `{"note": "not implemented"}`)
+- [x] Fix OPERATIONS.md §1 seed1 process manager reference: pm2 → systemd
 
 ---
 
