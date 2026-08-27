@@ -135,7 +135,7 @@ export function WalletView() {
   }
 
   async function onAccount(index: number) {
-    if (!wallet || wallet.index === index || !wallet.mnemonic) return;
+    if (!wallet || wallet.index === index) return;
     setBusy(true);
     try {
       if (wallet.type === "hardware") {
@@ -154,6 +154,7 @@ export function WalletView() {
         setWallet(updated);
         toast.success(`Switched to Hardware Account ${index}`);
       } else {
+        if (!wallet.mnemonic) return;
         const address = await addressFromMnemonic(wallet.mnemonic, index);
         setWallet({ ...wallet, address, index });
       }
@@ -229,6 +230,12 @@ export function WalletView() {
           amountKvnc: amount,
           feeKvnc: fmtKvnc(fee),
         });
+        setBusy(false);
+        return;
+      }
+
+      if (!wallet.mnemonic) {
+        toast.error("Watch-only wallets cannot send");
         setBusy(false);
         return;
       }

@@ -40,6 +40,7 @@ export type HardwareWalletRec = {
   path: string;
   mnemonic?: undefined;
   shown?: boolean;
+  kind?: "hardware";
   deviceInfo?: {
     model?: string;
     label?: string;
@@ -47,7 +48,16 @@ export type HardwareWalletRec = {
   };
 };
 
-export type WalletRec = SoftwareWalletRec | HardwareWalletRec;
+export type WatchWalletRec = {
+  kind: "watch";
+  address: string;
+  index: number;
+  shown: boolean;
+  mnemonic?: undefined;
+  type?: undefined;
+};
+
+export type WalletRec = SoftwareWalletRec | HardwareWalletRec | WatchWalletRec;
 
 export type HistoryRow = {
   id: string;
