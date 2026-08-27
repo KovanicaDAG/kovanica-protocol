@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "KVNC Wallet",
+  "version": "1.0.0",
+  "description": "KVNC Browser Extension Wallet",
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "Open KVNC Wallet"
+  },
+  "permissions": [
+    "storage"
+  ]
+}
