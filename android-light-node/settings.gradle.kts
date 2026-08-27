@@ -4,6 +4,16 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+    // Composite builds share one buildscript classpath, so all AGP / Kotlin
+    // plugin ids resolve to a single version — the included :kovanica-ffi
+    // module declares its plugins without a version and inherits these.
+    resolutionStrategy.eachPlugin {
+        when (requested.id.id) {
+            "com.android.application",
+            "com.android.library" -> useVersion(libs.versions.agp.get())
+            "org.jetbrains.kotlin.android" -> useVersion(libs.versions.kotlin.get())
+        }
+    }
 }
 
 dependencyResolutionManagement {
