@@ -144,13 +144,72 @@ class ParameterTuner:
         return result
     
     async def collect_metrics(self, duration: int) -> Dict[str, Any]:
-        """Collect metrics from running node"""
-        # This would connect to the explorer's /api/state and /api/metrics
-        # For now, return placeholder
-        await asyncio.sleep(1)
+        """Collect metrics from running node via explorer API"""
+        import aiohttp
+
+        start = time.time()
+        samples: List[Dict[str, Any]] = []
+        explorer_url = "http://127.0.0.1:8080"
+
+        try:
+            async with aiohttp.ClientSession() as session:
+                while time.time() - start < duration:
+                    sample: Dict[str, Any] = {}
+                    try:
+                        async with session.get(f"{explorer_url}/api/head") as r:
+                            head = await r.json()
+                            sample["height"] = head.get("height", 0)
+                            sample["tip"] = head.get("tip", "")[:16]
+                        async with session.get(f"{explorer_url}/api/state") as r:
+                            state = await r.json()
+                            sample["blocks"] = state.get("blocks", 0)
+                            sample["mempool"] = state.get("mempool", 0)
+                            sample["blue_score"] = state.get("blue_score", 0)
+                            sample["disk_usage"] = state.get("disk_usage", 0)
+                        async with session.get(f"{explorer_url}/api/p2p") as r:
+                            p2p = await r.json()
+                            sample["peers"] = p2p.get("peer_count", 0)
+                        sample["timestamp"] = time.time()
+                        samples.append(sample)
+                    except Exception as e:
+                        sample["error"] = str(e)
+                        sample["timestamp"] = time.time()
+                        samples.append(sample)
+                    await asyncio.sleep(5)
+        except Exception as e:
+            return {"error": str(e), "duration": duration, "samples": samples}
+
+        # Aggregate
+        valid = [s for s in samples if "error" not in s]
+        if not valid:
+            return {"error": "no valid samples", "duration": duration}
+
+        heights = [s["height"] for s in valid]
+        disk = [s["disk_usage"] for s in valid]
+        peers = [s["peers"] for s in valid]
+        mempool = [s["mempool"] for s in valid]
+
+        block_rate = 0.0
+        if len(heights) >= 2 and heights[-1] > heights[0]:
+            elapsed = samples[-1]["timestamp"] - samples[0]["timestamp"]
+            block_rate = (heights[-1] - heights[0]) / elapsed if elapsed > 0 else 0
+
         return {
             "duration": duration,
-            "note": "Metrics collection not fully implemented",
+            "samples": len(samples),
+            "valid_samples": len(valid),
+            "height_start": heights[0],
+            "height_end": heights[-1],
+            "blocks_added": heights[-1] - heights[0],
+            "block_rate": round(block_rate, 4),
+            "avg_peers": round(sum(peers) / len(peers), 1),
+            "min_peers": min(peers),
+            "max_peers": max(peers),
+            "avg_mempool": round(sum(mempool) / len(mempool), 1),
+            "disk_start_mb": round(disk[0] / (1024 * 1024), 1) if disk[0] else 0,
+            "disk_end_mb": round(disk[-1] / (1024 * 1024), 1) if disk[-1] else 0,
+            "disk_growth_mb": round((disk[-1] - disk[0]) / (1024 * 1024), 1) if disk[0] and disk[-1] else 0,
+            "fork_count": sum(1 for s in valid if s.get("reorg_detected")),
         }
     
     def save_results(self):

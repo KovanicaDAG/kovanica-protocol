@@ -397,39 +397,53 @@ export function localMine(): { ok: true; block: string } {
 export function localFaucet(
   to: string | null,
   amountRaw: string | null,
+  kindRaw: string | null = null,
 ): { ok: true; tx: string } | string {
   if (!isAddr(to)) return "to address required";
   const amount = Number(amountRaw ?? ATOM);
   if (!Number.isFinite(amount) || amount <= 0) return "amount required";
+  const kind = kindRaw === "tap" ? "tap" : "faucet";
   const s = store();
   const block = mineBlock(s.blocks, [selectedTip(s.blocks)], s.miner);
-  const id = hashHex(`faucet:${to}:${amount}:${Date.now()}`);
-  const tx: Tx = { id, coinbase: false, from: "faucet", to, amount };
+  const id = hashHex(`faucet:${kind}:${to}:${amount}:${Date.now()}`);
+  const tx: Tx = { id, coinbase: false, from: kind, to, amount };
   addTx(block, tx, [{ owner: to, value: amount }]);
   s.history[s.history.length - 1] = {
     owner: to,
     block: block.id,
     tx: id,
-    kind: "faucet",
+    kind,
     delta: amount,
   };
   s.blocks = recast([...s.blocks, block]);
   return { ok: true, tx: id };
 }
 
-export function localFeeEstimate(amountRaw: string | null): { ok: true; fee: number } | string {
+export function localFeeEstimate(amountRaw: string | null): { ok: true; slow: number; normal: number; fast: number } | string {
   let amount = 0;
   if (amountRaw !== null) {
     amount = Number(amountRaw);
     if (!Number.isFinite(amount) || amount < 0) return "amount invalid";
   }
   const s = store();
-  if (s.pending.length === 0) return { ok: true, fee: MIN_FEE };
+  
+  if (s.pending.length === 0) return { ok: true, slow: MIN_FEE, normal: MIN_FEE + 1, fast: MIN_FEE + 2 };
+  
   const fees = s.pending.map((p) => p.fee).sort((a, b) => a - b);
+  const p50 = fees[Math.min(fees.length - 1, Math.floor(fees.length * 0.5))];
   const p90 = fees[Math.min(fees.length - 1, Math.floor(fees.length * 0.9))];
-  let fee = Math.max(MIN_FEE, p90);
-  if (amount > ATOM) fee = Math.round(fee * 1.2);
-  return { ok: true, fee };
+  
+  let slow = Math.max(MIN_FEE, p50);
+  let normal = Math.max(MIN_FEE, p90);
+  let fast = Math.max(MIN_FEE, Math.round(p90 * 1.2));
+  
+  if (amount > ATOM) {
+      slow = Math.round(slow * 1.2);
+      normal = Math.round(normal * 1.2);
+      fast = Math.round(fast * 1.2);
+  }
+  
+  return { ok: true, slow, normal, fast };
 }
 
 export function localMining(on: string | null): { ok: true; mining: boolean } {

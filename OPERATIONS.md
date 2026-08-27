@@ -10,7 +10,7 @@
 
 | Component | Where | Notes |
 | --- | --- | --- |
-| **seed1** (primary) | pm2 `kovanica-explorer`, P2P `:9000`, HTTP loopback `:8080` | auto-mines 1 block/min (`KOVANICA_MINE=1 KOVANICA_MINE_SECS=60`) |
+| **seed1** (primary) | systemd `kovanica-explorer`, P2P `:9000`, HTTP loopback `:8080` | auto-mines 1 block/min (`KOVANICA_MINE=1 KOVANICA_MINE_SECS=60`) |
 | **seed2** (validation instance) | systemd `kovanica-seed2`, P2P `:9001`, HTTP loopback `:18080` | same host as seed1 — proves deploy-seed.sh, no resilience gain |
 | **web** (kovanica.online + wallet + map + explorer pages) | pm2 `kovanica-web`, `127.0.0.1:3010` | built via `npm run build:vps`, deployed to `/root/kovanica-web/.output` |
 | nginx | `/etc/nginx/sites-enabled/explorer.kovanica.online` | `/api/*`→`:8080`, pages→`:3010`, `/download/*`→`/var/www/kovanica-dist/` |

@@ -53,7 +53,7 @@ export function Ranking({ rows, selectedId, query, onQuery, onSelect }: Props) {
       <ol className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         {filtered.length === 0 ? (
           <li className="px-3 py-6 text-center text-sm text-muted">
-            {q ? "No countries match." : "No origin pulses yet. Record yours to add the first one."}
+            {q ? "No countries match." : "No origin pulses yet. Record yours, or tap the coin on Home."}
           </li>
         ) : (
           filtered.map((row, i) => {

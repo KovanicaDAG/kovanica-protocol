@@ -90,8 +90,8 @@ POST /api/mining?on=1
 POST /api/miner?addr=
   operator: set coinbase payee
 
-POST /api/faucet?to=&amount=
-  preview mint from the local treasury (live proxy 403)
+POST /api/faucet?to=&amount=&kind=
+  preview mint (live 403). kind=tap|faucet (default faucet). kind=tap is Preview only.
 
 POST /api/reset
   preview only
@@ -103,7 +103,7 @@ POST /api/origin?iso3=HRV
 
 Address = Ed25519 public key (64 hex), seed = SHA-256(mnemonic|index|kovanica-wallet-v2).
 Browser signs prepare's sighash; submit never receives the 12 words.
-Minting endpoints stay Preview-only; the live proxy refuses them.
+Faucet and tap-mint stay off on the public explorer.
 
 ## Line RPC (Rust node stdin)
 
@@ -124,7 +124,7 @@ Live CORS is closed — this app proxies it server-side.
   KOVANICA_MINE=0 KOVANICA_FAUCET=0 KOVANICA_ALLOW_RESET=0 \\
   KOVANICA_OPERATOR=0 KOVANICA_POW=1 \\
   KOVANICA_LISTEN=0.0.0.0:9000 \\
-  KOVANICA_PEERS=seed.kovanica.online:9000 \\
+  KOVANICA_PEERS=seed.kovanica.online:9000,seed3.kovanica.online:9000 \\
   ./target/release/kovanica-node explorer 127.0.0.1:8080
 
 TCP :9000 is the only P2P path. Do not set peers to explorer.kovanica.online:9000
