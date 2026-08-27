@@ -42,12 +42,6 @@ atomically into `/usr/local/bin/kovanica-node` and restarts units (#25, #26).
 Branch hygiene: every merged feature branch deleted; one archive tag
 (`archive/geo-origin-node-policy`) preserves the only unique unshipped patch.
 
-### Cleanup (scanned 2026-08-27)
-
-- [x] Remove stale `KOVANICA_TAP=0` from `testnet-orchestrate.sh` (TAP removed project-wide 2026-08-24)
-- [x] Implement real metrics collection in `testnet-tune.py` (was placeholder returning `{"note": "not implemented"}`)
-- [x] Fix OPERATIONS.md §1 seed1 process manager reference: pm2 → systemd
-
 ---
 
 ## Previous Session: Multi-Seed Discovery & Kademlia DHT
