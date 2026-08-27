@@ -165,34 +165,33 @@ class MainActivity : ComponentActivity() {
 
     private suspend fun runGate(): GateResult {
         // All FFI + HTTP on the dedicated serialized dispatcher. This suspend
-        // hops off the main thread so Compose stays responsive.
+        // hops off the main thread so Compose stays responsive; the caller's
+        // catch surfaces errors in the UI.
         return withContext(nodeScope.coroutineContext) {
-            try {
-                val netBootstrap = String(httpGet(BOOTSTRAP_URL))
-                val netGenesis = jsonField(netBootstrap, "genesis")
-                val netTip = jsonField(netBootstrap, "tip")
+            val netBootstrap = String(httpGet(BOOTSTRAP_URL))
+            val netGenesis = jsonField(netBootstrap, "genesis")
+            val netTip = jsonField(netBootstrap, "tip")
 
-                val n = node ?: LightNode(liveConfig()).also { node = it }
+            val n = node ?: LightNode(liveConfig()).also { node = it }
 
-                // Genesis parity WITHOUT network: the local node booted to the
-                // same block the network anchors on.
-                val localGenesis = n.blockById(netGenesis.orEmpty())?.idHex ?: "UNKNOWN"
+            // Genesis parity WITHOUT network: the local node booted to the
+            // same block the network anchors on.
+            val localGenesis = n.blockById(netGenesis.orEmpty())?.idHex ?: "UNKNOWN"
 
-                // Pull the live chain and import it.
-                val blob = httpGet(BLOCKS_URL)
-                val count = n.receiveBlocks(blob).toLong()
-                val localTip = n.selectedTip()
+            // Pull the live chain and import it.
+            val blob = httpGet(BLOCKS_URL)
+            val count = n.receiveBlocks(blob).toLong()
+            val localTip = n.selectedTip()
 
-                GateResult(
-                    localGenesis = localGenesis,
-                    netGenesis = netGenesis,
-                    genesisMatch = localGenesis == netGenesis,
-                    count = count,
-                    localTip = localTip,
-                    netTip = netTip,
-                    tipMatch = localTip == netTip,
-                )
-            }
+            GateResult(
+                localGenesis = localGenesis,
+                netGenesis = netGenesis,
+                genesisMatch = localGenesis == netGenesis,
+                count = count,
+                localTip = localTip,
+                netTip = netTip,
+                tipMatch = localTip == netTip,
+            )
         }
     }
 }
