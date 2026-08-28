@@ -21,3 +21,6 @@ AGENTS.project.md
 target/
 data/
 crates/kovanica-node/data/
+
+# deepwork state
+.slim/deepwork/

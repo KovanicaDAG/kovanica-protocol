@@ -97,6 +97,7 @@ crates/
       ledger.rs                apply_block()/apply_dag() (batch) + Ledger (per-block state, stateful insert, snapshot, finality/pruning)
       store.rs                 LedgerStore: incremental append-only on-disk replay log
       validation.rs            TxStructureValidator: context-free structural checks (a BlockValidator)
+      multisig.rs               M-of-N multisignature (RFC-001 P2SH): MultisigScript, script hash, threshold signature verification (see docs/RFC-001-Multisig.md)
     tests/
       ledger.rs                Integration + adversarial (double-spend across parallel blocks, order-independence)
       validation.rs            Integration: structural rejection at insert vs stateful rejection at apply
@@ -105,6 +106,7 @@ crates/
       store.rs                 Integration: append-only log grows; reopen matches snapshot
       finality.rs              Integration: finality-depth pruning, deep-reorg rejection, implicit re-org
       difficulty.rs            Integration: Ledger::set_difficulty enforces work/timestamp end-to-end
+      multisig_consensus.rs     Adversarial consensus suite for RFC-001 multisig (35 tests: M-of-N spends, malformed scripts, activation gating, mixed P2PK/P2SH, snapshot roundtrip)
   kovanica-node/               Runnable node binary, mempool, and block gossip (third slice + multi-node)
     src/
       lib.rs                   Crate docs + re-exports + a doctest of the RPC
@@ -132,9 +134,43 @@ crates/
       p2p.rs                   Integration: discovery, relay, tx dissemination, mempool eviction
       relay.rs                 Integration: persistent TCP session, block/tx over a live socket
       timestamps.rs            Integration: wall-clock timestamp policy (pinned clock, monotone stamps, far-future reject)
+      challenger_1_mining_adversarial.rs   Adversarial/empirical stress on external mining endpoints (9 tests: malformed JSON, invalid parents, corrupted payloads, work/nonce types, timestamp drift, template queries, fuzz burst)
+      challenger_external_mining.rs        Empirical external-mining JSON endpoint suite (7 tests: full mine loop, invalid nonce, duplicate idempotency, mempool packing, custom payout, mesh propagation, malformed inputs)
+      challenger_e2e_mining_lifecycle.rs   Challenger 2 e2e external-mining lifecycle + consensus integration harness (1 test: template → PoW → submit → DAG/mempool/coinbase verification)
+      challenger_consensus_sync.rs         Empirical consensus-invariant suite (10 tests: difficulty retarget clamps, SPV difficulty bounds, wall-clock drift, reorg locator sync, deep-reorg/fork convergence)
 ```
 
 VRF is shipped (Stage 3) — see `crates/kovanica-dag/src/vrf.rs` above and the Stage 3 checklist.
+
+### Multisig — RFC-001 (M-of-N witness payloads & P2SH)
+
+Shipped in `kovanica-state`; full spec in `docs/RFC-001-Multisig.md`. Multisig
+outputs lock value behind a **threshold redeem script** and spend via a witness
+stack, using **Version 0x01 (P2SH)** addresses distinct from the ordinary
+Version 0x00 (P2PK) single-key addresses.
+
+- **Redeem script** `[M (1B), N (1B), pk_1 (32B), …, pk_N (32B)]`; `1 <= M <= N`,
+  `N <= 16` (`MAX_MULTISIG_KEYS`). Strictly validated at parse (M/N bounds,
+  exact length, valid distinct Ed25519 points).
+- **Address** = `0x01 || BLAKE3(redeem_script)` (33 versioned bytes; renders as
+  `kvnc…dag` like P2PK). `MultisigScript::address()` / `Address::from_script`.
+- **Witness layout** on a P2SH input: `witness[0]` = raw redeem script,
+  `witness[1..=M]` = exactly `M` valid 64-byte Ed25519 signatures over the
+  transaction `sighash` (BLAKE3 of the witness-free encoding). Spend validation
+  checks script-hash match, script validity, witness count (`1 + M`), signature
+  size, and threshold verification against **distinct** authorized keys
+  (duplicates rejected).
+- **Activation gating**: P2SH is a consensus upgrade gated on blue score
+  (`MULTISIG_ACTIVATION_SCORE = 0` default; `Ledger::set_multisig_activation_score`).
+  Pre-activation (`blue_score <= activation_score`) rejects P2SH outputs and
+  P2SH/multi-witness spends (`PreActivationMultisig`); post-activation P2PK
+  remains valid forever. Enforced identically in the incremental `Ledger` and
+  batch `apply_dag`/`apply_block` paths.
+- **Tests**: `crates/kovanica-state/tests/multisig_consensus.rs` (35 tests) —
+  M-of-N spends (1-of-1 … 16-of-16), invalid M/N, malformed scripts, hash
+  mismatches, witness anomalies, crypto integrity, duplicate-signature attacks,
+  activation boundary, mixed P2PK/P2SH blocks, parallel-DAG double-spend, and
+  snapshot roundtrip.
 
 ### Web app — Grok preview bridge (dev-only)
 
@@ -714,9 +750,12 @@ deterministic + adversarial tests per the conventions above.
 
 ### Beyond
 
-Ideas parked until Stages 1–3 close: light clients / SPV-style proofs over
-the linearized chain, multi-seed discovery (DNS seeds / DHT), and anything
-the testnet teaches us it needs.
+Formerly-parked ideas that have since shipped (see Post-Stage 3 below):
+**light clients / SPV-style proofs** over the linearized chain (header chain,
+Merkle proofs, Golomb-Rice block filters, `SpvClient`) and **multi-seed
+discovery** (DNS seeds + DHT Kademlia) — the latter shipped with its remaining
+deployment wiring tracked in `TODO.md`. Still parked: anything the testnet
+teaches us it needs.
 
 ### Post-Stage 3 — Production hardening (suggested order)
 

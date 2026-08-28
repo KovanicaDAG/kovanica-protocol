@@ -31,6 +31,15 @@ jobs:
       - name: Tests (unit + integration + doctests)
         run: cargo test
 
+      - name: Audit dependencies (cargo audit)
+        uses: actions-rust-lang/audit@v1
+        with:
+          # Hard gate, consistent with fmt/clippy/test: any RustSec
+          # advisory in the workspace fails the build. The workspace is
+          # currently clean (0 advisories), so this never blocks a green
+          # build today; it only catches future regressions.
+          denyWarnings: true
+
       - name: Build release binary
         run: cargo build --release --workspace
 

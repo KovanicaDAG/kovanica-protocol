@@ -13,7 +13,9 @@ use std::thread;
 use std::time::Duration;
 
 use kovanica_dag::{Block, BlockId};
-use kovanica_state::{decode_block_payload, encode_block_payload, Address, Transaction};
+use kovanica_state::{
+    decode_block_payload, encode_block_payload, Address, HybridConfig, Transaction,
+};
 
 use crate::dht::{NodeId, PeerContact, RoutingTable};
 use crate::dns_seed::{DnsSeedConfig, DnsSeedResolver};
@@ -22,7 +24,8 @@ use crate::metrics::{
     set_peer_count,
 };
 use crate::net::{
-    encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first, sync_headers_first,
+    decode_records, encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first,
+    sync_headers_first,
 };
 use crate::node::{BlockRecord, Node, HALVING_ERA};
 use crate::p2p::Mesh;
@@ -36,11 +39,84 @@ const GENESIS_SUBSIDY: u64 = 200 * ATOM;
 const GENESIS_PREMINE: u64 = 200 * ATOM;
 /// Founder actor seed used by `genesis_node()` (deterministic keys).
 const FOUNDER_SEED: u64 = 1;
-const NETWORK: &str = "kovanica-testnet";
 const ACTORS: [u64; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 /// Single P2P path: plaintext TCP. Not 80/443/3010/8080 and not libp2p :30333.
 const P2P_LISTEN_DEFAULT: &str = "0.0.0.0:9000";
 const P2P_BOOTSTRAP: &str = "seed.kovanica.online:9000,seed3.kovanica.online:9000";
+
+/// A network profile: identity, genesis parameters, and data-dir isolation.
+///
+/// The active profile is selected once at boot from `KOVANICA_NETWORK`
+/// (default `kovanica-testnet`). Each profile owns a distinct data directory,
+/// so a node booted for one network can never wipe another network's data via
+/// the [`ensure_network`] marker check — a mainnet node cannot destroy testnet
+/// state and vice versa.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NetworkProfile {
+    /// Network id — reported by `/api/bootstrap`, `/api/head` and the
+    /// snapshot, and written to the `network` marker file.
+    id: &'static str,
+    /// GHOSTDAG `k` parameter for this network's genesis.
+    genesis_k: u16,
+    /// Per-block subsidy cap at genesis (atoms).
+    genesis_subsidy: u64,
+    /// Founder premine minted by the genesis coinbase (atoms).
+    genesis_premine: u64,
+    /// Founder actor seed (deterministic keys).
+    founder_seed: u64,
+    /// Dormant placeholder: genesis parameters are TBD and the profile refuses
+    /// to boot unless explicitly overridden.
+    dormant: bool,
+}
+
+impl NetworkProfile {
+    /// The live testnet — the default profile.
+    fn testnet() -> Self {
+        Self {
+            id: "kovanica-testnet",
+            genesis_k: 3,
+            genesis_subsidy: GENESIS_SUBSIDY,
+            genesis_premine: GENESIS_PREMINE,
+            founder_seed: FOUNDER_SEED,
+            dormant: false,
+        }
+    }
+
+    /// The mainnet profile — **DORMANT**. Final genesis parameters are TBD and
+    /// must be decided by the protocol owners before launch; this placeholder
+    /// exists so the profile plumbing (network id, data-dir isolation, faucet
+    /// gating) is in place without inventing consensus values. Do not fill in
+    /// numbers here — that is a consensus decision, not an implementation one.
+    fn mainnet() -> Self {
+        Self {
+            id: "kovanica-mainnet",
+            genesis_k: 0,       // TBD — do not invent
+            genesis_subsidy: 0, // TBD — do not invent
+            genesis_premine: 0, // TBD — do not invent
+            founder_seed: 0,    // TBD — do not invent
+            dormant: true,
+        }
+    }
+}
+
+/// The active network profile, selected from `KOVANICA_NETWORK` (default
+/// `kovanica-testnet`). The mainnet profile is dormant: selecting it without
+/// `KOVANICA_MAINNET_OVERRIDE=1` refuses to boot rather than inventing
+/// consensus parameters. The default is always testnet — mainnet is never
+/// activated implicitly.
+fn network_profile() -> NetworkProfile {
+    match std::env::var("KOVANICA_NETWORK").as_deref() {
+        Ok("kovanica-mainnet") | Ok("mainnet") => {
+            if !env_flag("KOVANICA_MAINNET_OVERRIDE", false) {
+                panic!(
+                    "kovanica-mainnet is DORMANT: genesis parameters are TBD.                      Set KOVANICA_MAINNET_OVERRIDE=1 to force boot (unsafe; do not use in production)."
+                );
+            }
+            NetworkProfile::mainnet()
+        }
+        _ => NetworkProfile::testnet(),
+    }
+}
 
 /// WebSocket message types for real-time updates
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -113,6 +189,14 @@ pub struct Explorer {
     pub ticks: u64,
     pub rotate: usize,
     pub faucet: bool,
+    /// Total atoms the faucet has paid out per address (lifetime, persisted).
+    faucet_given: HashMap<String, u64>,
+    /// Per-IP token buckets for HTTP API rate limiting.
+    rate_limits: HashMap<String, TokenBucket>,
+    /// Tokens refilled per second per IP.
+    rate_limit_rate: f64,
+    /// Token bucket capacity (burst) per IP.
+    rate_limit_burst: f64,
     pub allow_reset: bool,
     pub operator: bool,
     pub listen: Vec<TcpListener>,
@@ -147,6 +231,11 @@ impl Explorer {
             ticks: 0,
             rotate: 0,
             faucet: true,
+            faucet_given: HashMap::new(),
+            rate_limits: HashMap::new(),
+            // Tests: effectively unlimited so existing suites stay deterministic.
+            rate_limit_rate: 1_000.0,
+            rate_limit_burst: 1_000.0,
             allow_reset: true,
             operator: true,
             listen: Vec::new(),
@@ -392,6 +481,7 @@ impl Explorer {
         }
         let _config = DnsSeedConfig::default();
         let dns_resolver = Some(DnsSeedResolver::new(crate::dns_seed::StdDnsResolver));
+        let (rate_limit_rate, rate_limit_burst) = rate_limit_from_env();
         let mut app = Self {
             mesh,
             selected: "alpha".into(),
@@ -400,6 +490,10 @@ impl Explorer {
             ticks: 0,
             rotate: 0,
             faucet: env_flag("KOVANICA_FAUCET", false),
+            faucet_given: load_faucet_given(),
+            rate_limits: HashMap::new(),
+            rate_limit_rate,
+            rate_limit_burst,
             allow_reset: env_flag("KOVANICA_ALLOW_RESET", false),
             operator: env_flag("KOVANICA_OPERATOR", false),
             listen,
@@ -426,9 +520,22 @@ impl Explorer {
 }
 
 fn data_dir() -> PathBuf {
-    std::env::var("KOVANICA_DATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("data"))
+    if let Ok(dir) = std::env::var("KOVANICA_DATA") {
+        return PathBuf::from(dir);
+    }
+    data_dir_for(&network_profile())
+}
+
+/// The data directory a profile owns. The default testnet keeps the legacy
+/// `data/` location (existing deployments live there); every other network —
+/// mainnet included — gets its own `data/<network-id>/` subdirectory so the
+/// [`ensure_network`] wipe can never cross network boundaries.
+fn data_dir_for(profile: &NetworkProfile) -> PathBuf {
+    if profile.id == "kovanica-testnet" {
+        PathBuf::from("data")
+    } else {
+        PathBuf::from("data").join(profile.id)
+    }
 }
 
 fn snap_path(name: &str) -> PathBuf {
@@ -472,7 +579,15 @@ fn load_or_genesis(name: &str) -> Node {
     if snap.is_file() {
         let mut node = Node::new();
         if let Some(p) = snap.to_str() {
-            if node.load(p).is_ok() {
+            // Hybrid-era snapshots must replay under the same policy or staked
+            // ids silently change (identity-preserving replay lesson). Load
+            // with the hybrid reader when the operator runs hybrid mode.
+            let loaded = if env_flag("KOVANICA_HYBRID", false) {
+                node.load_with_hybrid(p, HybridConfig::default())
+            } else {
+                node.load(p)
+            };
+            if loaded.is_ok() {
                 if let Ok(h) = fs::read_to_string(miner_path(name)) {
                     if let Ok(addr) = parse_addr(h.trim()) {
                         node.set_miner(addr);
@@ -480,7 +595,9 @@ fn load_or_genesis(name: &str) -> Node {
                 } else {
                     node.set_miner(Node::address(1));
                 }
-                if env_flag("KOVANICA_POW", true) {
+                if env_flag("KOVANICA_HYBRID", false) {
+                    // Hybrid admission is already active on the loaded ledger.
+                } else if env_flag("KOVANICA_POW", true) {
                     let _ = node.set_proof_of_work(true);
                 }
                 return node;
@@ -501,10 +618,22 @@ fn line_mesh() -> Mesh {
 }
 
 fn genesis_node() -> Node {
+    let profile = network_profile();
     let mut node = Node::new();
-    node.genesis(3, GENESIS_SUBSIDY, GENESIS_PREMINE, FOUNDER_SEED)
-        .expect("genesis");
-    if env_flag("KOVANICA_POW", true) {
+    node.genesis(
+        profile.genesis_k,
+        profile.genesis_subsidy,
+        profile.genesis_premine,
+        profile.founder_seed,
+    )
+    .expect("genesis");
+    // Hybrid PoW + staked-VRF admission (A2 uplink): opt-in via
+    // `KOVANICA_HYBRID=1`. When on, the ledger owns admission and the DAG's
+    // own PoW switch is cleared by `set_hybrid` — so the two modes are
+    // mutually exclusive here, never stacked.
+    if env_flag("KOVANICA_HYBRID", false) {
+        let _ = node.enable_hybrid(HybridConfig::default());
+    } else if env_flag("KOVANICA_POW", true) {
         let _ = node.set_proof_of_work(true);
     }
     node
@@ -515,6 +644,95 @@ fn env_flag(name: &str, default: bool) -> bool {
         Ok(v) => matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "on"),
         Err(_) => default,
     }
+}
+
+/// A token bucket: `capacity` tokens, refilled at `rate` per second.
+/// [`TokenBucket::allow`] consumes one token and reports whether the request
+/// may proceed. Deterministic in the sense that the refill is a pure function
+/// of elapsed time; tests drive it with `rate = 0` (no refill) so exhaustion
+/// is immediate and stable.
+#[derive(Clone, Debug)]
+struct TokenBucket {
+    rate: f64,
+    capacity: f64,
+    tokens: f64,
+    last: std::time::Instant,
+}
+
+impl TokenBucket {
+    fn new(rate: f64, capacity: f64) -> Self {
+        Self {
+            rate,
+            capacity,
+            tokens: capacity,
+            last: std::time::Instant::now(),
+        }
+    }
+
+    fn allow(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(self.last).as_secs_f64();
+        self.tokens = (self.tokens + elapsed * self.rate).min(self.capacity);
+        self.last = now;
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Per-IP HTTP rate limiting, from `KOVANICA_RATE_LIMIT` (tokens/second,
+/// default 10) and `KOVANICA_RATE_BURST` (bucket capacity, default 60).
+fn rate_limit_from_env() -> (f64, f64) {
+    let rate: f64 = std::env::var("KOVANICA_RATE_LIMIT")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(10.0)
+        .max(0.0);
+    let burst: f64 = std::env::var("KOVANICA_RATE_BURST")
+        .ok()
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(60.0)
+        .max(1.0);
+    (rate, burst)
+}
+
+/// Faucet: testnet-only, per-address lifetime cap (5 KVNC).
+const FAUCET_MAX_PER_ADDRESS: u64 = 5 * ATOM;
+
+fn faucet_path() -> PathBuf {
+    data_dir().join("faucet.txt")
+}
+
+fn load_faucet_given() -> HashMap<String, u64> {
+    let mut map = HashMap::new();
+    let Ok(text) = fs::read_to_string(faucet_path()) else {
+        return map;
+    };
+    for line in text.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(addr) = parts.next() else {
+            continue;
+        };
+        let Some(n) = parts.next().and_then(|s| s.parse().ok()) else {
+            continue;
+        };
+        map.insert(addr.to_string(), n);
+    }
+    map
+}
+
+fn save_faucet_given(map: &HashMap<String, u64>) {
+    let mut rows: Vec<_> = map.iter().collect();
+    rows.sort_by(|a, b| a.0.cmp(b.0));
+    let body: String = rows
+        .into_iter()
+        .map(|(k, v)| format!("{k} {v}\n"))
+        .collect();
+    let _ = fs::create_dir_all(data_dir());
+    let _ = fs::write(faucet_path(), body);
 }
 
 /// Explorer loop sleeps 40ms per tick.
@@ -533,12 +751,12 @@ fn mine_every_ticks() -> u64 {
 fn ensure_network() {
     let marker = data_dir().join("network");
     let ok = fs::read_to_string(&marker)
-        .map(|s| s.trim() == NETWORK)
+        .map(|s| s.trim() == network_profile().id)
         .unwrap_or(false);
     if !ok {
         wipe_data();
         let _ = fs::create_dir_all(data_dir());
-        let _ = fs::write(marker, NETWORK);
+        let _ = fs::write(marker, network_profile().id);
     }
 }
 
@@ -817,6 +1035,30 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
     // Record HTTP request metric
     record_explorer_http_request(path, 200); // Will update with actual status later
 
+    // Per-IP token-bucket rate limiting (D1): a misbehaving client cannot
+    // hammer the API. Every request counts — static assets, the WS upgrade,
+    // and the JSON endpoints alike; a browser's normal polling sits far below
+    // the default 10 req/s. Exhausted buckets get 429.
+    let peer_ip = stream
+        .peer_addr()
+        .map(|a| a.ip().to_string())
+        .unwrap_or_default();
+    let allowed = {
+        let bucket = app
+            .rate_limits
+            .entry(peer_ip)
+            .or_insert_with(|| TokenBucket::new(app.rate_limit_rate, app.rate_limit_burst));
+        bucket.allow()
+    };
+    if !allowed {
+        return respond(
+            &mut stream,
+            429,
+            "application/json",
+            b"{\"ok\":false,\"error\":\"rate limit exceeded\"}",
+        );
+    }
+
     // WebSocket upgrade
     if method == "GET" && path == "/ws" && headers_str.contains("Upgrade: websocket") {
         return handle_websocket(app, stream, &headers_str);
@@ -908,9 +1150,10 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
                 .chain(std::iter::once(app.listen_addr.clone()).filter(|s| !s.is_empty()))
                 .map(|s| jstr(&s)),
         );
+        let profile = network_profile();
         let body = format!(
-            "{{\"network\":{},\"genesis\":{},\"tip\":{},\"listen\":{},\"peers\":{},\"pow\":{},\"min_fee\":{},\"atom\":{},\"token\":\"KVNC\",\"k\":3,\"subsidy\":{},\"founder_amount\":{},\"founder_seed\":{}}}",
-            jstr(NETWORK),
+            "{{\"network\":{},\"genesis\":{},\"tip\":{},\"listen\":{},\"peers\":{},\"pow\":{},\"min_fee\":{},\"atom\":{},\"token\":\"KVNC\",\"k\":{},\"subsidy\":{},\"founder_amount\":{},\"founder_seed\":{}}}",
+            jstr(profile.id),
             jstr(&genesis),
             jstr(&tip),
             jstr(&app.listen_addr),
@@ -918,9 +1161,10 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
             pow,
             min_fee,
             ATOM,
-            GENESIS_SUBSIDY,
-            GENESIS_PREMINE,
-            FOUNDER_SEED
+            profile.genesis_k,
+            profile.genesis_subsidy,
+            profile.genesis_premine,
+            profile.founder_seed
         );
         return respond(&mut stream, 200, "application/json", body.as_bytes());
     }
@@ -942,7 +1186,7 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
             let blocks = n.block_count().unwrap_or(0);
             let body = format!(
                 "{{\"network\":{},\"genesis\":{},\"tip\":{},\"blocks\":{},\"min_fee\":{},\"atom\":{}}}",
-                jstr(NETWORK),
+                jstr(network_profile().id),
                 jstr(&genesis),
                 jstr(&tip),
                 blocks,
@@ -975,6 +1219,73 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
             return respond(&mut stream, 200, "application/octet-stream", &bytes);
         }
     }
+    if method == "GET" && path == "/api/light_sync" {
+        // SPV light-sync blob (A3): the selected chain as verified headers +
+        // per-block Golomb-Rice filters, byte-compatible with the FFI's `KVLS`
+        // v1 format so a phone's `receive_light_sync` consumes it directly.
+        // `?from=<block-id>` returns only headers strictly after that block
+        // (the client already has it) for incremental sync; an unknown or
+        // off-chain `from` falls back to the full blob.
+        if let Some(n) = app.mesh.node(&app.selected) {
+            let bytes = light_sync_blob(n, query.get("from").map(|s| s.as_str()));
+            return respond(&mut stream, 200, "application/octet-stream", &bytes);
+        }
+    }
+    if method == "GET" && path == "/api/light_proof" {
+        // Merkle-inclusion proof for one transaction, for a light client to
+        // verify against the header it already synced (`merkle_proof` helper).
+        let Some(block_hex) = query.get("block") else {
+            let err = "{\"ok\":false,\"error\":\"block id required\"}";
+            return respond(&mut stream, 400, "application/json", err.as_bytes());
+        };
+        let Some(tx_hex) = query.get("tx") else {
+            let err = "{\"ok\":false,\"error\":\"tx id required\"}";
+            return respond(&mut stream, 400, "application/json", err.as_bytes());
+        };
+        let block_id = match hex::decode(block_hex.trim())
+            .ok()
+            .and_then(|b| <[u8; 32]>::try_from(b).ok())
+            .map(BlockId::from_bytes)
+        {
+            Some(id) => id,
+            None => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("block id must be 32-byte hex")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx_id = match hex::decode(tx_hex.trim())
+            .ok()
+            .and_then(|b| <[u8; 32]>::try_from(b).ok())
+            .map(kovanica_state::TxId::from_bytes)
+        {
+            Some(id) => id,
+            None => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("tx id must be 32-byte hex")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        if let Some(n) = app.mesh.node(&app.selected) {
+            match n.merkle_proof(&block_id, &tx_id) {
+                Some(proof) => {
+                    let bytes = encode_merkle_proof(&proof);
+                    return respond(&mut stream, 200, "application/octet-stream", &bytes);
+                }
+                None => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr("no proof: unknown block or tx")
+                    );
+                    return respond(&mut stream, 404, "application/json", err.as_bytes());
+                }
+            }
+        }
+    }
     if method == "GET" && path == "/api/history" {
         match history_json(app, &query) {
             Ok(body) => return respond(&mut stream, 200, "application/json", body.as_bytes()),
@@ -992,6 +1303,20 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
             .get("node")
             .cloned()
             .unwrap_or_else(|| app.selected.clone());
+
+        // Staked-block uplink (plan 9d-a, locked decision): a phone that won
+        // the VRF sortition uploads its block in the gossip wire format
+        // (`encode_records` — the same octet-stream framing `/api/blocks`
+        // serves), which carries the VRF bundle a JSON body cannot express.
+        // `Content-Type: application/octet-stream` selects the wire path; the
+        // JSON path below is unchanged for PoW miners.
+        let is_wire = headers_str.lines().any(|l| {
+            let l = l.to_ascii_lowercase();
+            l.starts_with("content-type:") && l.contains("application/octet-stream")
+        });
+        if is_wire {
+            return submit_wire_block(app, &node_name, &body_bytes, &mut stream);
+        }
 
         // Parse JSON request body
         let json_body: serde_json::Value = match serde_json::from_str(&body_str) {
@@ -1204,6 +1529,141 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
         }
     }
     respond(&mut stream, 404, "text/plain; charset=utf-8", b"not found")
+}
+
+/// Accept one or more blocks in the gossip wire format (`encode_records`
+/// framing) on `POST /api/mine/submit`. This is the staked-block uplink: the
+/// wire format is the only body that can carry a [`BlockRecord`]'s VRF bundle,
+/// so a phone that won the sortition can push its block exactly as a peer
+/// would receive it. Records are applied in order — parents must precede
+/// children, the same contract as a full `/api/blocks` sync. Admission is
+/// delegated entirely to [`Node::receive_block`] (and through it the ledger's
+/// hybrid PoW / staked-VRF rules); no PoW pre-check is duplicated here.
+/// Returns the last admitted block id.
+fn submit_wire_block(
+    app: &mut Explorer,
+    node_name: &str,
+    body: &[u8],
+    stream: &mut TcpStream,
+) -> std::io::Result<()> {
+    let records = match decode_records(body) {
+        Ok(records) if !records.is_empty() => records,
+        Ok(_) => {
+            let err = "{\"ok\":false,\"error\":\"empty wire body: no block records\"}";
+            return respond(stream, 400, "application/json", err.as_bytes());
+        }
+        Err(e) => {
+            let err = format!(
+                "{{\"ok\":false,\"error\":{}}}",
+                jstr(&format!("undecodable wire body: {e}"))
+            );
+            return respond(stream, 400, "application/json", err.as_bytes());
+        }
+    };
+
+    let mut admitted: Vec<(BlockRecord, BlockId)> = Vec::with_capacity(records.len());
+    {
+        let Some(node) = app.mesh.node_mut(node_name) else {
+            let err = format!("{{\"ok\":false,\"error\":\"unknown node {}\"}}", node_name);
+            return respond(stream, 400, "application/json", err.as_bytes());
+        };
+        for record in &records {
+            match node.receive_block(record.clone()) {
+                Ok(id) => admitted.push((record.clone(), id)),
+                Err(e) => {
+                    let err = format!("{{\"ok\":false,\"error\":{}}}", jstr(&e.to_string()));
+                    return respond(stream, 400, "application/json", err.as_bytes());
+                }
+            }
+        }
+    }
+    for (record, _id) in &admitted {
+        app.mesh.announce_block(node_name, record.clone());
+    }
+    persist_all(&app.mesh);
+    let body = match admitted.last() {
+        Some((_, id)) => format!("{{\"ok\":true,\"block\":{}}}", jstr(&id.to_string())),
+        None => "{\"ok\":true}".into(),
+    };
+    respond(stream, 200, "application/json", body.as_bytes())
+}
+
+/// Light-sync blob framing, byte-compatible with the FFI's `KVLS` v1 format
+/// (`crates/kovanica-ffi` `export_light_sync`): magic + version + count, then
+/// per selected-chain block a 160-byte header followed by its Golomb-Rice
+/// filter. A phone's `receive_light_sync` consumes this blob directly.
+const LIGHT_SYNC_MAGIC: &[u8; 4] = b"KVLS";
+const LIGHT_SYNC_VERSION: u8 = 1;
+/// Golomb-Rice parameter for the per-block filters (the FFI's reference choice).
+const LIGHT_SYNC_FILTER_K: u8 = 8;
+
+fn encode_spv_header(h: &kovanica_state::spv::BlockHeader, out: &mut Vec<u8>) {
+    out.extend_from_slice(h.id.as_bytes());
+    out.extend_from_slice(h.prev_hash.as_bytes());
+    out.extend_from_slice(&h.merkle_root);
+    out.extend_from_slice(&h.work.to_be_bytes());
+    out.extend_from_slice(&h.timestamp_ms.to_be_bytes());
+    out.extend_from_slice(&h.nonce.to_be_bytes());
+    out.extend_from_slice(&h.blue_score.to_be_bytes());
+    out.extend_from_slice(&h.chain_blue_work.to_be_bytes());
+    out.extend_from_slice(&h.height.to_be_bytes());
+}
+
+fn encode_spv_filter(f: &kovanica_state::spv::BlockFilter, out: &mut Vec<u8>) {
+    out.push(f.k);
+    out.extend_from_slice(&f.n.to_be_bytes());
+    out.extend_from_slice(&(f.data.len() as u32).to_be_bytes());
+    out.extend_from_slice(&f.data);
+}
+
+/// Assemble the light-sync blob from the shipped node helpers
+/// ([`Node::export_spv_headers`] + [`Node::block_filter`]). `from` selects an
+/// incremental window: headers strictly after `from` (exclusive) to the tip.
+fn light_sync_blob(n: &Node, from: Option<&str>) -> Vec<u8> {
+    let headers = n.export_spv_headers();
+    let start = from
+        .and_then(|s| hex::decode(s.trim()).ok())
+        .and_then(|b| <[u8; 32]>::try_from(b).ok())
+        .and_then(|bytes| {
+            let from_id = BlockId::from_bytes(bytes);
+            headers.iter().position(|h| h.id == from_id).map(|i| i + 1)
+        })
+        .unwrap_or(0);
+    let mut out = Vec::new();
+    out.extend_from_slice(LIGHT_SYNC_MAGIC);
+    out.push(LIGHT_SYNC_VERSION);
+    out.extend_from_slice(&((headers.len() - start) as u32).to_be_bytes());
+    for h in &headers[start..] {
+        encode_spv_header(h, &mut out);
+        match n.block_filter(&h.id, LIGHT_SYNC_FILTER_K) {
+            Some(f) => encode_spv_filter(&f, &mut out),
+            None => encode_spv_filter(
+                &kovanica_state::spv::BlockFilter {
+                    k: LIGHT_SYNC_FILTER_K,
+                    n: 1,
+                    data: Vec::new(),
+                },
+                &mut out,
+            ),
+        }
+    }
+    out
+}
+
+/// Merkle-proof blob, byte-compatible with the FFI's `encode_proof` layout:
+/// tx_id(32) + merkle_root(32) + path_len(4) + path(32 each) + index(8) +
+/// tx_count(8).
+fn encode_merkle_proof(p: &kovanica_state::spv::MerkleProof) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&p.tx_id);
+    out.extend_from_slice(&p.merkle_root);
+    out.extend_from_slice(&(p.path.len() as u32).to_be_bytes());
+    for s in &p.path {
+        out.extend_from_slice(s);
+    }
+    out.extend_from_slice(&(p.index as u64).to_be_bytes());
+    out.extend_from_slice(&(p.tx_count as u64).to_be_bytes());
+    out
 }
 
 fn estimate_fee(node: &Node, _amount: u64) -> Result<(u64, u64, u64), String> {
@@ -1421,12 +1881,31 @@ fn dispatch(
             if !app.faucet {
                 return Err("faucet disabled".into());
             }
+            // D1: the faucet is testnet-only. On any other profile (mainnet
+            // included) it refuses to pay out regardless of the operator flag.
+            if network_profile().id != "kovanica-testnet" {
+                return Err("faucet is testnet-only".into());
+            }
             let to = parse_addr(q.get("to").ok_or("to address required")?)?;
             let amount = parse_u64(q, "amount", ATOM)?;
+            if amount > FAUCET_MAX_PER_ADDRESS {
+                return Err(format!(
+                    "faucet max {FAUCET_MAX_PER_ADDRESS} atoms per request"
+                ));
+            }
+            // Per-address lifetime cap: an address cannot drain the operator
+            // funds by replaying the faucet.
+            let key = to.to_hex();
+            let given = app.faucet_given.get(&key).copied().unwrap_or(0);
+            if given.saturating_add(amount) > FAUCET_MAX_PER_ADDRESS {
+                return Err("faucet per-address cap reached".into());
+            }
             let block = app
                 .mesh
                 .send_to(&node, 1, amount, to)
                 .map_err(|e| e.to_string())?;
+            app.faucet_given.insert(key, given + amount);
+            save_faucet_given(&app.faucet_given);
             app.mesh.drain(8);
             return Ok(format!(
                 "{{\"ok\":true,\"block\":{}}}",
@@ -1668,7 +2147,7 @@ fn snapshot(app: &Explorer) -> String {
         app.faucet,
         app.allow_reset,
         app.operator,
-        jstr(NETWORK),
+        jstr(network_profile().id),
         jstr(&app.listen_addr),
         jarr(app.peers.iter().map(|s| jstr(s))),
         app.mesh.now(),
@@ -2096,34 +2575,51 @@ mod tests {
         let _ = c.write_all(b"x"); // accepted is all we prove; write may race close
     }
 
-    fn send_req(app: &mut Explorer, req: &str) -> (u16, String) {
+    /// Core request helper: returns the raw response bytes so binary bodies
+    /// (wire-format uplinks, light-sync blobs, merkle proofs) survive intact.
+    fn send_req_raw(app: &mut Explorer, head: &str, body: &[u8]) -> (u16, Vec<u8>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let mut client = TcpStream::connect(addr).unwrap();
         let (server_stream, _) = listener.accept().unwrap();
 
-        client.write_all(req.as_bytes()).unwrap();
+        client.write_all(head.as_bytes()).unwrap();
+        client.write_all(body).unwrap();
         client.shutdown(std::net::Shutdown::Write).unwrap();
 
         let _ = handle(app, server_stream);
 
         let mut resp = Vec::new();
         let _ = client.read_to_end(&mut resp);
-        let resp_str = String::from_utf8_lossy(&resp).to_string();
 
-        let status = resp_str
+        let status = String::from_utf8_lossy(&resp)
             .lines()
             .next()
             .and_then(|l| l.split_whitespace().nth(1))
             .and_then(|s| s.parse::<u16>().ok())
             .unwrap_or(0);
 
-        let body = if let Some(pos) = resp_str.find("\r\n\r\n") {
-            resp_str[pos + 4..].to_string()
+        let body = if let Some(pos) = resp
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .map(|p| p + 4)
+        {
+            resp[pos..].to_vec()
         } else {
-            String::new()
+            Vec::new()
         };
         (status, body)
+    }
+
+    fn send_req(app: &mut Explorer, req: &str) -> (u16, String) {
+        let (status, body) = send_req_raw(app, req, b"");
+        (status, String::from_utf8_lossy(&body).to_string())
+    }
+
+    /// Like [`send_req`], but with a binary body (the wire-format uplink).
+    fn send_req_bytes(app: &mut Explorer, head: &str, body: &[u8]) -> (u16, String) {
+        let (status, body) = send_req_raw(app, head, body);
+        (status, String::from_utf8_lossy(&body).to_string())
     }
 
     #[test]
@@ -2215,5 +2711,508 @@ mod tests {
         let (status, body) = send_req(&mut app, unknown_node);
         assert_eq!(status, 400);
         assert!(body.contains("\"ok\":false"));
+    }
+
+    // ---- A1: network profile (dormant mainnet) ----
+
+    #[test]
+    fn network_profile_defaults_to_testnet() {
+        // No KOVANICA_NETWORK set in tests: the default must be the live
+        // testnet, never dormant, with the shipped genesis parameters.
+        let profile = network_profile();
+        assert_eq!(profile.id, "kovanica-testnet");
+        assert!(!profile.dormant);
+        assert_eq!(profile.genesis_k, 3);
+        assert_eq!(profile.genesis_subsidy, GENESIS_SUBSIDY);
+        assert_eq!(profile.genesis_premine, GENESIS_PREMINE);
+        assert_eq!(profile.founder_seed, FOUNDER_SEED);
+    }
+
+    #[test]
+    fn mainnet_profile_is_a_dormant_placeholder() {
+        // The mainnet profile exists for plumbing (id, data-dir isolation,
+        // faucet gating) but its genesis parameters are TBD — never invented.
+        let profile = NetworkProfile::mainnet();
+        assert_eq!(profile.id, "kovanica-mainnet");
+        assert!(profile.dormant, "mainnet must stay dormant");
+        assert_eq!(profile.genesis_k, 0, "mainnet k is TBD");
+        assert_eq!(profile.genesis_subsidy, 0, "mainnet subsidy is TBD");
+        assert_eq!(profile.genesis_premine, 0, "mainnet premine is TBD");
+    }
+
+    #[test]
+    fn data_dirs_are_isolated_per_network() {
+        // A mainnet node owns `data/kovanica-mainnet/`, never the testnet's
+        // `data/` — so the ensure_network() wipe cannot cross networks.
+        assert_eq!(
+            data_dir_for(&NetworkProfile::testnet()),
+            PathBuf::from("data")
+        );
+        assert_eq!(
+            data_dir_for(&NetworkProfile::mainnet()),
+            PathBuf::from("data/kovanica-mainnet")
+        );
+    }
+
+    // ---- A2: staked-block uplink on POST /api/mine/submit ----
+
+    /// Hybrid policy for the uplink tests: every slot winnable, nominal staked
+    /// work 1, no retarget pin so PoW-path blocks mine trivially.
+    fn uplink_hybrid_cfg() -> HybridConfig {
+        HybridConfig {
+            rate_num: 1,
+            rate_den: 1,
+            stake_nominal_work: 1,
+            retarget: None,
+        }
+    }
+
+    #[test]
+    fn test_http_mine_submit_accepts_staked_wire_block() {
+        use kovanica_dag::vrf_keypair_from_seed;
+        use kovanica_state::stake::bond_tag;
+        use kovanica_state::{KeyPair, Transaction, TxOutput};
+
+        let mut app = Explorer::boot();
+        app.mining = false;
+        let cfg = uplink_hybrid_cfg();
+        // Alpha produces (bonded validator); beta is the submit target and
+        // must run the same hybrid policy to re-admit the staked block with
+        // its original id.
+        app.mesh
+            .node_mut("alpha")
+            .unwrap()
+            .enable_hybrid(cfg.clone())
+            .unwrap();
+        app.mesh
+            .node_mut("beta")
+            .unwrap()
+            .enable_hybrid(cfg.clone())
+            .unwrap();
+
+        let validator_seed = [7u8; 32];
+        let (_sk, vk) = vrf_keypair_from_seed(&validator_seed);
+        let pk = *vk.as_bytes();
+        app.mesh
+            .node_mut("alpha")
+            .unwrap()
+            .set_validator_seed(validator_seed);
+
+        // Bond the founder's whole coin to the validator key on alpha.
+        let founder = KeyPair::from_u64(1);
+        let (coin, value) = app
+            .mesh
+            .node("alpha")
+            .unwrap()
+            .utxos_of(&founder.address())
+            .unwrap()
+            .first()
+            .map(|(op, v)| (*op, *v))
+            .unwrap();
+        let bond = Transaction::signed(
+            &[(coin, &founder)],
+            vec![TxOutput::new(value, founder.address())],
+            bond_tag(&pk),
+        );
+        app.mesh.node_mut("alpha").unwrap().submit_tx(bond).unwrap();
+        app.mesh
+            .produce("alpha")
+            .unwrap()
+            .expect("bond block mined");
+
+        // Sync the bond block to beta so its stake registry knows the bond.
+        app.mesh.sync_headers_first("alpha", "beta").unwrap();
+
+        // Produce a staked empty block on alpha (draw wins: 100% of bonded
+        // stake) and upload it to beta in the gossip wire format.
+        let staked_id = app.mesh.produce_empty("alpha").unwrap();
+        let record = app
+            .mesh
+            .node("alpha")
+            .unwrap()
+            .block_record(&staked_id)
+            .expect("produced block known");
+        assert!(
+            record.vrf.is_some(),
+            "hybrid produce_empty must carry the VRF bundle"
+        );
+        let wire = encode_records(&[record]);
+
+        let head = format!(
+            "POST /api/mine/submit?node=beta HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            wire.len()
+        );
+        let (status, body) = send_req_bytes(&mut app, &head, &wire);
+        assert_eq!(status, 200, "staked uplink rejected: {body}");
+        assert!(body.contains(&staked_id.to_hex()), "{body}");
+
+        // The block is genuinely admitted on beta with the SAME id the
+        // producer computed (identity-preserving wire path).
+        assert!(app.mesh.node("beta").unwrap().has_block(&staked_id));
+        assert_eq!(
+            app.mesh.node("beta").unwrap().selected_tip().unwrap(),
+            staked_id
+        );
+    }
+
+    #[test]
+    fn test_http_mine_submit_wire_rejects_ineligible_staked_block() {
+        use kovanica_dag::vrf_keypair_from_seed;
+        use kovanica_state::stake::bond_tag;
+        use kovanica_state::{KeyPair, Transaction, TxOutput};
+
+        let mut app = Explorer::boot();
+        app.mining = false;
+        // Alpha: rate 1/1 — a bonded validator wins every draw.
+        app.mesh
+            .node_mut("alpha")
+            .unwrap()
+            .enable_hybrid(uplink_hybrid_cfg())
+            .unwrap();
+        // Beta: rate 0/1 — the eligibility threshold is always 0, so NO
+        // staked block can ever be eligible there (deterministic adversarial
+        // gate, no reliance on VRF draw luck).
+        let never_eligible = HybridConfig {
+            rate_num: 0,
+            rate_den: 1,
+            stake_nominal_work: 1,
+            retarget: None,
+        };
+        app.mesh
+            .node_mut("beta")
+            .unwrap()
+            .enable_hybrid(never_eligible)
+            .unwrap();
+
+        // Alpha bonds and produces a valid staked block.
+        let validator_seed = [7u8; 32];
+        let (_sk, vk) = vrf_keypair_from_seed(&validator_seed);
+        let pk = *vk.as_bytes();
+        app.mesh
+            .node_mut("alpha")
+            .unwrap()
+            .set_validator_seed(validator_seed);
+        let founder = KeyPair::from_u64(1);
+        let (coin, value) = app
+            .mesh
+            .node("alpha")
+            .unwrap()
+            .utxos_of(&founder.address())
+            .unwrap()
+            .first()
+            .map(|(op, v)| (*op, *v))
+            .unwrap();
+        let bond = Transaction::signed(
+            &[(coin, &founder)],
+            vec![TxOutput::new(value, founder.address())],
+            bond_tag(&pk),
+        );
+        app.mesh.node_mut("alpha").unwrap().submit_tx(bond).unwrap();
+        app.mesh
+            .produce("alpha")
+            .unwrap()
+            .expect("bond block mined");
+        // Beta has the chain up to the bond block (so the staked block's
+        // parent exists) but its own policy can never admit a staked block:
+        // the uplink must reject it as ineligible — the adversarial case for
+        // the slice-9d gate. (Sync BEFORE the staked block is produced, since
+        // beta would reject it during sync too.)
+        app.mesh.sync_headers_first("alpha", "beta").unwrap();
+        let staked_id = app.mesh.produce_empty("alpha").unwrap();
+        let record = app
+            .mesh
+            .node("alpha")
+            .unwrap()
+            .block_record(&staked_id)
+            .unwrap();
+        let wire = encode_records(&[record]);
+
+        let head = format!(
+            "POST /api/mine/submit?node=beta HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            wire.len()
+        );
+        let (status, body) = send_req_bytes(&mut app, &head, &wire);
+        assert_eq!(
+            status, 400,
+            "ineligible staked block must be rejected: {body}"
+        );
+        assert!(body.contains("\"ok\":false"), "{body}");
+        assert!(
+            body.contains("eligible") || body.contains("stake"),
+            "expected an eligibility error, got: {body}"
+        );
+        assert!(!app.mesh.node("beta").unwrap().has_block(&staked_id));
+    }
+
+    #[test]
+    fn test_http_mine_submit_wire_accepts_pow_block() {
+        let mut app = Explorer::boot();
+        app.mining = false;
+        // Alpha runs plain PoW (the default profile config): a mined block
+        // uploaded in the wire format must still be admitted.
+        let pow_id = app.mesh.produce_empty("alpha").unwrap();
+        let record = app
+            .mesh
+            .node("alpha")
+            .unwrap()
+            .block_record(&pow_id)
+            .unwrap();
+        assert!(record.vrf.is_none());
+        let wire = encode_records(&[record]);
+
+        let head = format!(
+            "POST /api/mine/submit HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            wire.len()
+        );
+        let (status, body) = send_req_bytes(&mut app, &head, &wire);
+        assert_eq!(status, 200, "PoW wire uplink rejected: {body}");
+        assert!(body.contains(&pow_id.to_hex()), "{body}");
+    }
+
+    #[test]
+    fn test_http_mine_submit_wire_rejects_garbage() {
+        let mut app = Explorer::boot();
+        let garbage = b"\x00\x01\x02this is not a records frame at all";
+        let head = format!(
+            "POST /api/mine/submit HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\n\r\n",
+            garbage.len()
+        );
+        let (status, body) = send_req_bytes(&mut app, &head, garbage);
+        assert_eq!(status, 400);
+        assert!(body.contains("\"ok\":false"));
+    }
+
+    #[test]
+    fn test_http_mine_submit_wire_rejects_empty_body() {
+        let mut app = Explorer::boot();
+        let head = "POST /api/mine/submit HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: 0\r\n\r\n"
+            .to_string();
+        let (status, body) = send_req_bytes(&mut app, &head, b"");
+        assert_eq!(status, 400);
+        assert!(body.contains("\"ok\":false"));
+    }
+
+    // ---- A3: SPV light-sync blob endpoint ----
+
+    /// Parse a light-sync blob into (header, filter) pairs — a local mirror of
+    /// the FFI's `parse_light_sync`, so the endpoint's bytes are verified
+    /// against the shipped format without depending on the FFI crate.
+    fn parse_light_sync_blob(
+        blob: &[u8],
+    ) -> Vec<(
+        kovanica_state::spv::BlockHeader,
+        kovanica_state::spv::BlockFilter,
+    )> {
+        assert!(blob.len() >= 9, "blob too short");
+        assert_eq!(&blob[..4], LIGHT_SYNC_MAGIC);
+        assert_eq!(blob[4], LIGHT_SYNC_VERSION);
+        let count = u32::from_be_bytes(blob[5..9].try_into().unwrap()) as usize;
+        let mut off = 9usize;
+        let mut out = Vec::with_capacity(count);
+        for _ in 0..count {
+            let get32 = |o: usize| <[u8; 32]>::try_from(&blob[o..o + 32]).unwrap();
+            let header = kovanica_state::spv::BlockHeader {
+                id: BlockId::from_bytes(get32(off)),
+                prev_hash: BlockId::from_bytes(get32(off + 32)),
+                merkle_root: get32(off + 64),
+                work: u128::from_be_bytes(blob[off + 96..off + 112].try_into().unwrap()),
+                timestamp_ms: u64::from_be_bytes(blob[off + 112..off + 120].try_into().unwrap()),
+                nonce: u64::from_be_bytes(blob[off + 120..off + 128].try_into().unwrap()),
+                blue_score: u64::from_be_bytes(blob[off + 128..off + 136].try_into().unwrap()),
+                chain_blue_work: u128::from_be_bytes(
+                    blob[off + 136..off + 152].try_into().unwrap(),
+                ),
+                height: u64::from_be_bytes(blob[off + 152..off + 160].try_into().unwrap()),
+            };
+            off += 160;
+            let k = blob[off];
+            let n = u64::from_be_bytes(blob[off + 1..off + 9].try_into().unwrap());
+            let len = u32::from_be_bytes(blob[off + 9..off + 13].try_into().unwrap()) as usize;
+            let data = blob[off + 13..off + 13 + len].to_vec();
+            off += 13 + len;
+            out.push((header, kovanica_state::spv::BlockFilter { k, n, data }));
+        }
+        assert_eq!(off, blob.len(), "trailing bytes in light-sync blob");
+        out
+    }
+
+    #[test]
+    fn test_light_sync_blob_matches_headers_and_filters() {
+        let mut app = Explorer::boot();
+        app.mining = false;
+        // A few blocks so the selected chain is non-trivial.
+        app.mesh.produce_empty("alpha").unwrap();
+        app.mesh.produce_empty("alpha").unwrap();
+        app.mesh.produce_empty("alpha").unwrap();
+
+        let (status, blob) = send_req_raw(
+            &mut app,
+            "GET /api/light_sync HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            b"",
+        );
+        assert_eq!(status, 200);
+        let parsed = parse_light_sync_blob(&blob);
+
+        let n = app.mesh.node("alpha").unwrap();
+        let headers = n.export_spv_headers();
+        assert_eq!(parsed.len(), headers.len());
+        for (i, (h, f)) in parsed.iter().enumerate() {
+            assert_eq!(&h.id, &headers[i].id);
+            assert_eq!(&h.prev_hash, &headers[i].prev_hash);
+            assert_eq!(&h.merkle_root, &headers[i].merkle_root);
+            assert_eq!(h.work, headers[i].work);
+            assert_eq!(h.timestamp_ms, headers[i].timestamp_ms);
+            assert_eq!(h.nonce, headers[i].nonce);
+            assert_eq!(h.blue_score, headers[i].blue_score);
+            assert_eq!(h.chain_blue_work, headers[i].chain_blue_work);
+            assert_eq!(h.height, headers[i].height);
+            // The filter must match the node's own block_filter helper.
+            let expected = n.block_filter(&h.id, LIGHT_SYNC_FILTER_K).unwrap();
+            assert_eq!(f.k, expected.k);
+            assert_eq!(f.n, expected.n);
+            assert_eq!(f.data, expected.data);
+        }
+    }
+
+    #[test]
+    fn test_light_sync_from_is_incremental() {
+        let mut app = Explorer::boot();
+        app.mining = false;
+        app.mesh.produce_empty("alpha").unwrap();
+        app.mesh.produce_empty("alpha").unwrap();
+        app.mesh.produce_empty("alpha").unwrap();
+
+        let n = app.mesh.node("alpha").unwrap();
+        let headers = n.export_spv_headers();
+        assert!(headers.len() >= 4, "genesis + 3 blocks");
+        // `from` = the second header (index 1): the blob must start at index 2.
+        let from_id = headers[1].id.to_hex();
+        let req = format!(
+            "GET /api/light_sync?from={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            from_id
+        );
+        let (status, blob) = send_req_raw(&mut app, &req, b"");
+        assert_eq!(status, 200);
+        let parsed = parse_light_sync_blob(&blob);
+        assert_eq!(parsed.len(), headers.len() - 2);
+        assert_eq!(parsed[0].0.id, headers[2].id);
+        assert_eq!(parsed.last().unwrap().0.id, headers.last().unwrap().id);
+
+        // An unknown `from` falls back to the full blob (safe for a client
+        // that drifted off-chain).
+        let unknown = BlockId::from_bytes([0xabu8; 32]).to_hex();
+        let req = format!(
+            "GET /api/light_sync?from={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            unknown
+        );
+        let (status, blob) = send_req_raw(&mut app, &req, b"");
+        assert_eq!(status, 200);
+        let parsed = parse_light_sync_blob(&blob);
+        assert_eq!(parsed.len(), headers.len());
+    }
+
+    #[test]
+    fn test_light_proof_endpoint_verifies() {
+        let mut app = Explorer::boot();
+        app.mining = false;
+        // A transfer so the block carries a spendable tx (not just coinbase).
+        app.mesh.pool("alpha", 1, ATOM, 2).unwrap();
+        app.mesh.produce("alpha").unwrap();
+
+        let n = app.mesh.node("alpha").unwrap();
+        let tip = n.selected_tip().unwrap();
+        let rec = n.block_record(&tip).unwrap();
+        let tx = rec.txs.iter().find(|t| !t.is_coinbase()).expect("spend tx");
+        let tx_id = tx.id();
+
+        let req = format!(
+            "GET /api/light_proof?block={}&tx={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            tip.to_hex(),
+            tx_id.to_hex()
+        );
+        let (status, blob) = send_req_raw(&mut app, &req, b"");
+        assert_eq!(status, 200);
+
+        // Decode the proof blob (FFI `encode_proof` layout) and verify it.
+        assert!(blob.len() >= 72);
+        let get32 = |o: usize| <[u8; 32]>::try_from(&blob[o..o + 32]).unwrap();
+        let path_len = u32::from_be_bytes(blob[64..68].try_into().unwrap()) as usize;
+        let base = 68 + path_len * 32;
+        let proof = kovanica_state::spv::MerkleProof {
+            tx_id: get32(0),
+            merkle_root: get32(32),
+            path: (0..path_len).map(|i| get32(68 + i * 32)).collect(),
+            index: u64::from_be_bytes(blob[base..base + 8].try_into().unwrap()) as usize,
+            tx_count: u64::from_be_bytes(blob[base + 8..base + 16].try_into().unwrap()) as usize,
+        };
+        assert_eq!(proof.tx_id, *tx_id.as_bytes());
+        assert!(proof.verify(), "merkle proof must verify");
+
+        // Unknown tx → 404.
+        let unknown = kovanica_state::TxId::from_bytes([0x42u8; 32]).to_hex();
+        let req = format!(
+            "GET /api/light_proof?block={}&tx={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            tip.to_hex(),
+            unknown
+        );
+        let (status, body) = send_req(&mut app, &req);
+        assert_eq!(status, 404);
+        assert!(body.contains("\"ok\":false"));
+    }
+
+    // ---- D1: rate limits + faucet gating ----
+
+    #[test]
+    fn rate_limit_exhausts_bucket_and_returns_429() {
+        let mut app = Explorer::boot();
+        app.rate_limit_rate = 0.0; // no refill
+        app.rate_limit_burst = 1.0; // one request per IP
+        let (s1, _) = send_req(
+            &mut app,
+            "GET /api/head HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        );
+        assert_eq!(s1, 200);
+        let (s2, body2) = send_req(
+            &mut app,
+            "GET /api/head HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        );
+        assert_eq!(s2, 429);
+        assert!(body2.contains("rate limit"), "{body2}");
+    }
+
+    #[test]
+    fn faucet_enforces_per_address_cap() {
+        let mut app = Explorer::boot();
+        let to = kovanica_state::KeyPair::from_u64(9).address();
+        let key = to.to_hex();
+        // Pre-fill 4 KVNC so the next 1-KVNC payout hits the 5-KVNC cap.
+        app.faucet_given.insert(key.clone(), 4 * ATOM);
+        let mut q = std::collections::HashMap::new();
+        q.insert("to".into(), key);
+        q.insert("amount".into(), ATOM.to_string());
+        let body = dispatch(&mut app, "faucet", &q).unwrap();
+        assert!(body.contains("\"ok\":true"), "{body}");
+        // At the cap now: another payout must be refused.
+        let err = dispatch(&mut app, "faucet", &q).unwrap_err();
+        assert!(err.contains("cap"), "{err}");
+    }
+
+    #[test]
+    fn faucet_rejects_oversized_request() {
+        let mut app = Explorer::boot();
+        let to = kovanica_state::KeyPair::from_u64(9).address();
+        let mut q = std::collections::HashMap::new();
+        q.insert("to".into(), to.to_hex());
+        q.insert("amount".into(), (FAUCET_MAX_PER_ADDRESS + 1).to_string());
+        let err = dispatch(&mut app, "faucet", &q).unwrap_err();
+        assert!(err.contains("max"), "{err}");
+    }
+
+    #[test]
+    fn faucet_gate_is_testnet_only() {
+        // The gate predicate: payouts only on the testnet profile. Mainnet —
+        // dormant or not — never pays out.
+        assert_eq!(network_profile().id, "kovanica-testnet");
+        assert_ne!(NetworkProfile::mainnet().id, "kovanica-testnet");
     }
 }
