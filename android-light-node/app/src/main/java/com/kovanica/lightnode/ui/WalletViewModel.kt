@@ -11,6 +11,7 @@ import com.kovanica.lightnode.data.formatKvnc
 import com.kovanica.lightnode.ui.prefs.WalletPrefs
 import com.kovanica.lightnode.ui.util.Bip39
 import com.kovanica.lightnode.ui.util.KovanicaAddress
+import com.kovanica.lightnode.work.SyncWorkScheduler
 import java.math.BigDecimal
 import java.math.BigInteger
 import java.math.RoundingMode
@@ -37,7 +38,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private val secureStorage = SecureSeedStorage(application)
     private val prefs = WalletPrefs(application)
     private val bip39 = Bip39(application)
-    private val lightNode = LightNodeRepository(application)
+    private val lightNode = LightNodeRepository.getInstance(application)
     private val walletRepository = WalletRepository(application, lightNode)
 
     private val _uiState = MutableStateFlow(WalletUiState())
@@ -148,12 +149,16 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Called once the wallet address is known: boot the node, load any
      * persisted light sync, then refresh balance, stake info and history.
+     * Also stores the address for the background sync worker and schedules
+     * that worker.
      */
     private fun onWalletReady(mnemonic: String) {
         viewModelScope.launch {
             val address = _uiState.value.address
+            prefs.walletAddressHex = address.hex
             lightNode.bootIfNeeded(prefs.nodeUrl)
             lightNode.loadLightSync()
+            SyncWorkScheduler.schedule(application)
             refreshBalance()
             refreshStakeInfo(mnemonic)
             refreshHistory()
@@ -458,10 +463,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     /**
      * Reset the wallet for testing / onboarding replay. Wipes the encrypted
-     * mnemonic; connection settings are preserved.
+     * mnemonic and stops the background sync worker; connection settings are
+     * preserved.
      */
     fun resetWallet() {
         secureStorage.clear()
+        SyncWorkScheduler.cancel(application)
         _uiState.value = WalletUiState(nodeUrl = prefs.nodeUrl)
     }
 

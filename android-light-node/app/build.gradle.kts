@@ -55,6 +55,11 @@ dependencies {
     implementation(libs.coroutines.android)
     implementation(libs.okhttp)
 
+    // Background sync (WorkManager), notification compat, and biometric Keystore
+    implementation(libs.work.runtime.ktx)
+    implementation(libs.biometric)
+    implementation(libs.core.ktx)
+
     // Local cryptography: Ed25519 key derivation + PBKDF2 for BIP39 seed.
     // The FFI handles signing; this is only used to derive the display address.
     implementation(libs.bouncycastle)
