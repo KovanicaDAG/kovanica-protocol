@@ -75,3 +75,56 @@ fn light_node_imports_live_testnet_chain() {
     assert_eq!(node.selected_tip().unwrap(), LIVE_TIP);
     assert!(node.block_by_id(LIVE_TIP.to_string()).unwrap().is_some());
 }
+
+#[test]
+fn export_block_by_id_roundtrips_a_known_block() {
+    let node = LightNode::new(live_config()).expect("genesis ok");
+    let blob = std::fs::read(fixture_path()).expect("fixture present");
+    node.receive_blocks(blob).expect("blob must decode");
+
+    let tip = node.selected_tip().unwrap();
+    let bytes = node
+        .export_block_by_id(tip.clone())
+        .expect("export must not error")
+        .expect("tip must be known");
+    assert!(!bytes.is_empty(), "exported record must be non-empty");
+
+    // The exported bytes must be decodable as a single wire-format record
+    // in the exact gossip framing used by receive_blocks.
+    let mut cursor = std::io::Cursor::new(&bytes);
+    let records = kovanica_node::net::read_records_from(&mut cursor).expect("decode record");
+    assert_eq!(records.len(), 1);
+}
+
+#[test]
+fn export_light_sync_from_is_incremental() {
+    let node = LightNode::new(live_config()).expect("genesis ok");
+    let blob = std::fs::read(fixture_path()).expect("fixture present");
+    node.receive_blocks(blob).expect("blob must decode");
+
+    let full = node.export_light_sync();
+    assert!(!full.is_empty(), "full sync blob must be non-empty");
+
+    let tip = node.selected_tip().unwrap();
+    let incremental = node.export_light_sync_from(tip.clone());
+
+    // Strictly-after the tip yields an empty (but valid) blob.
+    assert!(
+        incremental.len() < full.len(),
+        "incremental sync must be smaller than full sync"
+    );
+
+    // Unknown / off-chain id falls back to the full blob.
+    let unknown = "abababababababababababababababababababababababababababababababab".to_string();
+    let fallback = node.export_light_sync_from(unknown);
+    assert_eq!(
+        fallback.len(),
+        full.len(),
+        "unknown from id must fall back to full sync"
+    );
+
+    // Applying the fallback blob to a fresh node succeeds.
+    let fresh = LightNode::new(live_config()).expect("genesis ok");
+    let count = fresh.receive_light_sync(fallback).expect("apply fallback");
+    assert!(count > 0, "fallback sync must import headers");
+}

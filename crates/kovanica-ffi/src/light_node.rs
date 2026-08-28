@@ -485,6 +485,14 @@ impl LightNode {
         net::encode_records(&self.lock().export())
     }
 
+    /// Export a single block by lowercase-hex id as a wire-format blob.
+    /// Returns `None` when the id is unknown.
+    pub fn export_block_by_id(&self, id_hex: String) -> Result<Option<Vec<u8>>, LightNodeError> {
+        let id = parse_block_id(&id_hex)?;
+        let node = self.lock();
+        Ok(node.block_record(&id).map(|r| net::encode_records(&[r])))
+    }
+
     /// Apply a blob produced by [`Self::export_blocks`] (or any full node
     /// speaking the same format). Records apply topologically; already-known
     /// blocks are skipped. Returns how many were newly applied.
@@ -643,27 +651,14 @@ impl LightNode {
     /// The selected chain as verified headers + per-block filters: everything
     /// a phone needs to track payments without full payloads.
     pub fn export_light_sync(&self) -> Vec<u8> {
-        let node = self.lock();
-        let mut out = Vec::new();
-        out.extend_from_slice(LIGHT_SYNC_MAGIC);
-        out.push(LIGHT_SYNC_VERSION);
-        let headers = node.export_spv_headers();
-        out.extend_from_slice(&(headers.len() as u32).to_be_bytes());
-        for h in &headers {
-            encode_header(h, &mut out);
-            match node.block_filter(&h.id, FILTER_K) {
-                Some(f) => encode_filter_into(&f, &mut out),
-                None => encode_filter_into(
-                    &kovanica_state::spv::BlockFilter {
-                        k: FILTER_K,
-                        n: 1,
-                        data: Vec::new(),
-                    },
-                    &mut out,
-                ),
-            }
-        }
-        out
+        encode_light_sync(&self.lock(), None)
+    }
+
+    /// Like [`Self::export_light_sync`], but returns only headers strictly
+    /// after `from_id_hex`. Unknown or off-chain ids fall back to the full
+    /// header chain.
+    pub fn export_light_sync_from(&self, from_id_hex: String) -> Vec<u8> {
+        encode_light_sync(&self.lock(), Some(from_id_hex))
     }
 
     /// Accept a light-sync blob: header chain is verified for linkage,
@@ -694,6 +689,16 @@ impl LightNode {
     pub fn synced_height(&self) -> Option<u64> {
         let light = self.light.lock().unwrap_or_else(|p| p.into_inner());
         light.headers.values().map(|e| e.header.height).max()
+    }
+
+    /// Id of the highest light-synced header (`None` before any sync).
+    pub fn synced_tip_id(&self) -> Option<String> {
+        let light = self.light.lock().unwrap_or_else(|p| p.into_inner());
+        light
+            .headers
+            .values()
+            .max_by_key(|e| e.header.height)
+            .map(|e| e.header.id.to_hex())
     }
 
     /// Whether `address` MIGHT appear in the given light-synced block,
@@ -751,6 +756,36 @@ impl LightNode {
         }
         Ok(proof.verify())
     }
+}
+
+fn encode_light_sync(node: &Node, from_id_hex: Option<String>) -> Vec<u8> {
+    let mut headers = node.export_spv_headers();
+    if let Some(hex) = from_id_hex {
+        if let Ok(id) = parse_block_id(&hex) {
+            if let Some(pos) = headers.iter().position(|h| h.id == id) {
+                headers = headers.split_off(pos + 1);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(LIGHT_SYNC_MAGIC);
+    out.push(LIGHT_SYNC_VERSION);
+    out.extend_from_slice(&(headers.len() as u32).to_be_bytes());
+    for h in &headers {
+        encode_header(h, &mut out);
+        match node.block_filter(&h.id, FILTER_K) {
+            Some(f) => encode_filter_into(&f, &mut out),
+            None => encode_filter_into(
+                &kovanica_state::spv::BlockFilter {
+                    k: FILTER_K,
+                    n: 1,
+                    data: Vec::new(),
+                },
+                &mut out,
+            ),
+        }
+    }
+    out
 }
 
 fn decode_hex(s: &str, field: &str) -> Result<Vec<u8>, LightNodeError> {

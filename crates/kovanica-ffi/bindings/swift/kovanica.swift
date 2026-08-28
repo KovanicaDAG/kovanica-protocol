@@ -673,6 +673,12 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
     func enableHybrid(rateNum: UInt64, rateDen: UInt64, nominalWork: U128Parts, retarget: Bool) throws 
     
     /**
+     * Export a single block by lowercase-hex id as a wire-format blob.
+     * Returns `None` when the id is unknown.
+     */
+    func exportBlockById(idHex: String) throws  -> Data?
+    
+    /**
      * Every known block as a wire-format blob (framed count + records, VRF
      * bundles included). Hand this to a peer; idempotent on their side.
      */
@@ -685,10 +691,32 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
     func exportLightSync()  -> Data
     
     /**
+     * Like [`Self::export_light_sync`], but returns only headers strictly
+     * after `from_id_hex`. Unknown or off-chain ids fall back to the full
+     * header chain.
+     */
+    func exportLightSyncFrom(fromIdHex: String)  -> Data
+    
+    /**
      * Whether `address` MIGHT appear in the filtered block (Golomb-Rice
      * false positives are possible; a miss is definitive).
      */
     func filterMatches(filterBlob: Data, address: String) throws  -> Bool
+    
+    /**
+     * Batch form of [`Self::filter_matches`]: does the filter match ANY of
+     * `addresses`? Decodes the filter once — use this when watching several
+     * addresses per block (multi-address watch wallets).
+     */
+    func filterMatchesAny(filterBlob: Data, addresses: [String]) throws  -> Bool
+    
+    /**
+     * Reconstruct the transaction history of `address` by scanning stored
+     * blocks in canonical order. Scanning stops after the first
+     * `max_blocks` blocks (`0` = scan everything). A send's change back to
+     * the sender appears as its own `Received` entry.
+     */
+    func historyOf(address: String, maxBlocks: UInt32) throws  -> [HistoryEntry]
     
     /**
      * Whether hybrid admission is active.
@@ -792,6 +820,11 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
      * Highest height among light-synced headers (`None` before any sync).
      */
     func syncedHeight()  -> UInt64?
+    
+    /**
+     * Id of the highest light-synced header (`None` before any sync).
+     */
+    func syncedTipId()  -> String?
     
     /**
      * Current tip set, lowercase hex.
@@ -1024,6 +1057,20 @@ open func enableHybrid(rateNum: UInt64, rateDen: UInt64, nominalWork: U128Parts,
 }
     
     /**
+     * Export a single block by lowercase-hex id as a wire-format blob.
+     * Returns `None` when the id is unknown.
+     */
+open func exportBlockById(idHex: String)throws  -> Data?  {
+    return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_export_block_by_id(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(idHex),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Every known block as a wire-format blob (framed count + records, VRF
      * bundles included). Hand this to a peer; idempotent on their side.
      */
@@ -1050,6 +1097,21 @@ open func exportLightSync() -> Data  {
 }
     
     /**
+     * Like [`Self::export_light_sync`], but returns only headers strictly
+     * after `from_id_hex`. Unknown or off-chain ids fall back to the full
+     * header chain.
+     */
+open func exportLightSyncFrom(fromIdHex: String) -> Data  {
+    return try!  FfiConverterData.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync_from(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(fromIdHex),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Whether `address` MIGHT appear in the filtered block (Golomb-Rice
      * false positives are possible; a miss is definitive).
      */
@@ -1060,6 +1122,39 @@ open func filterMatches(filterBlob: Data, address: String)throws  -> Bool  {
             self.uniffiCloneHandle(),
         FfiConverterData.lower(filterBlob),
         FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Batch form of [`Self::filter_matches`]: does the filter match ANY of
+     * `addresses`? Decodes the filter once — use this when watching several
+     * addresses per block (multi-address watch wallets).
+     */
+open func filterMatchesAny(filterBlob: Data, addresses: [String])throws  -> Bool  {
+    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_filter_matches_any(
+            self.uniffiCloneHandle(),
+        FfiConverterData.lower(filterBlob),
+        FfiConverterSequenceString.lower(addresses),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Reconstruct the transaction history of `address` by scanning stored
+     * blocks in canonical order. Scanning stops after the first
+     * `max_blocks` blocks (`0` = scan everything). A send's change back to
+     * the sender appears as its own `Received` entry.
+     */
+open func historyOf(address: String, maxBlocks: UInt32)throws  -> [HistoryEntry]  {
+    return try  FfiConverterSequenceTypeHistoryEntry.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_history_of(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(address),
+        FfiConverterUInt32.lower(maxBlocks),uniffiCallStatus
     )
 })
 }
@@ -1299,6 +1394,18 @@ open func syncedHeight() -> UInt64?  {
 }
     
     /**
+     * Id of the highest light-synced header (`None` before any sync).
+     */
+open func syncedTipId() -> String?  {
+    return try!  FfiConverterOptionString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_synced_tip_id(
+            self.uniffiCloneHandle(),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Current tip set, lowercase hex.
      */
 open func tips()throws  -> [String]  {
@@ -1512,6 +1619,98 @@ public func FfiConverterTypeBlockInfo_lift(_ buf: RustBuffer) throws -> BlockInf
 #endif
 public func FfiConverterTypeBlockInfo_lower(_ value: BlockInfo) -> RustBuffer {
     return FfiConverterTypeBlockInfo.lower(value)
+}
+
+
+/**
+ * One reconstructed history event for an address.
+ *
+ * Entries come back in canonical (linearized) block order; a send's change
+ * back to the sender appears as its own `Received` entry.
+ */
+public struct HistoryEntry: Equatable, Hashable {
+    /**
+     * Sealing block id (lowercase hex).
+     */
+    public var blockIdHex: String
+    /**
+     * Transaction id (lowercase hex).
+     */
+    public var txIdHex: String
+    /**
+     * Credit or debit.
+     */
+    public var direction: TxDirection
+    /**
+     * Value moved, in base units (decimal string).
+     */
+    public var amount: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Sealing block id (lowercase hex).
+         */blockIdHex: String, 
+        /**
+         * Transaction id (lowercase hex).
+         */txIdHex: String, 
+        /**
+         * Credit or debit.
+         */direction: TxDirection, 
+        /**
+         * Value moved, in base units (decimal string).
+         */amount: String) {
+        self.blockIdHex = blockIdHex
+        self.txIdHex = txIdHex
+        self.direction = direction
+        self.amount = amount
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension HistoryEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeHistoryEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> HistoryEntry {
+        return
+            try HistoryEntry(
+                blockIdHex: FfiConverterString.read(from: &buf), 
+                txIdHex: FfiConverterString.read(from: &buf), 
+                direction: FfiConverterTypeTxDirection.read(from: &buf), 
+                amount: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: HistoryEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.blockIdHex, into: &buf)
+        FfiConverterString.write(value.txIdHex, into: &buf)
+        FfiConverterTypeTxDirection.write(value.direction, into: &buf)
+        FfiConverterString.write(value.amount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryEntry_lift(_ buf: RustBuffer) throws -> HistoryEntry {
+    return try FfiConverterTypeHistoryEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeHistoryEntry_lower(_ value: HistoryEntry) -> RustBuffer {
+    return FfiConverterTypeHistoryEntry.lower(value)
 }
 
 
@@ -1959,6 +2158,81 @@ public func FfiConverterTypeLightNodeError_lower(_ value: LightNodeError) -> Rus
     return FfiConverterTypeLightNodeError.lower(value)
 }
 
+
+/**
+ * Direction of a [`HistoryEntry`] relative to the queried address.
+ */
+
+public enum TxDirection: Equatable, Hashable {
+    
+    /**
+     * The address received value.
+     */
+    case received
+    /**
+     * The address spent previously-received value.
+     */
+    case sent
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension TxDirection: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTxDirection: FfiConverterRustBuffer {
+    typealias SwiftType = TxDirection
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TxDirection {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .received
+        
+        case 2: return .sent
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: TxDirection, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .received:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .sent:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTxDirection_lift(_ buf: RustBuffer) throws -> TxDirection {
+    return try FfiConverterTypeTxDirection.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTxDirection_lower(_ value: TxDirection) -> RustBuffer {
+    return FfiConverterTypeTxDirection.lower(value)
+}
+
+
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
@@ -2104,6 +2378,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     }
 }
 
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [HistoryEntry]
+
+    public static func write(_ value: [HistoryEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeHistoryEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [HistoryEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [HistoryEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeHistoryEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
 private enum InitializationResult {
     case ok
     case contractVersionMismatch
@@ -2143,13 +2442,25 @@ private let initializationResult: InitializationResult = {
     if (uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid() != 31711) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_export_block_by_id() != 11244) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_export_blocks() != 64729) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync() != 32984) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync_from() != 29986) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches() != 44042) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any() != 23729) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_history_of() != 27998) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_hybrid_enabled() != 35199) {
@@ -2201,6 +2512,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_synced_height() != 46770) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_synced_tip_id() != 23889) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_tips() != 38486) {
