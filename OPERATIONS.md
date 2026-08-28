@@ -142,3 +142,78 @@ Roadmap naming: **seed3** = first true off-box node — shipped 2026-08-24 as
 AWS EC2 `t3.micro` in eu-north-1 (Amazon Linux 2023, systemd
 `kovanica-seed3`, mining on). DNS `A seed3.kovanica.online` (DNS-only) is live;
 joining every node's `KOVANICA_PEERS` is the follow-up.
+
+## 8. Seed backup & restore (A8)
+
+Backups are encrypted **at source** before they touch disk. The passphrase is
+read from `KOV_BACKUP_PASSPHRASE` or `KOV_BACKUP_PASSPHRASE_FILE`; it is never
+passed as a command-line argument and is never committed. Backups are stored in
+`/root/kovanica-backups` with permissions `700` on the directory and `600` on
+the files.
+
+The scripts back up the node data directory (`data/` or `$KOVANICA_DATA`) and
+any wallet seed files matching `*.miner`, `*.seed`, `*.wallet`, or `*.key`.
+
+### Create a backup
+
+```sh
+# from the repo
+KOV_BACKUP_PASSPHRASE="$(cat /run/secrets/kov-backup-passphrase)" \
+  ./scripts/backup-node.sh
+
+# or point at the production data directory
+KOV_BACKUP_PASSPHRASE="..." ./scripts/backup-node.sh --data /root/kovanica-data
+```
+
+Dry-run first to see what would be captured:
+
+```sh
+./scripts/backup-node.sh --dry-run --data /root/kovanica-data
+```
+
+Options:
+- `--data DIR` — data directory to back up (default: `./data`, else `/root/kovanica-data`)
+- `--out DIR` / `--backup-dir DIR` — destination (default: `/root/kovanica-backups`)
+- `--name NAME` — backup set name (default: hostname)
+- `--retention N` — keep the newest `N` sets (default: 7)
+- `--dry-run` — show sizes and paths without writing anything
+
+### Restore from backup
+
+```sh
+KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh --data-dir /root/kovanica-data
+```
+
+The script picks the newest data and seed archives in the backup directory. To
+use specific archives:
+
+```sh
+KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh \
+  --data-archive /root/kovanica-backups/srv1745734-data-20260828-000000.tar.gz.enc \
+  --seed-archive /root/kovanica-backups/srv1745734-seeds-20260828-000000.tar.gz.enc \
+  --data-dir /root/kovanica-data
+```
+
+Verify an archive without extracting:
+
+```sh
+KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh --verify-only \
+  --data-archive /root/kovanica-backups/srv1745734-data-20260828-000000.tar.gz.enc
+```
+
+Restore will refuse to overwrite a non-empty target directory unless `--force`
+is given.
+
+### Restore drill
+
+Run at least once per quarter:
+
+```sh
+mkdir -p /tmp/kov-restore-drill
+KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh \
+  --data-dir /tmp/kov-restore-drill/data --force
+# start a throwaway node against the restored data and check head matches seed1
+KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed.kovanica.online:9000 \
+  /usr/local/bin/kovanica-node explorer 127.0.0.1:18081 &
+curl -s http://127.0.0.1:18081/api/head | jq .genesis
+```
