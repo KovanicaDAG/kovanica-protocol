@@ -99,7 +99,7 @@ class LightNodeRepository(context: Context) {
      *    any match, fetch the corresponding full blocks and feed them to
      *    `receiveBlocks`.
      *
-     * Returns the number of new headers that were applied.
+     * Returns the number of newly synced headers in this incremental batch.
      */
     suspend fun sync(nodeUrl: String, walletAddress: String): Result<Int> =
         withContext(dispatcher) {
@@ -107,10 +107,14 @@ class LightNodeRepository(context: Context) {
                 bootIfNeeded(nodeUrl)
                 loadLightSync().getOrThrow()
 
-                val fromId = node.syncedTipId()
+                // If the node is cold (no persisted blob), fall back to the
+                // last synced block id stored in preferences.
+                val fromId = node.syncedTipId() ?: prefs.lastSyncedBlockId
                 val client = NodeClient(nodeUrl)
                 val incrementalBlob = client.fetchLightSync(fromId).getOrThrow()
-                val applied = node.receiveLightSync(incrementalBlob).toInt()
+                val newHeaders = parseLightSyncHeaders(incrementalBlob)
+
+                node.receiveLightSync(incrementalBlob)
 
                 // Persist the merged header chain so restarts are cheap.
                 val mergedBlob = node.exportLightSync()
@@ -119,7 +123,6 @@ class LightNodeRepository(context: Context) {
 
                 // Pull full blocks only for headers whose filters hit the
                 // wallet address.
-                val newHeaders = parseLightSyncHeaders(incrementalBlob)
                 val matched = newHeaders.filter { header ->
                     node.syncedFilterMatches(header.id, walletAddress) == true
                 }
@@ -130,7 +133,7 @@ class LightNodeRepository(context: Context) {
                     node.receiveBlocks(fullBlocks)
                 }
 
-                applied
+                newHeaders.size
             }.mapNodeError()
         }
 
@@ -214,6 +217,24 @@ class LightNodeRepository(context: Context) {
     suspend fun unbond(fromSeed: ULong, amountAtoms: ULong): Result<SendReceipt> =
         withContext(dispatcher) {
             runCatching { node.unbond(fromSeed, amountAtoms) }.mapNodeError()
+        }
+
+    /**
+     * Bond [amountAtoms] atoms from the wallet identity derived from a 32-byte
+     * Ed25519 secret hex to this node's validator key.
+     */
+    suspend fun bondStakeFromSecret(secretHex: String, amountAtoms: ULong): Result<String> =
+        withContext(dispatcher) {
+            runCatching { node.bondStakeFromSecret(secretHex, amountAtoms) }.mapNodeError()
+        }
+
+    /**
+     * Unbond [amountAtoms] of matured stake back to the wallet address derived
+     * from a 32-byte Ed25519 secret hex.
+     */
+    suspend fun unbondFromSecret(secretHex: String, amountAtoms: ULong): Result<SendReceipt> =
+        withContext(dispatcher) {
+            runCatching { node.unbondFromSecret(secretHex, amountAtoms) }.mapNodeError()
         }
 
     /**

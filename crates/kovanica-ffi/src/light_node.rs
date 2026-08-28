@@ -400,6 +400,93 @@ impl LightNode {
         })
     }
 
+    /// Bond `amount` atoms from the wallet identity derived from a 32-byte
+    /// Ed25519 secret (hex) to THIS node's validator key. The source coins,
+    /// sizing split, and bond change all live at the wallet address, so
+    /// staking spends wallet funds and returns the remainder to the wallet.
+    pub fn bond_stake_from_secret(
+        &self,
+        secret_hex: String,
+        amount: u64,
+    ) -> Result<String, LightNodeError> {
+        if amount == 0 {
+            return Err(invalid("bond amount must be positive"));
+        }
+        let kp = keypair_from_secret(&secret_hex)?;
+        let addr = kp.address();
+
+        let mut node = self.lock();
+        let vrf_pk = node
+            .validator_public_key()
+            .map(|pk| *pk.as_bytes())
+            .ok_or_else(|| invalid("call set_validator_seed before bonding"))?;
+
+        let candidates: Vec<(OutPoint, u64)> = node
+            .utxos_of(&addr)?
+            .into_iter()
+            .filter(|(op, _)| !node.outpoint_is_frozen(op).unwrap_or(true))
+            .collect();
+
+        let exact = candidates.iter().find(|(_, v)| *v == amount).copied();
+        let source_op = match exact {
+            Some((op, _)) => op,
+            None => {
+                let funder = candidates
+                    .iter()
+                    .filter(|(_, v)| *v > amount)
+                    .max_by_key(|(_, v)| *v)
+                    .map(|(op, _)| *op)
+                    .ok_or(LightNodeError::InsufficientFunds { needed: amount })?;
+                let rest = candidates
+                    .iter()
+                    .find(|(op, _v)| *op == funder)
+                    .map(|(_, v)| *v - amount)
+                    .unwrap_or(0);
+                let mut outputs = vec![TxOutput::new(amount, addr)];
+                if rest > 0 {
+                    outputs.push(TxOutput::new(rest, addr));
+                }
+                let mut split =
+                    Transaction::unsigned(std::slice::from_ref(&funder), outputs, Vec::new());
+                split.attach_signature(0, Sig::from_bytes(kp.sign(&split.sighash())));
+                let split_id = split.id();
+                node.submit_tx(split)?;
+                node.produce_block()?.expect("mempool non-empty");
+                OutPoint::new(split_id, 0)
+            }
+        };
+
+        let bond = Transaction::signed(
+            &[(source_op, &kp)],
+            vec![TxOutput::new(amount, addr)],
+            bond_tag(&vrf_pk),
+        );
+        let bond_id = bond.id();
+        node.submit_tx(bond)?;
+        node.produce_block()?.expect("mempool non-empty");
+        Ok(hex::encode(bond_id.as_bytes()))
+    }
+
+    /// Unbond `amount` of this validator's matured stake back to the wallet
+    /// address derived from a 32-byte Ed25519 secret (hex).
+    pub fn unbond_from_secret(
+        &self,
+        secret_hex: String,
+        amount: u64,
+    ) -> Result<SendReceipt, LightNodeError> {
+        let kp = keypair_from_secret(&secret_hex)?;
+        let mut node = self.lock();
+        let vrf_pk = node
+            .validator_public_key()
+            .map(|pk| *pk.as_bytes())
+            .ok_or_else(|| invalid("call set_validator_seed before unbonding"))?;
+        let sent = node.unbond_with(&kp, &vrf_pk, amount, kp.address())?;
+        Ok(SendReceipt {
+            block_id_hex: sent.block.to_hex(),
+            tx_id_hex: hex::encode(sent.tx.as_bytes()),
+        })
+    }
+
     /// Earliest height at which bonded stake unlocks next (`None` when
     /// everything already has). Compare against [`Self::chain_height`].
     pub fn pending_unbond_height(&self) -> Result<Option<u64>, LightNodeError> {

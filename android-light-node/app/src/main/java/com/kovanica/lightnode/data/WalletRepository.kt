@@ -1,8 +1,6 @@
 package com.kovanica.lightnode.data
 
 import android.content.Context
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.kovanica.SendReceipt
@@ -49,32 +47,32 @@ class WalletRepository(
     /**
      * Bond spendable coins to this node's validator identity.
      *
-     * The wallet's Ed25519 seed is reused as the VRF validator seed; the
-     * spending actor for [bondStake] is derived from the first 8 bytes of
-     * that seed interpreted as a little-endian unsigned long.
+     * The wallet's Ed25519 seed is reused as the VRF validator seed, and the
+     * bond transaction spends from / returns change to the wallet address
+     * derived from that same seed.
      */
     suspend fun bondStake(mnemonic: String, amountAtoms: ULong): Result<String> {
         val seed = withContext(Dispatchers.Default) {
             bip39.mnemonicToEd25519Seed(mnemonic)
         }
+        val secretHex = withContext(Dispatchers.Default) {
+            seed.joinToString("") { "%02x".format(it) }
+        }
         return lightNode.setValidatorSeed(seed).fold(
-            onSuccess = {
-                val spendingSeed = seed.first8BytesLittleEndian()
-                lightNode.bondStake(spendingSeed, amountAtoms)
-            },
+            onSuccess = { lightNode.bondStakeFromSecret(secretHex, amountAtoms) },
             onFailure = { Result.failure(it) },
         )
     }
 
     /**
-     * Unbond matured stake back to the wallet's actor address.
+     * Unbond matured stake back to the wallet address derived from the
+     * mnemonic.
      */
     suspend fun unbond(mnemonic: String, amountAtoms: ULong): Result<SendReceipt> {
-        val seed = withContext(Dispatchers.Default) {
-            bip39.mnemonicToEd25519Seed(mnemonic)
+        val secretHex = withContext(Dispatchers.Default) {
+            mnemonicToSecretHex(mnemonic)
         }
-        val fromSeed = seed.first8BytesLittleEndian()
-        return lightNode.unbond(fromSeed, amountAtoms)
+        return lightNode.unbondFromSecret(secretHex, amountAtoms)
     }
 
     /**
@@ -122,11 +120,5 @@ class WalletRepository(
     private fun mnemonicToSecretHex(mnemonic: String): String {
         val seed = bip39.mnemonicToEd25519Seed(mnemonic)
         return seed.joinToString("") { "%02x".format(it) }
-    }
-
-    private fun ByteArray.first8BytesLittleEndian(): ULong {
-        require(size >= 8) { "seed must be at least 8 bytes" }
-        val buffer = ByteBuffer.wrap(this, 0, 8).order(ByteOrder.LITTLE_ENDIAN)
-        return buffer.long.toULong()
     }
 }

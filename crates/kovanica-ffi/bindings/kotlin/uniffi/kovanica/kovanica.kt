@@ -685,6 +685,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake_from_secret(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_chain_height(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid(
@@ -747,6 +749,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_unbond(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_unbond_from_secret(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_validator_public_key_hex(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_verify_tx_proof(
@@ -788,6 +792,8 @@ internal object UniffiLib {
     external fun uniffi_kovanica_ffi_fn_method_lightnode_block_filter(`ptr`: Long,`blockIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_bond_stake(`ptr`: Long,`seed`: Long,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_bond_stake_from_secret(`ptr`: Long,`secretHex`: RustBuffer.ByValue,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_chain_height(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
@@ -850,6 +856,8 @@ internal object UniffiLib {
     external fun uniffi_kovanica_ffi_fn_method_lightnode_total_stake(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_kovanica_ffi_fn_method_lightnode_unbond(`ptr`: Long,`fromSeed`: Long,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_unbond_from_secret(`ptr`: Long,`secretHex`: RustBuffer.ByValue,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_validator_public_key_hex(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -992,6 +1000,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake() != 41825) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake_from_secret() != 24831) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_chain_height() != 36538) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1083,6 +1094,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_unbond() != 38383) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_unbond_from_secret() != 46109) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_validator_public_key_hex() != 29090) {
@@ -1575,6 +1589,14 @@ public interface LightNodeInterface {
     fun `bondStake`(`seed`: kotlin.ULong, `amount`: kotlin.ULong): kotlin.String
     
     /**
+     * Bond `amount` atoms from the wallet identity derived from a 32-byte
+     * Ed25519 secret (hex) to THIS node's validator key. The source coins,
+     * sizing split, and bond change all live at the wallet address, so
+     * staking spends wallet funds and returns the remainder to the wallet.
+     */
+    fun `bondStakeFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): kotlin.String
+    
+    /**
      * The current chain height (selected tip's blue score).
      */
     fun `chainHeight`(): kotlin.ULong
@@ -1767,6 +1789,12 @@ public interface LightNodeInterface {
      * Sealed immediately in a mined block.
      */
     fun `unbond`(`fromSeed`: kotlin.ULong, `amount`: kotlin.ULong): SendReceipt
+    
+    /**
+     * Unbond `amount` of this validator's matured stake back to the wallet
+     * address derived from a 32-byte Ed25519 secret (hex).
+     */
+    fun `unbondFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): SendReceipt
     
     /**
      * This validator's VRF public key, lowercase hex, if a seed was set.
@@ -2020,6 +2048,28 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
         it,
         
         FfiConverterULong.lower(`seed`),
+        FfiConverterULong.lower(`amount`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Bond `amount` atoms from the wallet identity derived from a 32-byte
+     * Ed25519 secret (hex) to THIS node's validator key. The source coins,
+     * sizing split, and bond change all live at the wallet address, so
+     * staking spends wallet funds and returns the remainder to the wallet.
+     */
+    @Throws(LightNodeException::class)override fun `bondStakeFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_bond_stake_from_secret(
+        it,
+        
+        FfiConverterString.lower(`secretHex`),
         FfiConverterULong.lower(`amount`),_status)
 }
     }
@@ -2606,6 +2656,26 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
         it,
         
         FfiConverterULong.lower(`fromSeed`),
+        FfiConverterULong.lower(`amount`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Unbond `amount` of this validator's matured stake back to the wallet
+     * address derived from a 32-byte Ed25519 secret (hex).
+     */
+    @Throws(LightNodeException::class)override fun `unbondFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): SendReceipt {
+            return FfiConverterTypeSendReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_unbond_from_secret(
+        it,
+        
+        FfiConverterString.lower(`secretHex`),
         FfiConverterULong.lower(`amount`),_status)
 }
     }

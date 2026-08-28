@@ -86,12 +86,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Import a wallet from a user-supplied BIP39 mnemonic.
      */
-    fun importWallet(mnemonic: String) = importMnemonic(mnemonic)
-
-    /**
-     * Import a wallet from a user-supplied BIP39 mnemonic.
-     */
-    fun importMnemonic(mnemonic: String) {
+    fun importWallet(mnemonic: String) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
             runCatching {
@@ -316,7 +311,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 .onSuccess { txId ->
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        isValidatorEnabled = true,
                         errorMessage = "Bonded: $txId",
                     )
                     refreshBalance()

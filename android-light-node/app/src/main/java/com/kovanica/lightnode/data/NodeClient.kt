@@ -13,9 +13,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * [Dispatchers.IO], and return a [Result] so the repository layer can stay
  * exception-free.
  */
-class NodeClient(nodeUrl: String) {
+class NodeClient(nodeUrl: NodeUrl) {
 
-    private val baseUrl: String = nodeUrl.trimEnd('/')
+    /**
+     * Convenience constructor for callers that already have a plain URL string.
+     */
+    constructor(nodeUrl: String) : this(NodeUrl(nodeUrl))
+
     private val client: OkHttpClient = OkHttpClient()
 
     /**
@@ -24,7 +28,7 @@ class NodeClient(nodeUrl: String) {
      */
     suspend fun fetchLightSync(from: String?): Result<ByteArray> = withContext(Dispatchers.IO) {
         runCatching {
-            val url = buildUrl("/api/light_sync", from?.let { "from" to it })
+            val url = buildUrl(nodeUrl.apiPath("/api/light_sync"), from?.let { "from" to it })
             getBytes(url)
         }.mapHttpError()
     }
@@ -35,7 +39,7 @@ class NodeClient(nodeUrl: String) {
      */
     suspend fun fetchBlocks(from: String?): Result<ByteArray> = withContext(Dispatchers.IO) {
         runCatching {
-            val url = buildUrl("/api/blocks", from?.let { "from" to it })
+            val url = buildUrl(nodeUrl.apiPath("/api/blocks"), from?.let { "from" to it })
             getBytes(url)
         }.mapHttpError()
     }
@@ -54,7 +58,7 @@ class NodeClient(nodeUrl: String) {
                 "limit" to limit.toString(),
                 "offset" to offset.toString(),
             )
-            getText(buildUrl("/api/history", params))
+            getText(buildUrl(nodeUrl.apiPath("/api/history"), params))
         }.mapHttpError()
     }
 
@@ -72,7 +76,7 @@ class NodeClient(nodeUrl: String) {
                 "limit" to limit.toString(),
                 "offset" to offset.toString(),
             )
-            getText(buildUrl("/api/utxos", params))
+            getText(buildUrl(nodeUrl.apiPath("/api/utxos"), params))
         }.mapHttpError()
     }
 
@@ -83,7 +87,7 @@ class NodeClient(nodeUrl: String) {
     suspend fun submitBlock(bytes: ByteArray): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder()
-                .url("$baseUrl/api/mine/submit")
+                .url(nodeUrl.apiPath("/api/mine/submit"))
                 .post(bytes.toRequestBody(OCTET_STREAM))
                 .build()
             client.newCall(request).execute().use { response ->
@@ -102,7 +106,7 @@ class NodeClient(nodeUrl: String) {
         runCatching {
             val body = "{\"address\":\"$address\"}".toRequestBody(JSON)
             val request = Request.Builder()
-                .url("$baseUrl/api/faucet")
+                .url(nodeUrl.apiPath("/api/faucet"))
                 .post(body)
                 .build()
             client.newCall(request).execute().use { response ->
@@ -138,18 +142,18 @@ class NodeClient(nodeUrl: String) {
 
     private fun buildUrl(path: String, query: Pair<String, String>?): String {
         return if (query == null) {
-            "$baseUrl$path"
+            path
         } else {
-            "$baseUrl$path?${query.first}=${query.second}"
+            "$path?${query.first}=${query.second}"
         }
     }
 
     private fun buildUrl(path: String, query: List<Pair<String, String>>): String {
         return if (query.isEmpty()) {
-            "$baseUrl$path"
+            path
         } else {
             val qs = query.joinToString("&") { "${it.first}=${it.second}" }
-            "$baseUrl$path?$qs"
+            "$path?$qs"
         }
     }
 
