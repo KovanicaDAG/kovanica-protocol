@@ -37,7 +37,7 @@ const ROWS = [
   { method: "POST", path: "/api/prepare", note: "sighash + fee + change" },
   { method: "POST", path: "/api/submit", note: "queue signed tx" },
   { method: "POST", path: "/api/produce", note: "pack mempool" },
-  { method: "POST", path: "/api/mine", note: "preview coinbase block" },
+  { method: "POST", path: "/api/mine", note: "mine a coinbase block on the selected node" },
   { method: "POST", path: "/api/faucet", note: "testnet open faucet" },
   { method: "POST", path: "/api/origin", note: "pulse a country" },
   { method: "GET", path: "/api/spec", note: "this document, text/plain" },
@@ -139,7 +139,7 @@ function DocsBody() {
             Sends need an Ed25519 signature (128 hex) over the <code className="font-mono text-fg">sighash</code> bytes
             from prepare. The wallet does this for you. All nodes verify 64-byte sigs.
           </li>
-          <li>Reset and empty-block mining stay off on the public explorer.</li>
+          <li>Reset stays off on the public explorer.</li>
           <li>
             Seed node: listen on TCP 9000, set <code className="font-mono text-fg">KOVANICA_PEERS=off</code> so it does
             not dial itself. Clones must dial a <strong className="text-fg">DNS-only</strong> hostname or the origin

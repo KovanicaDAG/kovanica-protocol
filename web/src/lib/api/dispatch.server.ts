@@ -79,7 +79,9 @@ export async function dispatchApi(req: Request): Promise<Response> {
   }
 
   if (sourceOf(req) === "live") {
-    if (name === "mine" || name === "mining" || name === "miner" || name === "reset") {
+    // mine / mining / miner proxy to the node's operator console; only the
+    // chain-wipe `reset` stays locked on the shared network.
+    if (name === "reset") {
       return text("not on live node", 403);
     }
     return withCors(await fetchUpstream(`/api/${name}`, method, url.search));

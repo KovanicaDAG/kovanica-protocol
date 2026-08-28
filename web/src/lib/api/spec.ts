@@ -32,8 +32,9 @@ Engine is the Rust node; this app speaks the same HTTP contract.
 
 ## HTTP API (this app + live explorer)
 
-All JSON. Errors are plain text with 4xx. Query \`source=live\` (or header
-\`x-kovanica-source: live\`) proxies the public node. Default is the preview node.
+All JSON. Errors are plain text with 4xx. The default (and \`source=live\`, or
+header \`x-kovanica-source: live\`) proxies the public testnet node. Request
+\`?source=local\` to hit this app's local in-memory node.
 
 ### Read
 
@@ -82,10 +83,10 @@ POST /api/fee_estimate?amount=
   amounts over 1 KVNC scale by 1.2
 
 POST /api/mine
-  operator: append a coinbase block (preview on, live off)
+  operator: append one block (pack mempool, else empty coinbase)
 
 POST /api/mining?on=1
-  operator: start/stop auto-mine (preview on, live off)
+  operator: start/stop auto-mine on the selected node
 
 POST /api/miner?addr=
   operator: set coinbase payee
@@ -94,7 +95,7 @@ POST /api/faucet?to=&amount=&kind=
   testnet open faucet. kind=faucet (default).
 
 POST /api/reset
-  preview only
+  local only (chain wipe is locked on the public testnet)
 
 POST /api/origin?iso3=HRV
   pulse a country (ISO 3166-1 alpha-3)

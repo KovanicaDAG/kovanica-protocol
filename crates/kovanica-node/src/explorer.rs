@@ -1297,7 +1297,7 @@ fn dispatch(
         .cloned()
         .unwrap_or_else(|| app.selected.clone());
     match action {
-        "produce" => match app.mesh.produce(&node).map_err(|e| e.to_string())? {
+        "mine" | "produce" => match app.mesh.produce(&node).map_err(|e| e.to_string())? {
             Some(_) => {}
             None => {
                 if !app.operator {
@@ -2058,6 +2058,16 @@ mod tests {
         q.insert("amount".into(), "1".into());
         let err = dispatch(&mut app, "tap", &q).unwrap_err();
         assert!(err.contains("unknown action"));
+    }
+
+    #[test]
+    fn mine_action_produces_a_block_like_produce() {
+        let mut app = Explorer::boot();
+        let before = app.mesh.node("alpha").unwrap().block_count().unwrap();
+        let mine_body = dispatch(&mut app, "mine", &std::collections::HashMap::new()).unwrap();
+        let after = app.mesh.node("alpha").unwrap().block_count().unwrap();
+        assert!(mine_body.contains("\"ok\":true"));
+        assert_eq!(after, before + 1, "mine must produce exactly one block");
     }
 
     #[test]
