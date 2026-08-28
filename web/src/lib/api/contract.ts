@@ -16,6 +16,8 @@ export const TOKEN = "KVNC";
 export const ATOM = 100_000_000;
 export const DECIMALS = 8;
 export const SUBSIDY = 200 * ATOM;
+export const FOUNDER_AMOUNT = 200 * ATOM;
+export const FOUNDER_SEED = 1;
 export const HALVING_ERA = 500_000;
 export const MIN_FEE = 10_000;
 export const K = 3;
@@ -114,6 +116,9 @@ export type ApiBootstrap = ApiHead & {
   pow: boolean;
   token: string;
   k: number;
+  subsidy: number;
+  founder_amount: number;
+  founder_seed: number;
   source?: ApiSource;
   upstream?: { ok: true; head: ApiHead } | { ok: false; error: string };
 };

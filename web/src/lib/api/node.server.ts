@@ -13,6 +13,8 @@ import type { Block, Tx } from "@/lib/ledger/types";
 import {
   ATOM,
   DECIMALS,
+  FOUNDER_AMOUNT,
+  FOUNDER_SEED,
   HALVING_ERA,
   K,
   MIN_FEE,
@@ -194,6 +196,9 @@ export function localBootstrap(upstream: ApiBootstrap["upstream"]): ApiBootstrap
     pow: false,
     token: TOKEN,
     k: K,
+    subsidy: SUBSIDY,
+    founder_amount: FOUNDER_AMOUNT,
+    founder_seed: FOUNDER_SEED,
     source: "local",
     upstream,
   };

@@ -43,7 +43,7 @@ GET /api/head
   { network, genesis, tip, blocks, min_fee, atom }
 
 GET /api/bootstrap
-  head + { listen, peers, pow, token, k, source, upstream }
+  head + { listen, peers, pow, token, k, subsidy, founder_amount, founder_seed, source, upstream }
 
 GET /api/state
   full DAG, mempool, flags (faucet / operator / mining), mesh
