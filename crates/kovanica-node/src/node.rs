@@ -328,6 +328,16 @@ pub struct Node {
     dht_node_id: Option<crate::dht::NodeId>,
     /// DHT routing table for peer discovery (optional).
     dht_routing_table: Option<crate::dht::RoutingTable>,
+    /// Open append-only replay log for incremental persistence (see
+    /// [`Node::persist_incremental`]). `None` until the node is bound to a log
+    /// (via [`Node::create_log`], [`Node::load_log`], or the first
+    /// [`Node::persist_incremental`] call).
+    log: Option<LedgerStore>,
+    /// Ids of blocks inserted since the last successful append to `log`.
+    /// Drained by [`Node::persist_incremental`]; the log order is therefore the
+    /// insertion order, which is always a valid topological order (a block is
+    /// only inserted after its parents).
+    pending: Vec<BlockId>,
 }
 
 /// Blocks per subsidy-halving era. Issuance is `cap >> (height / HALVING_ERA)`.
@@ -345,6 +355,8 @@ impl Default for Node {
             validator_sk: None,
             dht_node_id: None,
             dht_routing_table: None,
+            log: None,
+            pending: Vec::new(),
         }
     }
 }
@@ -365,6 +377,8 @@ impl Node {
             validator_sk: None,
             dht_node_id: None,
             dht_routing_table: None,
+            log: None,
+            pending: Vec::new(),
         }
     }
 
@@ -785,6 +799,7 @@ impl Node {
             .ok_or(NodeError::NotInitialized)?
             .insert(parents, work, timestamp, nonce, &[tx])
             .map_err(NodeError::Insert)?;
+        self.note_inserted(block);
         self.evict_mempool();
         Ok(Sent { block, tx: tx_id })
     }
@@ -960,6 +975,7 @@ impl Node {
         let block = ledger
             .insert(parents, work, timestamp, nonce, &[tx])
             .map_err(NodeError::Insert)?;
+        self.note_inserted(block);
         self.evict_mempool();
         Ok(Sent { block, tx: tx_id })
     }
@@ -1075,6 +1091,7 @@ impl Node {
             .insert(parents, work, timestamp, nonce, &block_txs)
             .map_err(NodeError::Insert)?;
         let duration = start.elapsed();
+        self.note_inserted(block);
         self.note_block_produced(&block, duration);
         self.mempool.remove_all(&selected_ids);
         Ok(Some(block))
@@ -1120,7 +1137,10 @@ impl Node {
         };
         let ledger = self.ledger.as_mut().expect("checked above");
         match ledger.insert_with_vrf(parents, timestamp_ms, sv, block_txs) {
-            Ok(id) => Ok(Some(id)),
+            Ok(id) => {
+                self.note_inserted(id);
+                Ok(Some(id))
+            }
             Err(
                 LedgerInsertError::NotEligible { .. }
                 | LedgerInsertError::DuplicateStakedBlock { .. },
@@ -1155,6 +1175,7 @@ impl Node {
             .insert(parents, work, timestamp, nonce, &txs)
             .map_err(NodeError::Insert)?;
         let duration = start.elapsed();
+        self.note_inserted(id);
         self.note_block_produced(&id, duration);
         Ok(id)
     }
@@ -1650,6 +1671,28 @@ impl Node {
             .collect()
     }
 
+    /// Export every non-genesis block strictly after `from` in topological
+    /// order. If `from` is unknown or not on the selected chain, fall back to a
+    /// full export (the peer cannot safely resume from an off-chain block).
+    pub fn export_from(&self, from: &BlockId) -> Vec<BlockRecord> {
+        let Some(ledger) = self.ledger.as_ref() else {
+            return Vec::new();
+        };
+        let order = ledger.dag().linearize();
+        let start = order
+            .iter()
+            .position(|id| id == from)
+            .map(|i| i + 1)
+            .unwrap_or(0);
+        let genesis = ledger.genesis();
+        order
+            .into_iter()
+            .skip(start)
+            .filter(|id| *id != genesis)
+            .filter_map(|id| self.block_record(&id))
+            .collect()
+    }
+
     /// Insert a block received from a peer. Idempotent: a block already present
     /// returns its id rather than an error. The block's parents must already be
     /// present (feed records in topological order).
@@ -1717,6 +1760,7 @@ impl Node {
         match result {
             Ok(id) => {
                 crate::metrics::record_block_validation(duration, false);
+                self.note_inserted(id);
                 self.evict_mempool();
                 Ok(id)
             }
@@ -1749,6 +1793,10 @@ impl Node {
         let ledger =
             Ledger::read_snapshot(&bytes).map_err(|e| NodeError::Snapshot(e.to_string()))?;
         self.ledger = Some(ledger);
+        // The ledger was replaced: any open log or pending ids belong to the
+        // previous ledger and must not be appended to.
+        self.log = None;
+        self.pending.clear();
         Ok(())
     }
 
@@ -1769,6 +1817,10 @@ impl Node {
         let ledger = Ledger::read_snapshot_with_hybrid(&bytes, config)
             .map_err(|e| NodeError::Snapshot(e.to_string()))?;
         self.ledger = Some(ledger);
+        // The ledger was replaced: any open log or pending ids belong to the
+        // previous ledger and must not be appended to.
+        self.log = None;
+        self.pending.clear();
         Ok(())
     }
 
@@ -1780,12 +1832,25 @@ impl Node {
         let ledger =
             Ledger::read_checkpoint(&bytes).map_err(|e| NodeError::Snapshot(e.to_string()))?;
         self.ledger = Some(ledger);
+        // The ledger was replaced: any open log or pending ids belong to the
+        // previous ledger and must not be appended to.
+        self.log = None;
+        self.pending.clear();
         Ok(())
     }
 
-    /// Write an incremental append-only log of this node's ledger at `path`.
-    pub fn create_log(&self, path: &str) -> Result<LedgerStore, NodeError> {
-        LedgerStore::create(path, self.ledger()?).map_err(|e| NodeError::Io(e.to_string()))
+    /// Write an incremental append-only log of this node's ledger at `path`
+    /// and keep it open for [`persist_incremental`](Self::persist_incremental)
+    /// appends. The log is created from the current ledger (genesis first), so
+    /// a node loaded from a whole-file snapshot migrates to the incremental
+    /// store in one write; subsequent persistence appends only new blocks.
+    pub fn create_log(&mut self, path: &str) -> Result<(), NodeError> {
+        let store =
+            LedgerStore::create(path, self.ledger()?).map_err(|e| NodeError::Io(e.to_string()))?;
+        self.log = Some(store);
+        // The fresh log already covers the whole ledger.
+        self.pending.clear();
+        Ok(())
     }
 
     /// Write a finality checkpoint to `path` using the LedgerStore.
@@ -1794,24 +1859,44 @@ impl Node {
             .map_err(|e| NodeError::Io(e.to_string()))
     }
 
-    /// Rebuild the node from an incremental log at `path`. The store is
-    /// returned so the caller can [`persist_block`](Self::persist_block) new
-    /// inserts without rewriting the file.
-    pub fn load_log(path: &str) -> Result<(Self, LedgerStore), NodeError> {
-        let (store, ledger) =
-            LedgerStore::open(path).map_err(|e| NodeError::Snapshot(e.to_string()))?;
-        Ok((
-            Self {
-                ledger: Some(ledger),
-                mempool: MempoolV2::default(),
-                clock: Clock::default(),
-                miner: None,
-                validator_sk: None,
-                dht_node_id: None,
-                dht_routing_table: None,
-            },
-            store,
-        ))
+    /// Rebuild the node from an incremental log at `path`. The log stays open
+    /// on the node, so [`persist_incremental`](Self::persist_incremental) can
+    /// append new inserts without rewriting the file.
+    pub fn load_log(path: &str) -> Result<Self, NodeError> {
+        Self::load_log_impl(path, None)
+    }
+
+    /// Like [`Node::load_log`], but hybrid admission (with `config`) is active
+    /// during replay, so staked-VRF blocks re-admit with their original ids.
+    /// Required for logs produced in hybrid mode — mirroring
+    /// [`Node::load_with_hybrid`] for snapshots.
+    pub fn load_log_with_hybrid(
+        path: &str,
+        config: kovanica_state::HybridConfig,
+    ) -> Result<Self, NodeError> {
+        Self::load_log_impl(path, Some(config))
+    }
+
+    fn load_log_impl(
+        path: &str,
+        hybrid: Option<kovanica_state::HybridConfig>,
+    ) -> Result<Self, NodeError> {
+        let (store, ledger) = match hybrid {
+            Some(config) => LedgerStore::open_with_hybrid(path, config),
+            None => LedgerStore::open(path),
+        }
+        .map_err(|e| NodeError::Snapshot(e.to_string()))?;
+        Ok(Self {
+            ledger: Some(ledger),
+            mempool: MempoolV2::default(),
+            clock: Clock::default(),
+            miner: None,
+            validator_sk: None,
+            dht_node_id: None,
+            dht_routing_table: None,
+            log: Some(store),
+            pending: Vec::new(),
+        })
     }
 
     /// Rebuild the node from a finality checkpoint at `path`.
@@ -1826,7 +1911,53 @@ impl Node {
             validator_sk: None,
             dht_node_id: None,
             dht_routing_table: None,
+            log: None,
+            pending: Vec::new(),
         })
+    }
+
+    /// Append every block inserted since the last call to the open incremental
+    /// log at `path`, in insertion order (a valid topological order — a block
+    /// is only inserted after its parents). If no log is open yet, one is
+    /// created from the current ledger first, so a node that was never bound
+    /// to a log (a fresh genesis, or a snapshot load) migrates here in a single
+    /// whole-ledger write; afterwards only new blocks are appended.
+    ///
+    /// On an I/O error the unappended ids are kept for the next call, so no
+    /// block is silently dropped from the log.
+    pub fn persist_incremental(&mut self, path: &str) -> Result<(), NodeError> {
+        if self.log.is_none() {
+            let store = LedgerStore::create(path, self.ledger()?)
+                .map_err(|e| NodeError::Io(e.to_string()))?;
+            self.log = Some(store);
+            // The fresh log covers the whole ledger, including anything pending.
+            self.pending.clear();
+        }
+        let mut store = self.log.take().expect("opened above");
+        let pending = std::mem::take(&mut self.pending);
+        let mut i = 0;
+        while i < pending.len() {
+            let id = pending[i];
+            let block = self
+                .ledger()?
+                .dag()
+                .block(&id)
+                .ok_or_else(|| NodeError::Io("unknown block".into()))?;
+            if let Err(e) = store.append(block) {
+                self.pending.extend_from_slice(&pending[i..]);
+                self.log = Some(store);
+                return Err(NodeError::Io(e.to_string()));
+            }
+            i += 1;
+        }
+        self.log = Some(store);
+        Ok(())
+    }
+
+    /// Record a successfully inserted block for the next
+    /// [`persist_incremental`](Self::persist_incremental) append.
+    fn note_inserted(&mut self, id: BlockId) {
+        self.pending.push(id);
     }
 
     /// Append `id`'s block to an open log. No-op-level error if the block is
