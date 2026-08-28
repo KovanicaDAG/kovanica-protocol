@@ -77,14 +77,14 @@ fn light_node_imports_live_testnet_chain() {
 }
 
 #[test]
-fn export_block_by_id_roundtrips_a_known_block() {
+fn export_block_roundtrips_a_known_block() {
     let node = LightNode::new(live_config()).expect("genesis ok");
     let blob = std::fs::read(fixture_path()).expect("fixture present");
     node.receive_blocks(blob).expect("blob must decode");
 
     let tip = node.selected_tip().unwrap();
     let bytes = node
-        .export_block_by_id(tip.clone())
+        .export_block(tip.clone())
         .expect("export must not error")
         .expect("tip must be known");
     assert!(!bytes.is_empty(), "exported record must be non-empty");

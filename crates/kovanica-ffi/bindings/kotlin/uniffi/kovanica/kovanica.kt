@@ -689,6 +689,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_block(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_block_by_id(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_blocks(
@@ -791,6 +793,8 @@ internal object UniffiLib {
     ): Long
     external fun uniffi_kovanica_ffi_fn_method_lightnode_enable_hybrid(`ptr`: Long,`rateNum`: Long,`rateDen`: Long,`nominalWork`: RustBuffer.ByValue,`retarget`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_export_block(`ptr`: Long,`blockIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_export_block_by_id(`ptr`: Long,`idHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_export_blocks(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -992,6 +996,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid() != 31711) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_block() != 44821) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_block_by_id() != 11244) {
@@ -1584,6 +1591,12 @@ public interface LightNodeInterface {
     fun `enableHybrid`(`rateNum`: kotlin.ULong, `rateDen`: kotlin.ULong, `nominalWork`: U128Parts, `retarget`: kotlin.Boolean)
     
     /**
+     * Export a single block as a one-record wire-format blob. `None` if the
+     * block id is unknown or not a non-genesis block.
+     */
+    fun `exportBlock`(`blockIdHex`: kotlin.String): kotlin.ByteArray?
+    
+    /**
      * Export a single block by lowercase-hex id as a wire-format blob.
      * Returns `None` when the id is unknown.
      */
@@ -2055,6 +2068,25 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 }
     }
     
+    
+
+    
+    /**
+     * Export a single block as a one-record wire-format blob. `None` if the
+     * block id is unknown or not a non-genesis block.
+     */
+    @Throws(LightNodeException::class)override fun `exportBlock`(`blockIdHex`: kotlin.String): kotlin.ByteArray? {
+            return FfiConverterOptionalByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_export_block(
+        it,
+        
+        FfiConverterString.lower(`blockIdHex`),_status)
+}
+    }
+    )
+    }
     
 
     

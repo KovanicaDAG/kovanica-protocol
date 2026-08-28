@@ -102,11 +102,11 @@ impl NetworkProfile {
     fn mainnet() -> Self {
         Self {
             id: "kovanica-mainnet",
-            genesis_k: 0,       // TBD — do not invent
-            genesis_subsidy: 0, // TBD — do not invent
-            genesis_premine: 0, // TBD — do not invent
-            founder_seed: 0,    // TBD — do not invent
-            finality_depth: 0,  // TBD — do not invent
+            genesis_k: 0,             // TBD — do not invent
+            genesis_subsidy: 0,       // TBD — do not invent
+            genesis_premine: 0,       // TBD — do not invent
+            founder_seed: 0,          // TBD — do not invent
+            finality_depth: 0,        // TBD — do not invent
             payload_pruning_depth: 0, // TBD — do not invent
             dormant: true,
         }
@@ -2904,7 +2904,10 @@ mod tests {
         assert_eq!(light["k"].as_u64().unwrap(), u64::from(profile.genesis_k));
         assert_eq!(light["subsidy"].as_u64().unwrap(), profile.genesis_subsidy);
         assert_eq!(light["premine"].as_u64().unwrap(), profile.genesis_premine);
-        assert_eq!(light["founder_seed"].as_u64().unwrap(), profile.founder_seed);
+        assert_eq!(
+            light["founder_seed"].as_u64().unwrap(),
+            profile.founder_seed
+        );
         assert_eq!(
             light["finality_depth"].as_u64().unwrap(),
             profile.finality_depth

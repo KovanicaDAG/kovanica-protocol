@@ -485,12 +485,21 @@ impl LightNode {
         net::encode_records(&self.lock().export())
     }
 
+    /// Export a single block as a one-record wire-format blob. `None` if the
+    /// block id is unknown or not a non-genesis block.
+    pub fn export_block(&self, block_id_hex: String) -> Result<Option<Vec<u8>>, LightNodeError> {
+        let id = parse_block_id(&block_id_hex)?;
+        let node = self.lock();
+        match node.block_record(&id) {
+            Some(rec) => Ok(Some(net::encode_records(std::slice::from_ref(&rec)))),
+            None => Ok(None),
+        }
+    }
+
     /// Export a single block by lowercase-hex id as a wire-format blob.
     /// Returns `None` when the id is unknown.
     pub fn export_block_by_id(&self, id_hex: String) -> Result<Option<Vec<u8>>, LightNodeError> {
-        let id = parse_block_id(&id_hex)?;
-        let node = self.lock();
-        Ok(node.block_record(&id).map(|r| net::encode_records(&[r])))
+        self.export_block(id_hex)
     }
 
     /// Apply a blob produced by [`Self::export_blocks`] (or any full node

@@ -724,6 +724,33 @@ deterministic + adversarial tests per the conventions above.
     network genesis byte-for-byte; then `receive_blocks` converges to the live
     tip. v0.1 pins these params as app constants (`/api/bootstrap` doesn't
     expose subsidy/premine/seed); add them to the endpoint before mainnet.
+  - **9b wallet UX landed**: Onboarding (create/import mnemonic), home, send,
+    receive, history and settings screens in Compose/Material3. Secure seed
+    storage via Android Keystore `AES/GCM/NoPadding`; the mnemonic only exists
+    in memory during derivation/signing. Address derivation matches the Rust
+    `KeyPair::from_seed(seed).address()` path (`0x00 || ed25519_pk`, base58
+    wrapped as `kvnc…dag`).
+  - **9c light sync landed**: `LightNodeRepository` owns the in-process
+    `uniffi.kovanica.LightNode` and persists the KVLS v1 light-sync blob to
+    `filesDir/light_sync.bin`. Startup calls `receiveLightSync` on the saved
+    blob; `sync(nodeUrl, walletAddress)` fetches `/api/light_sync?from=<tip>`,
+    merges it, writes the merged blob back, then checks Golomb-Rice filters
+    with `syncedFilterMatches` and pulls only matching full blocks via
+    `/api/blocks?from=<id>`. Wallet address, balance and history are exposed
+    through the FFI surface.
+  - **9d staking uplink landed**: `WalletRepository` wraps seed-derived
+    transfers (`sendFrom`), bonding (`bondStake`), unbonding (`unbond`), and
+    validator enablement (`setValidatorSeed` + `enableHybrid`). `produceBlock`
+    now calls `produceBlock`/`produceEmptyBlock`, exports the produced block
+    with the new `export_block` FFI method, and submits the wire-format blob
+    to `POST /api/mine/submit` (octet-stream path) so phone-produced staked
+    blocks land on the explorer. `NodeClient` implements the HTTP surface
+    (light sync, full blocks, history, UTXOs, faucet, block submit).
+  - New Android data layer files:
+    `android-light-node/app/src/main/java/com/kovanica/lightnode/data/NodeUrl.kt`,
+    `NodeClient.kt`, `LightNodeRepository.kt`, `WalletRepository.kt`,
+    `Format.kt`; `WalletViewModel.kt` wires them to the designer's UI state.
+    Kotlin UniFFI bindings regenerated to include `export_block`.
 
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.

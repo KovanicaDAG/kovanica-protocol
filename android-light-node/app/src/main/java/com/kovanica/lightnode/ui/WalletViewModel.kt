@@ -3,8 +3,10 @@ package com.kovanica.lightnode.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.kovanica.lightnode.data.NodeRepository
+import com.kovanica.lightnode.data.LightNodeRepository
+import com.kovanica.lightnode.data.NodeClient
 import com.kovanica.lightnode.data.SecureSeedStorage
+import com.kovanica.lightnode.data.WalletRepository
 import com.kovanica.lightnode.data.formatKvnc
 import com.kovanica.lightnode.ui.prefs.WalletPrefs
 import com.kovanica.lightnode.ui.util.Bip39
@@ -18,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import uniffi.kovanica.HistoryEntry
 
 private const val ATOM: Long = 100_000_000L
 
@@ -26,15 +29,16 @@ private const val ATOM: Long = 100_000_000L
  *
  * The mnemonic is kept encrypted at rest via [SecureSeedStorage] and only
  * loaded into memory for key derivation and signing. Every chain-touching
- * operation is dispatched to [NodeRepository], which serialises FFI work on
- * a dedicated background thread.
+ * operation is dispatched to [LightNodeRepository] / [WalletRepository],
+ * which serialise FFI work on a dedicated background thread.
  */
 class WalletViewModel(application: Application) : AndroidViewModel(application) {
 
     private val secureStorage = SecureSeedStorage(application)
     private val prefs = WalletPrefs(application)
     private val bip39 = Bip39(application)
-    private val nodeRepository = NodeRepository()
+    private val lightNode = LightNodeRepository(application)
+    private val walletRepository = WalletRepository(application, lightNode)
 
     private val _uiState = MutableStateFlow(WalletUiState())
     val uiState: StateFlow<WalletUiState> = _uiState.asStateFlow()
@@ -57,12 +61,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             runCatching {
                 withContext(Dispatchers.Default) {
                     val mnemonic = bip39.generateMnemonic()
-                    val seed = bip39.mnemonicToEd25519Seed(mnemonic)
-                    val address = KovanicaAddress.fromSeed(seed)
+                    val address = walletRepository.deriveAddress(mnemonic)
                     secureStorage.saveMnemonic(mnemonic)
-                    Triple(mnemonic, address, seed)
+                    Triple(mnemonic, address, Unit)
                 }
-            }.onSuccess { (mnemonic, address, seed) ->
+            }.onSuccess { (mnemonic, address, _) ->
                 _uiState.value = WalletUiState(
                     isLoading = false,
                     walletExists = true,
@@ -70,7 +73,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     address = address,
                     nodeUrl = prefs.nodeUrl,
                 )
-                onWalletReady(seed)
+                onWalletReady(mnemonic)
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -83,7 +86,12 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     /**
      * Import a wallet from a user-supplied BIP39 mnemonic.
      */
-    fun importWallet(mnemonic: String) {
+    fun importWallet(mnemonic: String) = importMnemonic(mnemonic)
+
+    /**
+     * Import a wallet from a user-supplied BIP39 mnemonic.
+     */
+    fun importMnemonic(mnemonic: String) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
             runCatching {
@@ -91,12 +99,11 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     if (!bip39.validate(mnemonic)) {
                         throw IllegalArgumentException("Invalid recovery phrase")
                     }
-                    val seed = bip39.mnemonicToEd25519Seed(mnemonic)
-                    val address = KovanicaAddress.fromSeed(seed)
+                    val address = walletRepository.deriveAddress(mnemonic)
                     secureStorage.saveMnemonic(mnemonic)
-                    Triple(mnemonic, address, seed)
+                    Pair(mnemonic, address)
                 }
-            }.onSuccess { (savedMnemonic, address, seed) ->
+            }.onSuccess { (savedMnemonic, address) ->
                 _uiState.value = WalletUiState(
                     isLoading = false,
                     walletExists = true,
@@ -104,7 +111,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                     address = address,
                     nodeUrl = prefs.nodeUrl,
                 )
-                onWalletReady(seed)
+                onWalletReady(savedMnemonic)
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -122,18 +129,18 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
             runCatching {
                 withContext(Dispatchers.Default) {
-                    val seed = bip39.mnemonicToEd25519Seed(mnemonic)
-                    KovanicaAddress.fromSeed(seed) to seed
+                    val address = walletRepository.deriveAddress(mnemonic)
+                    Pair(mnemonic, address)
                 }
-            }.onSuccess { (address, seed) ->
+            }.onSuccess { (savedMnemonic, address) ->
                 _uiState.value = WalletUiState(
                     isLoading = false,
                     walletExists = true,
-                    mnemonic = mnemonic,
+                    mnemonic = savedMnemonic,
                     address = address,
                     nodeUrl = prefs.nodeUrl,
                 )
-                onWalletReady(seed)
+                onWalletReady(savedMnemonic)
             }.onFailure { error ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
@@ -144,14 +151,16 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     /**
-     * Called once the wallet address is known: boot the node, refresh balance,
-     * stake info and history.
+     * Called once the wallet address is known: boot the node, load any
+     * persisted light sync, then refresh balance, stake info and history.
      */
-    private fun onWalletReady(seed: ByteArray) {
+    private fun onWalletReady(mnemonic: String) {
         viewModelScope.launch {
-            nodeRepository.bootIfNeeded(prefs.nodeUrl)
+            val address = _uiState.value.address
+            lightNode.bootIfNeeded(prefs.nodeUrl)
+            lightNode.loadLightSync()
             refreshBalance()
-            refreshStakeInfo(seed)
+            refreshStakeInfo(mnemonic)
             refreshHistory()
         }
     }
@@ -165,21 +174,21 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             if (address.hex.isBlank()) return@launch
 
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            runCatching {
-                nodeRepository.refreshBalance(address.hex)
-            }.onSuccess { (atomBalance, spendableBalance) ->
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    atomBalance = atomBalance,
-                    spendableBalance = spendableBalance,
-                )
-                refreshHistory()
-            }.onFailure { error ->
-                _uiState.value = _uiState.value.copy(
-                    isLoading = false,
-                    errorMessage = error.localizedMessage ?: error.toString(),
-                )
-            }
+            lightNode.balanceOfAddress(address.hex)
+                .onSuccess { atoms ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        atomBalance = atoms,
+                        spendableBalance = formatKvnc(atoms),
+                    )
+                    refreshHistory()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = error.localizedMessage ?: error.toString(),
+                    )
+                }
         }
     }
 
@@ -188,12 +197,18 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun syncNode() {
         viewModelScope.launch {
+            val address = _uiState.value.address
+            if (address.hex.isBlank()) {
+                _uiState.value = _uiState.value.copy(errorMessage = "No wallet address")
+                return@launch
+            }
+
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            nodeRepository.syncNode(prefs.nodeUrl)
+            lightNode.sync(prefs.nodeUrl, address.hex)
                 .onSuccess { count ->
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        errorMessage = "Synced $count blocks",
+                        errorMessage = "Synced $count headers",
                     )
                     refreshBalance()
                     refreshHistory()
@@ -221,47 +236,67 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
                 lastSendReceipt = null,
             )
 
-            val result = runCatching {
-                val seed = withContext(Dispatchers.Default) {
-                    bip39.mnemonicToEd25519Seed(mnemonic)
-                }
-                val secretHex = seed.joinToString("") { "%02x".format(it) }
-                val atoms = kvncToAtoms(amountKvnc)
-                nodeRepository.send(secretHex, atoms, recipientAddress.trim())
-            }
-
-            result.onSuccess { sendResult ->
-                sendResult
-                    .onSuccess { receipt ->
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            lastSendReceipt = receipt,
-                            errorMessage = "Sent in block ${receipt.blockIdHex.take(8)}…",
-                        )
-                        refreshBalance()
-                        refreshHistory()
-                    }
-                    .onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            errorMessage = error.localizedMessage ?: error.toString(),
-                        )
-                    }
-            }.onFailure { error ->
+            val atomsResult = runCatching { kvncToAtoms(amountKvnc) }
+            val atoms = atomsResult.getOrElse { error ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     errorMessage = error.localizedMessage ?: error.toString(),
                 )
+                return@launch
             }
+
+            walletRepository.send(mnemonic, recipientAddress.trim(), atoms)
+                .onSuccess { receipt ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        lastSendReceipt = receipt,
+                        errorMessage = "Sent in block ${receipt.blockIdHex.take(8)}…",
+                    )
+                    refreshBalance()
+                    refreshHistory()
+                    refreshStakeInfo()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = error.localizedMessage ?: error.toString(),
+                    )
+                }
+        }
+    }
+
+    /**
+     * Request testnet KVNC from the faucet for the wallet address.
+     */
+    fun requestFaucet() {
+        viewModelScope.launch {
+            val address = _uiState.value.address
+            if (address.hex.isBlank()) {
+                _uiState.value = _uiState.value.copy(errorMessage = "No wallet address")
+                return@launch
+            }
+
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+            NodeClient(prefs.nodeUrl).requestFaucet(address.hex)
+                .onSuccess { _ ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = "Faucet requested",
+                    )
+                    refreshBalance()
+                    refreshHistory()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = error.localizedMessage ?: error.toString(),
+                    )
+                }
         }
     }
 
     /**
      * Bond spendable coins to this node's validator identity.
-     *
-     * v0.1 maps the wallet's Ed25519 seed directly to the validator seed and
-     * derives the spending actor from the first 8 bytes of that seed. See
-     * [NodeRepository.bond] for the limitation around the actor address.
      */
     fun bond(amountKvnc: String) {
         viewModelScope.launch {
@@ -269,39 +304,31 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             if (mnemonic.isBlank()) return@launch
 
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-
-            val result = runCatching {
-                val seed = withContext(Dispatchers.Default) {
-                    bip39.mnemonicToEd25519Seed(mnemonic)
-                }
-                val atoms = kvncToAtoms(amountKvnc)
-                nodeRepository.bond(seed, atoms)
-            }
-
-            result.onSuccess { bondResult ->
-                bondResult
-                    .onSuccess { txId ->
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            isValidatorEnabled = true,
-                            errorMessage = "Bonded: $txId",
-                        )
-                        refreshBalance()
-                        refreshHistory()
-                        refreshStakeInfo()
-                    }
-                    .onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            errorMessage = error.localizedMessage ?: error.toString(),
-                        )
-                    }
-            }.onFailure { error ->
+            val atomsResult = runCatching { kvncToAtoms(amountKvnc) }
+            val atoms = atomsResult.getOrElse { error ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     errorMessage = error.localizedMessage ?: error.toString(),
                 )
+                return@launch
             }
+            walletRepository.bondStake(mnemonic, atoms)
+                .onSuccess { txId ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isValidatorEnabled = true,
+                        errorMessage = "Bonded: $txId",
+                    )
+                    refreshBalance()
+                    refreshHistory()
+                    refreshStakeInfo()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = error.localizedMessage ?: error.toString(),
+                    )
+                }
         }
     }
 
@@ -314,57 +341,100 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             if (mnemonic.isBlank()) return@launch
 
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-
-            val result = runCatching {
-                val seed = withContext(Dispatchers.Default) {
-                    bip39.mnemonicToEd25519Seed(mnemonic)
-                }
-                val atoms = kvncToAtoms(amountKvnc)
-                val fromSeed = seed.first8BytesLittleEndian()
-                nodeRepository.unbond(fromSeed, atoms)
-            }
-
-            result.onSuccess { unbondResult ->
-                unbondResult
-                    .onSuccess { receipt ->
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            lastSendReceipt = receipt,
-                            errorMessage = "Unbonded in block ${receipt.blockIdHex.take(8)}…",
-                        )
-                        refreshBalance()
-                        refreshHistory()
-                        refreshStakeInfo()
-                    }
-                    .onFailure { error ->
-                        _uiState.value = _uiState.value.copy(
-                            isLoading = false,
-                            errorMessage = error.localizedMessage ?: error.toString(),
-                        )
-                    }
-            }.onFailure { error ->
+            val atomsResult = runCatching { kvncToAtoms(amountKvnc) }
+            val atoms = atomsResult.getOrElse { error ->
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     errorMessage = error.localizedMessage ?: error.toString(),
                 )
+                return@launch
             }
+            walletRepository.unbond(mnemonic, atoms)
+                .onSuccess { receipt ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        lastSendReceipt = receipt,
+                        errorMessage = "Unbonded in block ${receipt.blockIdHex.take(8)}…",
+                    )
+                    refreshBalance()
+                    refreshHistory()
+                    refreshStakeInfo()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = error.localizedMessage ?: error.toString(),
+                    )
+                }
         }
     }
 
     /**
-     * Produce a block using the phone's validator seed (staking mode) or PoW.
+     * Enable hybrid staking mode from a raw 32-byte validator seed.
+     */
+    fun enableStaking(seed: ByteArray) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+            walletRepository.setValidatorSeedAndEnable(seed)
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isValidatorEnabled = true,
+                        errorMessage = "Staking enabled",
+                    )
+                    refreshStakeInfo()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = error.localizedMessage ?: error.toString(),
+                    )
+                }
+        }
+    }
+
+    /**
+     * Enable hybrid staking mode from the wallet mnemonic.
+     */
+    fun enableStaking() {
+        viewModelScope.launch {
+            val mnemonic = _uiState.value.mnemonic
+            if (mnemonic.isBlank()) return@launch
+
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+            val seed = withContext(Dispatchers.Default) {
+                bip39.mnemonicToEd25519Seed(mnemonic)
+            }
+            walletRepository.setValidatorSeedAndEnable(seed)
+                .onSuccess {
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        isValidatorEnabled = true,
+                        errorMessage = "Staking enabled",
+                    )
+                    refreshStakeInfo()
+                }
+                .onFailure { error ->
+                    _uiState.value = _uiState.value.copy(
+                        isLoading = false,
+                        errorMessage = error.localizedMessage ?: error.toString(),
+                    )
+                }
+        }
+    }
+
+    /**
+     * Produce a block using the phone's validator seed (staking mode) or PoW,
+     * then submit it to the configured seed node.
      */
     fun produceBlock() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            nodeRepository.produceBlock()
-                .onSuccess { blockInfo ->
-                    val message = blockInfo?.let {
-                        "Produced block ${it.idHex.take(8)}…"
-                    } ?: "No block produced"
+            walletRepository.produceAndSubmitBlock(prefs.nodeUrl)
+                .onSuccess { blockId ->
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,
-                        errorMessage = message,
+                        errorMessage = "Produced block ${blockId.take(8)}…",
                     )
                     refreshBalance()
                     refreshHistory()
@@ -409,9 +479,9 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             val address = _uiState.value.address
             if (address.hex.isBlank()) return@launch
 
-            nodeRepository.historyOf(address.hex, 100u)
+            lightNode.historyOf(address.hex, 100u)
                 .onSuccess { history ->
-                    _uiState.value = _uiState.value.copy(recentHistory = history)
+                    _uiState.value = _uiState.value.copy(recentHistory = history.map { it.toUiModel() })
                 }
         }
     }
@@ -420,35 +490,36 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      * Refresh validator stake summary. Swallows errors (e.g. validator not
      * yet set) so the rest of the UI stays responsive.
      */
-    private fun refreshStakeInfo(seed: ByteArray? = null) {
+    private fun refreshStakeInfo(mnemonic: String? = null) {
         viewModelScope.launch {
-            val validatorSet = seed?.let {
-                runCatching { nodeRepository.validatorPublicKeyHex() }.getOrNull() != null
+            val validatorSet = mnemonic?.let {
+                runCatching { lightNode.validatorPublicKeyHex().getOrNull() != null }.getOrNull() ?: false
             } ?: _uiState.value.isValidatorEnabled
 
-            runCatching {
-                val my = nodeRepository.myStake()
-                val total = nodeRepository.totalStake()
-                val pending = nodeRepository.pendingUnbondHeight()
-                Triple(my, total, pending)
-            }.onSuccess { (my, total, pending) ->
-                _uiState.value = _uiState.value.copy(
-                    isValidatorEnabled = validatorSet,
-                    myStake = formatKvnc(my),
-                    totalStake = formatKvnc(total),
-                    pendingUnbondHeight = pending,
-                )
-            }
+            val my = runCatching { lightNode.myStake().getOrThrow() }.getOrDefault("0")
+            val total = runCatching { lightNode.totalStake().getOrThrow() }.getOrDefault("0")
+            val pending = runCatching { lightNode.pendingUnbondHeight().getOrThrow() }.getOrNull()
+
+            _uiState.value = _uiState.value.copy(
+                isValidatorEnabled = validatorSet,
+                myStake = formatKvnc(my),
+                totalStake = formatKvnc(total),
+                pendingUnbondHeight = pending,
+            )
         }
     }
 
-    private fun ByteArray.first8BytesLittleEndian(): ULong {
-        var value = 0UL
-        for (i in 0..7) {
-            value = value or (this[i].toUByte().toULong() shl (8 * i))
-        }
-        return value
-    }
+    private fun HistoryEntry.toUiModel(): HistoryItem = HistoryItem(
+        blockIdHex = blockIdHex,
+        txIdHex = txIdHex,
+        direction = if (direction == uniffi.kovanica.TxDirection.RECEIVED) {
+            TxDirection.RECEIVED
+        } else {
+            TxDirection.SENT
+        },
+        amount = formatKvnc(amount),
+        timestamp = null,
+    )
 
     private fun kvncToAtoms(amountKvnc: String): ULong {
         val decimal = BigDecimal(amountKvnc.trim())
@@ -469,6 +540,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
 
     override fun onCleared() {
         super.onCleared()
-        nodeRepository.close()
+        lightNode.close()
     }
 }
