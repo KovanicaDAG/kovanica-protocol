@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use kovanica_dag::{Block, BlockId};
 use kovanica_state::{
-    decode_block_payload, encode_block_payload, Address, HybridConfig, Transaction,
+    decode_block_payload, encode_block_payload, Address, HybridConfig, OutPoint, Transaction, TxId, TxOutput,
 };
 
 use crate::dht::{NodeId, PeerContact, RoutingTable};
@@ -27,7 +27,7 @@ use crate::net::{
     decode_records, encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first,
     sync_headers_first,
 };
-use crate::node::{BlockRecord, Node, HALVING_ERA};
+use crate::node::{BlockRecord, Node, WalletDirection, HALVING_ERA};
 use crate::p2p::Mesh;
 
 const UI: &str = include_str!("explorer.html");
@@ -1377,6 +1377,72 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
             Err(e) => return respond(&mut stream, 400, "text/plain; charset=utf-8", e.as_bytes()),
         }
     }
+    if method == "GET" && path.starts_with("/api/block/") {
+        let id = path.trim_start_matches("/api/block/");
+        match block_detail_json(app, id) {
+            Ok(body) => return respond(&mut stream, 200, "application/json", body.as_bytes()),
+            Err(e) if e == "block not found" => {
+                return respond(
+                    &mut stream,
+                    404,
+                    "application/json",
+                    err_json(&e).as_bytes(),
+                );
+            }
+            Err(e) => {
+                return respond(
+                    &mut stream,
+                    400,
+                    "application/json",
+                    err_json(&e).as_bytes(),
+                )
+            }
+        }
+    }
+    if method == "GET" && path.starts_with("/api/tx/") {
+        let id = path.trim_start_matches("/api/tx/");
+        match tx_detail_json(app, id) {
+            Ok(body) => return respond(&mut stream, 200, "application/json", body.as_bytes()),
+            Err(e) if e == "tx not found" || e == "block not found" => {
+                return respond(
+                    &mut stream,
+                    404,
+                    "application/json",
+                    err_json(&e).as_bytes(),
+                );
+            }
+            Err(e) => {
+                return respond(
+                    &mut stream,
+                    400,
+                    "application/json",
+                    err_json(&e).as_bytes(),
+                )
+            }
+        }
+    }
+    if method == "GET" && path.starts_with("/api/address/") {
+        let addr = path.trim_start_matches("/api/address/");
+        match address_detail_json(app, addr, &query) {
+            Ok(body) => return respond(&mut stream, 200, "application/json", body.as_bytes()),
+            Err(e) if e == "address not found" => {
+                return respond(
+                    &mut stream,
+                    404,
+                    "application/json",
+                    err_json(&e).as_bytes(),
+                );
+            }
+            Err(e) => {
+                return respond(
+                    &mut stream,
+                    400,
+                    "application/json",
+                    err_json(&e).as_bytes(),
+                )
+            }
+        }
+    }
     if method == "POST" && path == "/api/mine/submit" {
         let node_name = query
             .get("node")
@@ -1586,6 +1652,423 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
                 app.mesh.announce_block(&node_name, record);
                 persist_all(&mut app.mesh);
                 let body = format!("{{\"ok\":true,\"block\":{}}}", jstr(&block_id.to_string()));
+                return respond(&mut stream, 200, "application/json", body.as_bytes());
+            }
+            Err(e) => {
+                let err = format!("{{\"ok\":false,\"error\":{}}}", jstr(&e.to_string()));
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        }
+    }
+    // ------------------------------------------------------------------
+    // Raw transaction submission (multisig, hardware, mobile)
+    // ------------------------------------------------------------------
+    if method == "POST" && path == "/api/submit_tx" {
+        let json_body: serde_json::Value = match serde_json::from_str(&body_str) {
+            Ok(val) => val,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("invalid json body: {e}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx_hex = match json_body.get("tx_hex").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("missing 'tx_hex' field")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx_bytes = match hex::decode(tx_hex.trim()) {
+            Ok(b) => b,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("invalid hex in 'tx_hex': {e}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx = match Transaction::decode(&tx_bytes) {
+            Ok(t) => t,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("undecodable transaction: {e:?}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let node_name = query
+            .get("node")
+            .cloned()
+            .unwrap_or_else(|| app.selected.clone());
+        let Some(node) = app.mesh.node_mut(&node_name) else {
+            let err = format!("{{\"ok\":false,\"error\":\"unknown node {}\"}}", node_name);
+            return respond(&mut stream, 400, "application/json", err.as_bytes());
+        };
+        match node.submit_tx(tx) {
+            Ok(tx_id) => {
+                persist_all(&app.mesh);
+                let body = format!("{{\"ok\":true,\"tx\":{}}}", jstr(&tx_id.to_string()));
+                return respond(&mut stream, 200, "application/json", body.as_bytes());
+            }
+            Err(e) => {
+                let err = format!("{{\"ok\":false,\"error\":{}}}", jstr(&e.to_string()));
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        }
+    }
+    // ------------------------------------------------------------------
+    // Multisig (M-of-N P2SH) HTTP API
+    // ------------------------------------------------------------------
+    if method == "POST" && path == "/api/multisig/create" {
+        let json_body: serde_json::Value = match serde_json::from_str(&body_str) {
+            Ok(val) => val,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("invalid json body: {e}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let m = match json_body.get("m").and_then(|v| v.as_u64()) {
+            Some(n) if (1..=16).contains(&n) => n as u8,
+            _ => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("'m' must be an integer between 1 and 16")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let pubkeys_val = match json_body.get("pubkeys").and_then(|v| v.as_array()) {
+            Some(arr) if !arr.is_empty() && arr.len() <= 16 => arr,
+            _ => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("'pubkeys' must be a non-empty array of at most 16 keys")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let mut pubkeys = Vec::with_capacity(pubkeys_val.len());
+        for v in pubkeys_val {
+            let s = match v.as_str() {
+                Some(s) => s,
+                None => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr("each pubkey must be a 64-hex or kvnc…dag string")
+                    );
+                    return respond(&mut stream, 400, "application/json", err.as_bytes());
+                }
+            };
+            let addr = match parse_addr(s) {
+                Ok(a) => a,
+                Err(e) => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr(&format!("invalid pubkey '{s}': {e}"))
+                    );
+                    return respond(&mut stream, 400, "application/json", err.as_bytes());
+                }
+            };
+            pubkeys.push(*addr.payload());
+        }
+        let node_name = query
+            .get("node")
+            .cloned()
+            .unwrap_or_else(|| app.selected.clone());
+        let Some(node) = app.mesh.node_mut(&node_name) else {
+            let err = format!("{{\"ok\":false,\"error\":\"unknown node {}\"}}", node_name);
+            return respond(&mut stream, 400, "application/json", err.as_bytes());
+        };
+        match node.create_multisig_address(m, pubkeys) {
+            Ok((address, script)) => {
+                let body = format!(
+                    "{{\"ok\":true,\"address\":{},\"redeem_script_hex\":{}}}",
+                    jstr(&address.to_kvnc()),
+                    jstr(&hex::encode(&script))
+                );
+                return respond(&mut stream, 200, "application/json", body.as_bytes());
+            }
+            Err(e) => {
+                let err = format!("{{\"ok\":false,\"error\":{}}}", jstr(&e.to_string()));
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        }
+    }
+    if method == "POST" && path == "/api/multisig/build" {
+        let json_body: serde_json::Value = match serde_json::from_str(&body_str) {
+            Ok(val) => val,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("invalid json body: {e}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let address = match json_body.get("address").and_then(|v| v.as_str()) {
+            Some(s) => match parse_addr(s) {
+                Ok(a) => a,
+                Err(e) => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr(&format!("invalid address: {e}"))
+                    );
+                    return respond(&mut stream, 400, "application/json", err.as_bytes());
+                }
+            },
+            None => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("missing 'address' field")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let outputs_val = match json_body.get("outputs").and_then(|v| v.as_array()) {
+            Some(arr) if !arr.is_empty() => arr,
+            _ => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("'outputs' must be a non-empty array")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let mut outputs = Vec::with_capacity(outputs_val.len());
+        for (i, v) in outputs_val.iter().enumerate() {
+            let value = match v.get("value").and_then(|x| x.as_u64()) {
+                Some(n) => n,
+                None => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr(&format!("output {i} missing 'value'"))
+                    );
+                    return respond(&mut stream, 400, "application/json", err.as_bytes());
+                }
+            };
+            let owner = match v.get("address").and_then(|x| x.as_str()) {
+                Some(s) => match parse_addr(s) {
+                    Ok(a) => a,
+                    Err(e) => {
+                        let err = format!(
+                            "{{\"ok\":false,\"error\":{}}}",
+                            jstr(&format!("output {i} invalid address: {e}"))
+                        );
+                        return respond(&mut stream, 400, "application/json", err.as_bytes());
+                    }
+                },
+                None => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr(&format!("output {i} missing 'address'"))
+                    );
+                    return respond(&mut stream, 400, "application/json", err.as_bytes());
+                }
+            };
+            outputs.push(TxOutput::new(value, owner));
+        }
+        let node_name = query
+            .get("node")
+            .cloned()
+            .unwrap_or_else(|| app.selected.clone());
+        let Some(node) = app.mesh.node(&node_name) else {
+            let err = format!("{{\"ok\":false,\"error\":\"unknown node {}\"}}", node_name);
+            return respond(&mut stream, 400, "application/json", err.as_bytes());
+        };
+        match node.build_multisig_spend(address, outputs) {
+            Ok(tx) => {
+                let body = format!(
+                    "{{\"ok\":true,\"tx_hex\":{},\"sighash\":{}}}",
+                    jstr(&hex::encode(tx.encode())),
+                    jstr(&hex::encode(tx.sighash()))
+                );
+                return respond(&mut stream, 200, "application/json", body.as_bytes());
+            }
+            Err(e) => {
+                let err = format!("{{\"ok\":false,\"error\":{}}}", jstr(&e.to_string()));
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        }
+    }
+    if method == "POST" && path == "/api/multisig/sign" {
+        let json_body: serde_json::Value = match serde_json::from_str(&body_str) {
+            Ok(val) => val,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("invalid json body: {e}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx_hex = match json_body.get("tx_hex").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("missing 'tx_hex' field")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let secret_hex = match json_body.get("secret_hex").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("missing 'secret_hex' field")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx_bytes = match hex::decode(tx_hex.trim()) {
+            Ok(b) => b,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("invalid hex in 'tx_hex': {e}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx = match Transaction::decode(&tx_bytes) {
+            Ok(t) => t,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("undecodable transaction: {e:?}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let node_name = query
+            .get("node")
+            .cloned()
+            .unwrap_or_else(|| app.selected.clone());
+        let Some(node) = app.mesh.node(&node_name) else {
+            let err = format!("{{\"ok\":false,\"error\":\"unknown node {}\"}}", node_name);
+            return respond(&mut stream, 400, "application/json", err.as_bytes());
+        };
+        match node.sign_multisig_partial(&tx, secret_hex) {
+            Ok(sig) => {
+                let body = format!("{{\"ok\":true,\"sig_hex\":{}}}", jstr(&hex::encode(sig)));
+                return respond(&mut stream, 200, "application/json", body.as_bytes());
+            }
+            Err(e) => {
+                let err = format!("{{\"ok\":false,\"error\":{}}}", jstr(&e.to_string()));
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        }
+    }
+    if method == "POST" && path == "/api/multisig/combine" {
+        let json_body: serde_json::Value = match serde_json::from_str(&body_str) {
+            Ok(val) => val,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("invalid json body: {e}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx_hex = match json_body.get("tx_hex").and_then(|v| v.as_str()) {
+            Some(s) => s,
+            None => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("missing 'tx_hex' field")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let sigs_val = match json_body.get("sigs_hex").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr("'sigs_hex' must be an array")
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let mut sigs: Vec<[u8; 64]> = Vec::with_capacity(sigs_val.len());
+        for (i, v) in sigs_val.iter().enumerate() {
+            let s = match v.as_str() {
+                Some(s) => s,
+                None => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr(&format!("signature {i} is not a string"))
+                    );
+                    return respond(&mut stream, 400, "application/json", err.as_bytes());
+                }
+            };
+            let bytes = match hex::decode(s.trim()) {
+                Ok(b) => b,
+                Err(e) => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr(&format!("signature {i} invalid hex: {e}"))
+                    );
+                    return respond(&mut stream, 400, "application/json", err.as_bytes());
+                }
+            };
+            match <[u8; 64]>::try_from(bytes.as_slice()) {
+                Ok(arr) => sigs.push(arr),
+                Err(_) => {
+                    let err = format!(
+                        "{{\"ok\":false,\"error\":{}}}",
+                        jstr(&format!("signature {i} must be 64 bytes"))
+                    );
+                    return respond(&mut stream, 400, "application/json", err.as_bytes());
+                }
+            }
+        }
+        let tx_bytes = match hex::decode(tx_hex.trim()) {
+            Ok(b) => b,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("invalid hex in 'tx_hex': {e}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let tx = match Transaction::decode(&tx_bytes) {
+            Ok(t) => t,
+            Err(e) => {
+                let err = format!(
+                    "{{\"ok\":false,\"error\":{}}}",
+                    jstr(&format!("undecodable transaction: {e:?}"))
+                );
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        };
+        let node_name = query
+            .get("node")
+            .cloned()
+            .unwrap_or_else(|| app.selected.clone());
+        let Some(node) = app.mesh.node(&node_name) else {
+            let err = format!("{{\"ok\":false,\"error\":\"unknown node {}\"}}", node_name);
+            return respond(&mut stream, 400, "application/json", err.as_bytes());
+        };
+        match node.combine_multisig_sigs(&tx, sigs) {
+            Ok(final_tx) => {
+                let body = format!(
+                    "{{\"ok\":true,\"tx_hex\":{}}}",
+                    jstr(&hex::encode(final_tx.encode()))
+                );
                 return respond(&mut stream, 200, "application/json", body.as_bytes());
             }
             Err(e) => {
@@ -2121,6 +2604,254 @@ fn utxos_json(
         limit,
         offset,
         total
+    ))
+}
+
+fn err_json(msg: &str) -> String {
+    format!("{{\"ok\":false,\"error\":{}}}", jstr(msg))
+}
+
+fn parse_block_id(s: &str) -> Result<BlockId, String> {
+    let bytes = hex::decode(s.trim()).map_err(|_| "block id is not hex".to_string())?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| "block id must be 32 bytes".to_string())?;
+    Ok(BlockId::from_bytes(arr))
+}
+
+fn parse_tx_id(s: &str) -> Result<TxId, String> {
+    let bytes = hex::decode(s.trim()).map_err(|_| "tx id is not hex".to_string())?;
+    let arr: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| "tx id must be 32 bytes".to_string())?;
+    Ok(TxId::from_bytes(arr))
+}
+
+fn block_kind(
+    id: BlockId,
+    genesis: BlockId,
+    chain: &HashSet<BlockId>,
+    blue: &HashSet<BlockId>,
+) -> &'static str {
+    if id == genesis {
+        "genesis"
+    } else if chain.contains(&id) {
+        "chain"
+    } else if blue.contains(&id) {
+        "blue"
+    } else {
+        "red"
+    }
+}
+
+fn block_detail_json(app: &Explorer, id_hex: &str) -> Result<String, String> {
+    let id = parse_block_id(id_hex)?;
+    let node_name = app.selected.clone();
+    let n = app.mesh.node(&node_name).ok_or("unknown node")?;
+    let ledger = n.ledger().map_err(|e| e.to_string())?;
+    let dag = ledger.dag();
+    if dag.block(&id).is_none() {
+        return Err("block not found".into());
+    }
+    let rec = n.block_record(&id).ok_or("block not found")?;
+    let children = n.block_children(&id).map_err(|e| e.to_string())?;
+    let genesis = dag.genesis();
+    let chain: HashSet<BlockId> = dag.selected_chain().into_iter().collect();
+    let tip_id = n.selected_tip().ok();
+    let gd = tip_id.as_ref().and_then(|id| dag.ghostdag(id));
+    let blue_set: HashSet<BlockId> = gd
+        .map(|g| g.blue_anticone_sizes.keys().copied().collect())
+        .unwrap_or_default();
+    let kind = block_kind(id, genesis, &chain, &blue_set);
+    let ghostdag = dag.ghostdag(&id);
+    let blue_score = ghostdag.map(|g| g.blue_score).unwrap_or(0);
+    let blue_work = ghostdag.map(|g| g.blue_work).unwrap_or(0);
+
+    Ok(format!(
+        "{{\"id\":{},\"kind\":{},\"parents\":{},\"children\":{},\"work\":{},\"timestamp_ms\":{},\"nonce\":{},\"blue_score\":{},\"blue_work\":{},\"txs\":{}}}",
+        jstr(&id.to_string()),
+        jstr(kind),
+        jarr(rec.parents.iter().map(|p| jstr(&p.to_string()))),
+        jarr(children.iter().map(|c| jstr(&c.to_string()))),
+        rec.work,
+        rec.timestamp_ms,
+        rec.nonce,
+        blue_score,
+        blue_work,
+        jarr(rec.txs.iter().map(tx_json))
+    ))
+}
+
+fn tx_input_json(
+    input: &kovanica_state::TxInput,
+    prev_by_tx: &HashMap<TxId, Transaction>,
+    prev_by_outpoint: &HashMap<OutPoint, TxOutput>,
+) -> String {
+    let prev_owner = prev_by_outpoint
+        .get(&input.outpoint)
+        .map(|o| o.owner.to_hex())
+        .or_else(|| {
+            prev_by_tx.get(&input.outpoint.tx).and_then(|p| {
+                p.outputs()
+                    .get(input.outpoint.index as usize)
+                    .map(|o| o.owner.to_hex())
+            })
+        });
+    format!(
+        "{{\"tx\":{},\"index\":{},\"prev_owner\":{}}}",
+        jstr(&input.outpoint.tx.to_string()),
+        input.outpoint.index,
+        prev_owner
+            .as_deref()
+            .map(jstr)
+            .unwrap_or_else(|| "null".into())
+    )
+}
+
+fn tx_detail_json(app: &Explorer, id_hex: &str) -> Result<String, String> {
+    let id = parse_tx_id(id_hex)?;
+    let node_name = app.selected.clone();
+    let n = app.mesh.node(&node_name).ok_or("unknown node")?;
+
+    // Mempool path: the tx may spend outputs still in the UTXO set.
+    if let Some(tx) = n.mempool_tx(&id) {
+        let ledger = n.ledger().map_err(|e| e.to_string())?;
+        let utxo = ledger.ledger_state();
+        let mut prev_by_outpoint = HashMap::new();
+        for input in tx.inputs() {
+            if let Some(out) = utxo.get(&input.outpoint) {
+                prev_by_outpoint.insert(input.outpoint, *out);
+            }
+        }
+        let inputs = jarr(
+            tx.inputs()
+                .iter()
+                .map(|inp| tx_input_json(inp, &HashMap::new(), &prev_by_outpoint)),
+        );
+        let outputs = jarr(tx.outputs().iter().map(|o| {
+            format!(
+                "{{\"value\":{},\"owner\":{}}}",
+                o.value,
+                jstr(&o.owner.to_hex())
+            )
+        }));
+        return Ok(format!(
+            "{{\"id\":{},\"coinbase\":{},\"confirmed\":false,\"confirmations\":0,\"block\":null,\"blue_score\":null,\"inputs\":{},\"outputs\":{},\"size\":{}}}",
+            jstr(&tx.id().to_string()),
+            tx.is_coinbase(),
+            inputs,
+            outputs,
+            tx.encode().len()
+        ));
+    }
+
+    let confirmation = n.tx_confirmation(&id).map_err(|e| e.to_string())?;
+    let (block_id, blue_score) = confirmation.ok_or("tx not found")?;
+    let rec = n.block_record(&block_id).ok_or("block not found")?;
+    let tx = rec
+        .txs
+        .iter()
+        .find(|t| t.id() == id)
+        .ok_or("tx not found")?;
+
+    let ledger = n.ledger().map_err(|e| e.to_string())?;
+    let tip_blue_score = n
+        .selected_tip()
+        .ok()
+        .and_then(|tip| ledger.dag().ghostdag(&tip))
+        .map(|g| g.blue_score)
+        .unwrap_or(0);
+    let confirmations = tip_blue_score.saturating_sub(blue_score) + 1;
+
+    let mut prev_by_tx: HashMap<TxId, Transaction> = HashMap::new();
+    for block_id2 in ledger.dag().linearize() {
+        if let Some(rec2) = n.block_record(&block_id2) {
+            for t in rec2.txs {
+                prev_by_tx.insert(t.id(), t);
+            }
+        }
+    }
+
+    let inputs = jarr(
+        tx.inputs()
+            .iter()
+            .map(|inp| tx_input_json(inp, &prev_by_tx, &HashMap::new())),
+    );
+    let outputs = jarr(tx.outputs().iter().map(|o| {
+        format!(
+            "{{\"value\":{},\"owner\":{}}}",
+            o.value,
+            jstr(&o.owner.to_hex())
+        )
+    }));
+
+    Ok(format!(
+        "{{\"id\":{},\"coinbase\":{},\"confirmed\":true,\"confirmations\":{},\"block\":{},\"blue_score\":{},\"inputs\":{},\"outputs\":{},\"size\":{}}}",
+        jstr(&tx.id().to_string()),
+        tx.is_coinbase(),
+        confirmations,
+        jstr(&block_id.to_string()),
+        blue_score,
+        inputs,
+        outputs,
+        tx.encode().len()
+    ))
+}
+
+fn address_detail_json(
+    app: &Explorer,
+    addr_hex: &str,
+    q: &std::collections::HashMap<String, String>,
+) -> Result<String, String> {
+    let addr = parse_addr(addr_hex)?;
+    let node_name = q
+        .get("node")
+        .cloned()
+        .unwrap_or_else(|| app.selected.clone());
+    let n = app.mesh.node(&node_name).ok_or("unknown node")?;
+    let balance = n.balance(&addr).map_err(|e| e.to_string())?;
+
+    let page = q
+        .get("page")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let per_page = q
+        .get("per_page")
+        .and_then(|s| s.parse::<usize>().ok())
+        .unwrap_or(20)
+        .clamp(1, 100);
+    let offset = (page - 1) * per_page;
+
+    let events = n.history_of(&addr, 0).map_err(|e| e.to_string())?;
+    let total = events.len();
+    let page_events: Vec<_> = events.into_iter().skip(offset).take(per_page).collect();
+
+    let items = page_events.into_iter().map(|e| {
+        let kind = match e.direction {
+            WalletDirection::Received => "in",
+            WalletDirection::Sent => "out",
+        };
+        format!(
+            "{{\"tx\":{},\"block\":{},\"kind\":{},\"amount\":{}}}",
+            jstr(&e.tx_id.to_string()),
+            jstr(&e.block_id.to_string()),
+            jstr(kind),
+            e.amount
+        )
+    });
+
+    let pages = total.div_ceil(per_page);
+
+    Ok(format!(
+        "{{\"address\":{},\"balance\":{},\"page\":{},\"per_page\":{},\"total\":{},\"pages\":{},\"txs\":{}}}",
+        jstr(&addr.to_hex()),
+        balance,
+        page,
+        per_page,
+        total,
+        pages,
+        jarr(items)
     ))
 }
 
