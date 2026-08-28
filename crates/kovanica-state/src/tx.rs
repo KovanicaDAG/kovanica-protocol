@@ -351,6 +351,20 @@ impl Transaction {
     pub fn id(&self) -> TxId {
         TxId(*blake3::hash(&self.encode()).as_bytes())
     }
+
+    /// Decode a single transaction from its canonical byte encoding.
+    ///
+    /// This is the inverse of [`Transaction::encode`] and is used by the
+    /// mobile FFI to round-trip a transaction "blob" (e.g. a partially-signed
+    /// multisig spend) without wrapping it in a block payload.
+    pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+        let mut reader = Reader::new(bytes);
+        let tx = reader.read_transaction()?;
+        if reader.remaining() != 0 {
+            return Err(DecodeError::TrailingBytes);
+        }
+        Ok(tx)
+    }
 }
 
 /// Errors from decoding a block payload back into transactions.

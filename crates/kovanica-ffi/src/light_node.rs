@@ -165,6 +165,24 @@ impl Default for LightConfig {
     }
 }
 
+/// A newly created multisig P2SH address plus its redeem script.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct MultisigAddress {
+    /// Human-readable `kvnc…dag` address.
+    pub address: String,
+    /// The canonical `[M, N, pk1, ..., pkN]` redeem script, lowercase hex.
+    pub redeem_script_hex: String,
+}
+
+/// One output of a multisig spend, as seen from the mobile FFI.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct MultisigSpendOutput {
+    /// Value to send, in atoms.
+    pub value: u64,
+    /// Recipient address: 64-hex, 66-hex, or `kvnc…dag`.
+    pub address: String,
+}
+
 /// A Kovanica light node: ledger + mempool + hybrid validator identity.
 ///
 /// Sync model for mobile: call [`Self::export_blocks`] to hand peers your
@@ -852,6 +870,118 @@ impl LightNode {
         }
         Ok(proof.verify())
     }
+
+    // ------------------------------------------------------------------
+    // Multisig (M-of-N P2SH) mobile helpers
+    // ------------------------------------------------------------------
+
+    /// Create a threshold-multisig P2SH address from `threshold` and a list of
+    /// 64-hex Ed25519 public keys. Returns the human address plus the redeem
+    /// script (which must be shared with all cosigners out of band).
+    pub fn create_multisig_address(
+        &self,
+        threshold: u8,
+        pubkeys_hex: Vec<String>,
+    ) -> Result<MultisigAddress, LightNodeError> {
+        let pubkeys = pubkeys_hex
+            .into_iter()
+            .map(|h| {
+                let raw = decode_hex(&h, "pubkey")?;
+                <[u8; 32]>::try_from(raw.as_slice())
+                    .map_err(|_| invalid("pubkey must be 32 bytes hex"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let (address, script) = self
+            .lock()
+            .create_multisig_address(threshold, pubkeys)
+            .map_err(LightNodeError::from)?;
+        Ok(MultisigAddress {
+            address: address.to_kvnc(),
+            redeem_script_hex: hex::encode(&script),
+        })
+    }
+
+    /// Build an unsigned multisig spend paying `outputs` from a single UTXO
+    /// owned by `address`. Returns a transaction blob encoding the unsigned tx
+    /// with the redeem script attached as `witness[0]`.
+    pub fn build_multisig_spend(
+        &self,
+        address: String,
+        outputs: Vec<MultisigSpendOutput>,
+    ) -> Result<Vec<u8>, LightNodeError> {
+        let addr = kovanica_state::Address::parse(&address)
+            .map_err(|e| invalid(format!("bad address: {e}")))?;
+        if outputs.is_empty() {
+            return Err(invalid("outputs must not be empty"));
+        }
+        let mut total = 0u64;
+        let tx_outputs = outputs
+            .into_iter()
+            .map(|o| {
+                total = total
+                    .checked_add(o.value)
+                    .ok_or_else(|| invalid("output sum overflow"))?;
+                let owner = kovanica_state::Address::parse(&o.address)
+                    .map_err(|e| invalid(format!("bad output address: {e}")))?;
+                Ok(TxOutput::new(o.value, owner))
+            })
+            .collect::<Result<Vec<_>, LightNodeError>>()?;
+        let tx = self
+            .lock()
+            .build_multisig_spend(addr, tx_outputs)
+            .map_err(LightNodeError::from)?;
+        Ok(encode_tx_blob(&tx))
+    }
+
+    /// Sign a multisig transaction blob with a 32-byte Ed25519 secret (hex).
+    /// Returns the raw 64-byte partial signature.
+    pub fn sign_multisig_partial(
+        &self,
+        tx_blob: Vec<u8>,
+        secret_hex: String,
+    ) -> Result<Vec<u8>, LightNodeError> {
+        let tx = decode_tx_blob(&tx_blob)?;
+        let sig = self
+            .lock()
+            .sign_multisig_partial(&tx, &secret_hex)
+            .map_err(LightNodeError::from)?;
+        Ok(sig.to_vec())
+    }
+
+    /// Combine `partial_sigs` (each from [`Self::sign_multisig_partial`]) with
+    /// the unsigned transaction blob to produce a fully-signed transaction
+    /// blob ready for [`Self::submit_multisig_tx`].
+    pub fn combine_multisig_sigs(
+        &self,
+        tx_blob: Vec<u8>,
+        partial_sigs: Vec<Vec<u8>>,
+    ) -> Result<Vec<u8>, LightNodeError> {
+        let tx = decode_tx_blob(&tx_blob)?;
+        let sigs = partial_sigs
+            .into_iter()
+            .map(|bytes| {
+                <[u8; 64]>::try_from(bytes.as_slice())
+                    .map_err(|_| invalid("partial signature must be 64 bytes"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let final_tx = self
+            .lock()
+            .combine_multisig_sigs(&tx, sigs)
+            .map_err(LightNodeError::from)?;
+        Ok(encode_tx_blob(&final_tx))
+    }
+
+    /// Submit a fully-signed multisig transaction blob to the mempool. Returns
+    /// the transaction id (lowercase hex); mine it with
+    /// [`Self::produce_block`] / [`Self::produce_empty_block`].
+    pub fn submit_multisig_tx(&self, tx_blob: Vec<u8>) -> Result<String, LightNodeError> {
+        let tx = decode_tx_blob(&tx_blob)?;
+        let tx_id = self
+            .lock()
+            .submit_multisig_tx(tx)
+            .map_err(LightNodeError::from)?;
+        Ok(hex::encode(tx_id.as_bytes()))
+    }
 }
 
 fn encode_light_sync(node: &Node, from_id_hex: Option<String>) -> Vec<u8> {
@@ -897,6 +1027,17 @@ fn parse_block_id(id_hex: &str) -> Result<BlockId, LightNodeError> {
         <[u8; 32]>::try_from(raw.as_slice())
             .map_err(|_| invalid("block id must be 32 bytes hex"))?,
     ))
+}
+
+/// Encode a single transaction as an FFI "blob": the canonical transaction
+/// encoding returned by [`Transaction::encode`].
+fn encode_tx_blob(tx: &Transaction) -> Vec<u8> {
+    tx.encode()
+}
+
+/// Decode a single-transaction blob produced by [`encode_tx_blob`].
+fn decode_tx_blob(blob: &[u8]) -> Result<Transaction, LightNodeError> {
+    Transaction::decode(blob).map_err(|e| invalid(format!("undecodable tx blob: {e}")))
 }
 
 // ---------------------------------------------------------------------------

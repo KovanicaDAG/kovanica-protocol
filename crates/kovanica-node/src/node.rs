@@ -14,7 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use kovanica_dag::{pow, Block, BlockId, Dag, VrfPublicKey, VrfSecretKey};
 use kovanica_dag::{vrf_keypair_from_seed, vrf_prove};
-use kovanica_state::stake::{Freeze, UNBOND_MATURITY, UNBOND_PREFIX};
+use kovanica_state::multisig::{verify_threshold_signatures, MultisigScript};
+use kovanica_state::stake::{Freeze, StakeState, UNBOND_MATURITY, UNBOND_PREFIX};
 use kovanica_state::{
     apply_block, decode_block_payload, encode_block_payload, verify, Address, HalvingSchedule,
     HybridConfig, KeyPair, Ledger, LedgerError, LedgerInsertError, LedgerStore, OutPoint, Sig,
@@ -91,6 +92,14 @@ pub enum NodeError {
         /// The offending frozen outpoint.
         outpoint: OutPoint,
     },
+    /// The multisig redeem script for `address` is not known to this node.
+    UnknownMultisigAddress { address: Address },
+    /// The supplied multisig redeem script or partial signatures are invalid.
+    Multisig(&'static str),
+    /// Not enough valid partial signatures were supplied to reach the threshold.
+    InsufficientMultisigSignatures { have: usize, need: u8 },
+    /// A multisig operation expected a single input but the transaction has more.
+    MultisigInputCount { expected: usize, actual: usize },
 }
 
 impl core::fmt::Display for NodeError {
@@ -119,6 +128,19 @@ impl core::fmt::Display for NodeError {
             ),
             NodeError::UnbondOwnerMismatch { outpoint } => {
                 write!(f, "frozen outpoint {outpoint:?} is not owned by the signing key")
+            }
+            NodeError::UnknownMultisigAddress { address } => {
+                write!(f, "unknown multisig address {address}")
+            }
+            NodeError::Multisig(msg) => write!(f, "multisig error: {msg}"),
+            NodeError::InsufficientMultisigSignatures { have, need } => {
+                write!(f, "insufficient multisig signatures: have {have}, need {need}")
+            }
+            NodeError::MultisigInputCount { expected, actual } => {
+                write!(
+                    f,
+                    "multisig transaction must have exactly {expected} input(s), got {actual}"
+                )
             }
         }
     }
@@ -338,6 +360,10 @@ pub struct Node {
     /// insertion order, which is always a valid topological order (a block is
     /// only inserted after its parents).
     pending: Vec<BlockId>,
+    /// Multisig redeem scripts this node has created, keyed by P2SH address.
+    /// Stored locally so [`Node::build_multisig_spend`] can attach the script
+    /// to a spend without requiring the caller to pass it back in.
+    multisig_scripts: std::collections::HashMap<Address, Vec<u8>>,
 }
 
 /// Blocks per subsidy-halving era. Issuance is `cap >> (height / HALVING_ERA)`.
@@ -357,6 +383,7 @@ impl Default for Node {
             dht_routing_table: None,
             log: None,
             pending: Vec::new(),
+            multisig_scripts: std::collections::HashMap::new(),
         }
     }
 }
@@ -379,6 +406,7 @@ impl Node {
             dht_routing_table: None,
             log: None,
             pending: Vec::new(),
+            multisig_scripts: std::collections::HashMap::new(),
         }
     }
 
@@ -991,6 +1019,149 @@ impl Node {
     /// [`Node::pool`] then [`Node::produce_block`].)
     pub fn send(&mut self, from_seed: u64, amount: u64, to_seed: u64) -> Result<Sent, NodeError> {
         self.send_to(from_seed, amount, Self::address(to_seed))
+    }
+
+    // ------------------------------------------------------------------
+    // Multisig (M-of-N P2SH) wallet helpers
+    // ------------------------------------------------------------------
+
+    /// Create a threshold-multisig P2SH address from `m` and the authorized
+    /// public keys. Returns the address and the canonical redeem script bytes.
+    ///
+    /// The redeem script is stored locally so this node can later build spends
+    /// from the address without requiring callers to pass the script back in.
+    pub fn create_multisig_address(
+        &mut self,
+        m: u8,
+        pubkeys: Vec<[u8; 32]>,
+    ) -> Result<(Address, Vec<u8>), NodeError> {
+        let script = MultisigScript::new(m, pubkeys).map_err(NodeError::Multisig)?;
+        let address = script.address();
+        let encoded = script.encode();
+        self.multisig_scripts.insert(address, encoded.clone());
+        Ok((address, encoded))
+    }
+
+    /// Look up the redeem script previously stored for `address`.
+    pub fn multisig_redeem_script(&self, address: &Address) -> Option<&Vec<u8>> {
+        self.multisig_scripts.get(address)
+    }
+
+    /// Build an unsigned multisig spend from a single P2SH UTXO owned by
+    /// `address` to `outputs`. The transaction carries the redeem script in
+    /// the input witness (`witness[0]`) so that signers can produce partial
+    /// signatures from the sighash alone.
+    ///
+    /// Coin selection is simple: one UTXO must cover `sum(outputs) + fee`.
+    /// Any change returns to the same `address`.
+    pub fn build_multisig_spend(
+        &self,
+        address: Address,
+        outputs: Vec<TxOutput>,
+    ) -> Result<Transaction, NodeError> {
+        if outputs.is_empty() {
+            return Err(NodeError::ZeroAmount);
+        }
+        let redeem_script = self
+            .multisig_scripts
+            .get(&address)
+            .cloned()
+            .ok_or(NodeError::UnknownMultisigAddress { address })?;
+
+        let fee = self.min_fee();
+        let out_sum: u64 = outputs.iter().map(|o| o.value).sum();
+        let need = out_sum
+            .checked_add(fee)
+            .ok_or(NodeError::InsufficientFunds)?;
+
+        let state = self.ledger()?.ledger_state();
+        let mut owned: Vec<(OutPoint, u64)> = state
+            .iter()
+            .filter(|(_, out)| out.owner == address)
+            .map(|(op, out)| (*op, out.value))
+            .collect();
+        owned.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+        let (source_op, source_value) = owned
+            .into_iter()
+            .find(|(_, v)| *v >= need)
+            .ok_or(NodeError::InsufficientFunds)?;
+
+        let mut final_outputs = outputs;
+        let change = source_value - need;
+        if change > 0 {
+            final_outputs.push(TxOutput::new(change, address));
+        }
+
+        let mut tx =
+            Transaction::unsigned(std::slice::from_ref(&source_op), final_outputs, Vec::new());
+        // Attach the redeem script so the sighash is well-defined and signers
+        // do not need to track it separately for signing.
+        tx.inputs_mut()[0].witness = vec![redeem_script];
+        Ok(tx)
+    }
+
+    /// Produce a partial Ed25519 signature for `tx` using the secret supplied
+    /// as lowercase hex. The signature is over `tx.sighash()` and is valid for
+    /// every input that shares the same multisig script (the helpers enforce a
+    /// single input).
+    pub fn sign_multisig_partial(
+        &self,
+        tx: &Transaction,
+        secret_hex: &str,
+    ) -> Result<[u8; 64], NodeError> {
+        let kp = keypair_from_hex_secret(secret_hex)?;
+        Ok(kp.sign(&tx.sighash()))
+    }
+
+    /// Combine exactly `M` valid partial signatures into a fully-signed
+    /// multisig transaction. The input's first witness element must already
+    /// contain the redeem script (as produced by [`Node::build_multisig_spend`]).
+    ///
+    /// Returns an error if the transaction does not have exactly one input, if
+    /// the redeem script is missing, if too few signatures are given, if any
+    /// signature is invalid, or if duplicate signatures are provided.
+    pub fn combine_multisig_sigs(
+        &self,
+        tx: &Transaction,
+        partial_sigs: Vec<[u8; 64]>,
+    ) -> Result<Transaction, NodeError> {
+        if tx.inputs().len() != 1 {
+            return Err(NodeError::MultisigInputCount {
+                expected: 1,
+                actual: tx.inputs().len(),
+            });
+        }
+        let input = &tx.inputs()[0];
+        if input.witness.is_empty() {
+            return Err(NodeError::Multisig("missing redeem script in witness"));
+        }
+        let redeem_script = input.witness[0].clone();
+        let script = MultisigScript::parse(&redeem_script).map_err(NodeError::Multisig)?;
+
+        if partial_sigs.len() != script.m as usize {
+            return Err(NodeError::InsufficientMultisigSignatures {
+                have: partial_sigs.len(),
+                need: script.m,
+            });
+        }
+
+        let sighash = tx.sighash();
+        let sigs: Vec<Vec<u8>> = partial_sigs.iter().map(|s| s.to_vec()).collect();
+        verify_threshold_signatures(&script, &sigs, &sighash).map_err(NodeError::Multisig)?;
+
+        let mut final_tx = tx.clone();
+        let mut witness = vec![redeem_script];
+        witness.extend(sigs);
+        final_tx.inputs_mut()[0].witness = witness;
+        Ok(final_tx)
+    }
+
+    /// Submit a fully-signed multisig transaction to the mempool. It will be
+    /// included in a block by a subsequent [`Node::produce_block`] or
+    /// [`Node::produce_empty_block`] call.
+    pub fn submit_multisig_tx(&mut self, tx: Transaction) -> Result<TxId, NodeError> {
+        self.submit_tx(tx)
     }
 
     /// Build a transfer and add it to the mempool (not yet in a block). Returns
@@ -1896,7 +2067,9 @@ impl Node {
             dht_routing_table: None,
             log: Some(store),
             pending: Vec::new(),
+            multisig_scripts: std::collections::HashMap::new(),
         })
+    }
     }
 
     /// Rebuild the node from a finality checkpoint at `path`.
@@ -1913,6 +2086,7 @@ impl Node {
             dht_routing_table: None,
             log: None,
             pending: Vec::new(),
+            multisig_scripts: std::collections::HashMap::new(),
         })
     }
 
@@ -2053,6 +2227,15 @@ impl Node {
             _ => None,
         }
     }
+}
+
+/// Decode a 32-byte ed25519 seed from lowercase hex. Used by multisig partial
+/// signing so the secret is consumed for a single operation and never stored.
+fn keypair_from_hex_secret(secret_hex: &str) -> Result<KeyPair, NodeError> {
+    let raw = hex::decode(secret_hex.trim()).map_err(|e| NodeError::Io(e.to_string()))?;
+    let bytes = <[u8; 32]>::try_from(raw.as_slice())
+        .map_err(|_| NodeError::Multisig("secret must be exactly 32 bytes hex"))?;
+    Ok(KeyPair::from_seed(bytes))
 }
 
 fn fee_of(state: &UtxoSet, tx: &Transaction) -> u64 {
