@@ -5,6 +5,13 @@ export const LIVE_WALLET = "https://wallet.kovanica.online";
 export const LIVE_MAP = "https://map.kovanica.online";
 export const LIVE_SITE = "https://kovanica.online";
 export const NETWORK_ID = "kovanica-testnet";
+export const MAINNET_ID = "kovanica-mainnet";
+// Public-node proxy targets. Mainnet has no live endpoint yet ("launching soon"):
+// the URL is left blank until we open it, and selecting it surfaces a clear message.
+export const NETWORK_PROXIES: Record<PublicSource, string> = {
+  testnet: LIVE_EXPLORER,
+  mainnet: "",
+};
 export const TOKEN = "KVNC";
 export const ATOM = 100_000_000;
 export const DECIMALS = 8;
@@ -14,7 +21,13 @@ export const MIN_FEE = 10_000;
 export const K = 3;
 export const TREASURY = "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc";
 
-export type ApiSource = "local" | "live";
+export type LocalSource = "local";
+export type PublicSource = "testnet" | "mainnet";
+export type ApiSource = LocalSource | PublicSource;
+
+export function isPublicSource(source: ApiSource): source is PublicSource {
+  return source === "testnet" || source === "mainnet";
+}
 
 export type ApiOutput = { value: number; owner: string };
 export type ApiTx = {

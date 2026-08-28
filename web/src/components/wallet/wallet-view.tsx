@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AddressQr } from "@/components/wallet/address-qr";
 import { ConnectHardwareModal } from "@/components/wallet/connect-hardware-modal";
 import { HardwareSignModal } from "@/components/wallet/hardware-sign-modal";
-import { api, useApiSource } from "@/lib/api/client";
+import { api, useApiSource, isPublic } from "@/lib/api/client";
 import { MIN_FEE } from "@/lib/api/contract";
 import type { ApiHistory, ApiUtxos } from "@/lib/api/contract";
 import { ATOM } from "@/lib/ledger/types";
@@ -30,7 +30,7 @@ const ACCOUNTS = [0, 1, 2] as const;
 export function WalletView() {
   const hydrated = useHydrated();
   const source = useApiSource();
-  const live = source === "live";
+  const live = isPublic(source);
   const walletStore = useLedger((s) => s.wallet);
   const wallet = hydrated ? walletStore : null;
   const setWallet = useLedger((s) => s.setWallet);

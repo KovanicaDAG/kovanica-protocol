@@ -32,9 +32,10 @@ Engine is the Rust node; this app speaks the same HTTP contract.
 
 ## HTTP API (this app + live explorer)
 
-All JSON. Errors are plain text with 4xx. The default (and \`source=live\`, or
-header \`x-kovanica-source: live\`) proxies the public testnet node. Request
-\`?source=local\` to hit this app's local in-memory node.
+All JSON. Errors are plain text with 4xx. The default (and \`?source=testnet\`,
+or header \`x-kovanica-source: testnet\`) proxies the public testnet node.
+Request \`?source=local\` to hit this app's local in-memory node; \`?source=mainnet\`
+is reserved for the not-yet-open mainnet.
 
 ### Read
 
