@@ -82,6 +82,7 @@ crates/
       difficulty.rs            Retarget::next_work(): difficulty retargeting for block work (algorithm); enforced via Dag::set_difficulty
       pow.rs                   meets_target()/mine(): Nakamoto hash-target proof-of-work (H*work < 2^256); enforced via Dag::set_proof_of_work
       reachability.rs          Reachability oracle: interval-tree + future-covering sets (the Dag's backing for is_ancestor + mergeset)
+      vrf.rs                   ECVRF over Ristretto255 (Ed25519 curve), IRTF CFRG draft; vrf_prove/vrf_verify for leader selection / randomness beacon (Stage 3)
     tests/
       consensus.rs             Integration + adversarial tests (wide fork, determinism, k-cluster invariant, validator hook)
       reachability.rs          Differential: Dag/oracle is_ancestor == naive parent-walk over random adversarial DAGs
@@ -109,11 +110,20 @@ crates/
       lib.rs                   Crate docs + re-exports + a doctest of the RPC
       node.rs                  Node: Ledger + Mempool; genesis/send/pool/produce/balance/tips/save/load + gossip; multi-input prepare_transfer/submit_signed (UTXOs accumulated largest-first, one signature attached to every input)
       mempool.rs               Mempool: pending txs, deterministic (id) ordering for block assembly
+      mempool_v2.rs            Mempool upgrades: orphan pool (missing-input txs held and re-tried), fee-based eviction, capacity limits
       net.rs                   gossip() (in-process) + serve_blocks/pull_blocks (one-shot TCP sync) + framed bidirectional exchange (pull_blocks_timeout/serve_exchange: read peer dump, apply, send own back; old one-way peers still work)
       p2p.rs                   Mesh: peer discovery (hello), delayed relay loop, block+tx flood
+      p2p_hardening.rs         P2P hardening: per-peer rate limiting, duplicate suppression, peer scoring/banning
+      dht.rs                   Lightweight Kademlia-based DHT for peer routing (256-bit NodeId space, XOR metric, k-buckets)
+      dns_seed.rs              DNS multi-seed resolver for peer discovery (injectable DnsResolver: StdDnsResolver + MockDnsResolver)
       relay.rs                 RelaySession: long-lived TCP framing of hello/block/tx
+      rpc.rs                   Line RPC: one text command per line in, one line out (execute_line is a pure function of node + command)
+      spv.rs                   SPV light client wire sync + proof verification over persistent RelaySession connections
       explorer.rs              self-hosted explorer: JSON API + static UI over Mesh (WebSocket /ws, open faucet, dual-stack P2P listeners, KOVANICA_MINE_SECS interval)
       explorer.html            UI served by `kovanica-node explorer`
+      metrics.rs               Prometheus metrics + structured logging (block rate, peer count, histograms)
+      fuzz.rs                  Fuzzing infrastructure: Arbitrary impls for core types + libfuzzer/cargo-fuzz targets
+      bip39-english.txt        BIP-39 English wordlist (2048 words) for mnemonic seed phrases (data file, not .rs)
       main.rs                  Binary: `serve` (stdin/stdout REPL) and `demo` (scripted scenario)
     tests/
       rpc.rs                   Integration: end-to-end transfers, errors, snapshot round-trip via RPC
@@ -124,7 +134,16 @@ crates/
       timestamps.rs            Integration: wall-clock timestamp policy (pinned clock, monotone stamps, far-future reject)
 ```
 
-Not built yet (**TODO**): VRF and beyond. Update this tree when you add them.
+VRF is shipped (Stage 3) — see `crates/kovanica-dag/src/vrf.rs` above and the Stage 3 checklist.
+
+### Web app — Grok preview bridge (dev-only)
+
+`web/src/lib/preview-host-bridge.ts`, `web/src/lib/preview-embedder-origin.ts`, and
+`web/src/components/preview-host-bridge.tsx` (mounted in `web/src/routes/__root.tsx`)
+implement a dev-only `postMessage` bridge for the Grok preview chrome. It activates only
+when the app is framed by an allowlisted Grok embedder origin (`grok.com`/
+`grok-sandbox.com`); top-level runs (local dev, deployed sites) noop. It lets the preview
+chrome drive navigation and query registered routes. Not part of the production web surface.
 
 ### Deliberate first-slice simplifications (do not mistake for the final design)
 
@@ -355,7 +374,7 @@ CI gates every push (`fmt --check`, `clippy -D warnings`,
 - [x] Halving schedule (`HalvingSchedule` in `ledger.rs`, `Node::issuance_at()` in `node.rs`)
 - [x] TX size limits (`MAX_TX_SIZE`, `MAX_BLOCK_PAYLOAD_SIZE`, `MAX_TXS_PER_BLOCK` in `validation.rs`)
 - [x] WebSocket explorer (`/ws` endpoint in `explorer.rs`, `WsMsg` types)
-- [x] Live frontend WS client/hooks (`kovanica-web/src/lib/api/client.ts`: `wsClient`, `useWsMessage`, `useWsState`, `useWsBlocks`, `useWsTxs`)
+- [x] Live frontend WS client/hooks (`web/src/lib/api/client.ts`: `wsClient`, `useWsMessage`, `useWsState`, `useWsBlocks`, `useWsTxs`)
 - [x] CORS proxy for live explorer (`/proxy` path on explorer.kovanica.online)
 - [x] Human addresses (`Address::to_kvnc`/`parse`, `kvnc…dag` base58 wrap over the
       32 key bytes; parse also accepts 64-hex) — reconciled from the testnet

@@ -19,3 +19,5 @@ attachments/
 AGENTS.md
 AGENTS.project.md
 target/
+data/
+crates/kovanica-node/data/
