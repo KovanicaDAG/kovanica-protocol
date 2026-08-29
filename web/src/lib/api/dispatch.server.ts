@@ -19,7 +19,8 @@ import {
   localSubmit,
   localUtxos,
 } from "./node.server";
-import { fetchUpstream, probeHead } from "./upstream.server";
+import { fetchUpstream, networkProxy, probeHead } from "./upstream.server";
+import { isPublicSource, type ApiSource } from "./contract";
 
 const CORS: Record<string, string> = {
   "access-control-allow-origin": "*",
@@ -51,12 +52,14 @@ function okOrErr(result: unknown): Response {
   return json(result);
 }
 
-function sourceOf(req: Request): "local" | "live" {
+function sourceOf(req: Request): ApiSource {
   const url = new URL(req.url);
   const q = url.searchParams.get("source");
   const h = req.headers.get("x-kovanica-source");
-  if (q === "local" || h === "local") return "local";
-  return "live";
+  const v = (q ?? h ?? "").toLowerCase();
+  if (v === "local") return "local";
+  if (v === "mainnet") return "mainnet";
+  return "testnet";
 }
 
 function action(pathname: string): string {
@@ -78,11 +81,18 @@ export async function dispatchApi(req: Request): Promise<Response> {
     );
   }
 
-  if (sourceOf(req) === "live") {
-    if (name === "mine" || name === "mining" || name === "miner" || name === "reset") {
-      return text("not on live node", 403);
+  const source = sourceOf(req);
+
+  if (isPublicSource(source)) {
+    // mine / mining / miner proxy to the node's operator console; only the
+    // chain-wipe `reset` stays locked on the shared network.
+    if (name === "reset") {
+      return text("not on public node", 403);
     }
-    return withCors(await fetchUpstream(`/api/${name}`, method, url.search));
+    if (source === "mainnet" && !networkProxy(source)) {
+      return text("mainnet launching soon", 503);
+    }
+    return withCors(await fetchUpstream(`/api/${name}`, method, url.search, source));
   }
 
   if (method === "GET") {

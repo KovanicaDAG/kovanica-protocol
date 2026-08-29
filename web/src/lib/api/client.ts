@@ -1,12 +1,15 @@
 import { useSyncExternalStore } from "react";
-import type { ApiSource } from "./contract";
+import { isPublicSource, type ApiSource } from "./contract";
 
 const KEY = "kovanica.source";
 const listeners = new Set<() => void>();
 
 function read(): ApiSource {
-  // Preview was removed; the app always talks to the testnet proxy.
-  return "live";
+  // Preview was removed; the app always talks to the public testnet proxy by
+  // default. A stored override (or operator "local" mode) wins if present.
+  const stored = typeof window === "undefined" ? null : window.localStorage.getItem(KEY);
+  if (stored === "local" || stored === "mainnet" || stored === "testnet") return stored;
+  return "testnet";
 }
 
 export function getApiSource(): ApiSource {
@@ -16,6 +19,11 @@ export function getApiSource(): ApiSource {
 export function setApiSource(next: ApiSource) {
   window.localStorage.setItem(KEY, next);
   listeners.forEach((l) => l());
+}
+
+/** Is a public (proxied testnet/mainnet) network selected — i.e. not local? */
+export function isPublic(source: ApiSource): boolean {
+  return isPublicSource(source);
 }
 
 export function useApiSource(): ApiSource {
@@ -31,7 +39,7 @@ export function useApiSource(): ApiSource {
 
 function withSource(path: string, source: ApiSource): string {
   const u = new URL(path, "http://local");
-  if (source === "live") u.searchParams.set("source", "live");
+  u.searchParams.set("source", source);
   return `${u.pathname}${u.search}`;
 }
 
