@@ -263,7 +263,7 @@ impl Explorer {
                 let name = &names[self.rotate % names.len()];
                 let _ = self.mesh.produce_empty(name);
                 self.rotate += 1;
-                persist_all(&self.mesh);
+                persist_all(&mut self.mesh);
             }
         }
     }
@@ -376,7 +376,7 @@ impl Explorer {
                 match serve_headers_first(&mut stream, n, Duration::from_millis(800)) {
                     Ok(()) => {
                         eprintln!("kovanica p2p headers-first served {peer}");
-                        persist_all(&self.mesh);
+                        persist_all(&mut self.mesh);
                     }
                     Err(_e) => {
                         // Fall back to legacy full-dump exchange
@@ -387,7 +387,7 @@ impl Explorer {
                                     "kovanica p2p exchanged with {peer} (peer sent {got} records)"
                                 );
                                 if got > 0 {
-                                    persist_all(&self.mesh);
+                                    persist_all(&mut self.mesh);
                                 }
                             }
                             Err(e) => {
@@ -447,7 +447,7 @@ impl Explorer {
         // in the config drop out immediately; silent ones drop out here too.
         self.live_peers = answered;
         set_peer_count(self.live_peers.len());
-        persist_all(&self.mesh);
+        persist_all(&mut self.mesh);
     }
 
     fn boot_persist() -> Self {
@@ -467,7 +467,7 @@ impl Explorer {
             let _ = mesh.connect("beta", "gamma");
         }
         mesh.drain(16);
-        persist_all(&mesh);
+        persist_all(&mut mesh);
         let listen = bind_p2p();
         let listen_addr = listen
             .iter()
@@ -542,16 +542,25 @@ fn snap_path(name: &str) -> PathBuf {
     data_dir().join(format!("{name}.snap"))
 }
 
+fn log_path(name: &str) -> PathBuf {
+    data_dir().join(format!("{name}.log"))
+}
+
 fn miner_path(name: &str) -> PathBuf {
     data_dir().join(format!("{name}.miner"))
 }
 
-fn persist_all(mesh: &Mesh) {
+/// Persist every node's ledger **incrementally**: each node appends only the
+/// blocks inserted since the last call to its append-only replay log (see
+/// [`Node::persist_incremental`]), instead of rewriting a whole-file snapshot
+/// after every API write. Whole-file snapshots remain available for portable
+/// backups via [`Node::save`] / [`Node::load`]; the log is the primary store.
+fn persist_all(mesh: &mut Mesh) {
     let _ = fs::create_dir_all(data_dir());
     for name in mesh.names() {
-        if let Some(n) = mesh.node(&name) {
-            if let Some(p) = snap_path(&name).to_str() {
-                let _ = n.save(p);
+        if let Some(n) = mesh.node_mut(&name) {
+            if let Some(p) = log_path(&name).to_str() {
+                let _ = n.persist_incremental(p);
             }
             if let Some(m) = n.miner() {
                 let _ = fs::write(miner_path(&name), m.to_hex());
@@ -567,6 +576,7 @@ fn wipe_data() {
             let p = e.path();
             if p.extension().and_then(|s| s.to_str()) == Some("snap")
                 || p.extension().and_then(|s| s.to_str()) == Some("miner")
+                || p.extension().and_then(|s| s.to_str()) == Some("log")
             {
                 let _ = fs::remove_file(p);
             }
@@ -575,6 +585,27 @@ fn wipe_data() {
 }
 
 fn load_or_genesis(name: &str) -> Node {
+    // Incremental store first: the append-only replay log is the primary
+    // persistence format. Loading replays the log through the ledger, so all
+    // derived state is recomputed, never trusted from disk.
+    let log = log_path(name);
+    if log.is_file() {
+        if let Some(p) = log.to_str() {
+            // Hybrid-era logs must replay under the same policy or staked ids
+            // silently change (identity-preserving replay lesson). Load with
+            // the hybrid reader when the operator runs hybrid mode.
+            let loaded = if env_flag("KOVANICA_HYBRID", false) {
+                Node::load_log_with_hybrid(p, HybridConfig::default())
+            } else {
+                Node::load_log(p)
+            };
+            if let Ok(mut node) = loaded {
+                restore_miner_and_policy(&mut node, name);
+                return node;
+            }
+        }
+    }
+    // Whole-file snapshot fallback (portable backups / pre-log deployments).
     let snap = snap_path(name);
     if snap.is_file() {
         let mut node = Node::new();
@@ -588,23 +619,40 @@ fn load_or_genesis(name: &str) -> Node {
                 node.load(p)
             };
             if loaded.is_ok() {
-                if let Ok(h) = fs::read_to_string(miner_path(name)) {
-                    if let Ok(addr) = parse_addr(h.trim()) {
-                        node.set_miner(addr);
-                    }
-                } else {
-                    node.set_miner(Node::address(1));
-                }
-                if env_flag("KOVANICA_HYBRID", false) {
-                    // Hybrid admission is already active on the loaded ledger.
-                } else if env_flag("KOVANICA_POW", true) {
-                    let _ = node.set_proof_of_work(true);
+                restore_miner_and_policy(&mut node, name);
+                // Migrate to the incremental store so subsequent persistence
+                // appends only new blocks.
+                if let Some(lp) = log.to_str() {
+                    let _ = node.create_log(lp);
                 }
                 return node;
             }
         }
     }
-    genesis_node()
+    let mut node = genesis_node();
+    if let Some(p) = log.to_str() {
+        let _ = node.create_log(p);
+    }
+    node
+}
+
+/// Restore a node's miner address and PoW/hybrid policy after loading it from
+/// disk (log or snapshot). Hybrid admission is already active on a ledger
+/// loaded under the hybrid reader; otherwise PoW is re-enabled when the
+/// operator runs PoW mode.
+fn restore_miner_and_policy(node: &mut Node, name: &str) {
+    if let Ok(h) = fs::read_to_string(miner_path(name)) {
+        if let Ok(addr) = parse_addr(h.trim()) {
+            node.set_miner(addr);
+        }
+    } else {
+        node.set_miner(Node::address(1));
+    }
+    if env_flag("KOVANICA_HYBRID", false) {
+        // Hybrid admission is already active on the loaded ledger.
+    } else if env_flag("KOVANICA_POW", true) {
+        let _ = node.set_proof_of_work(true);
+    }
 }
 
 fn line_mesh() -> Mesh {
@@ -1215,7 +1263,17 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
     }
     if method == "GET" && path == "/api/blocks" {
         if let Some(n) = app.mesh.node(&app.selected) {
-            let bytes = encode_records(&n.export());
+            let records = match query.get("from") {
+                Some(s) => match decode_block_id_hex(s) {
+                    Ok(id) => n.export_from(&id),
+                    Err(e) => {
+                        let body = format!("{{\"ok\":false,\"error\":{}}}", jstr(&e));
+                        return respond(&mut stream, 400, "application/json", body.as_bytes());
+                    }
+                },
+                None => n.export(),
+            };
+            let bytes = encode_records(&records);
             return respond(&mut stream, 200, "application/octet-stream", &bytes);
         }
     }
@@ -1505,7 +1563,7 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
         match node.receive_block(record.clone()) {
             Ok(block_id) => {
                 app.mesh.announce_block(&node_name, record);
-                persist_all(&app.mesh);
+                persist_all(&mut app.mesh);
                 let body = format!("{{\"ok\":true,\"block\":{}}}", jstr(&block_id.to_string()));
                 return respond(&mut stream, 200, "application/json", body.as_bytes());
             }
@@ -1522,7 +1580,7 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
         }
         match dispatch(app, action, &query) {
             Ok(body) => {
-                persist_all(&app.mesh);
+                persist_all(&mut app.mesh);
                 return respond(&mut stream, 200, "application/json", body.as_bytes());
             }
             Err(e) => return respond(&mut stream, 400, "text/plain; charset=utf-8", e.as_bytes()),
@@ -1580,7 +1638,7 @@ fn submit_wire_block(
     for (record, _id) in &admitted {
         app.mesh.announce_block(node_name, record.clone());
     }
-    persist_all(&app.mesh);
+    persist_all(&mut app.mesh);
     let body = match admitted.last() {
         Some((_, id)) => format!("{{\"ok\":true,\"block\":{}}}", jstr(&id.to_string())),
         None => "{\"ok\":true}".into(),
@@ -1938,6 +1996,8 @@ fn history_json(
         .unwrap_or_else(|| app.selected.clone());
     let n = app.mesh.node(&node_name).ok_or("unknown node")?;
     let ledger = n.ledger().map_err(|e| e.to_string())?;
+    let limit = parse_u64(q, "limit", 100)?.min(1000);
+    let offset = parse_u64(q, "offset", 0)?;
     let order = ledger.dag().linearize();
     let mut by_id: HashMap<kovanica_state::TxId, kovanica_state::Transaction> = HashMap::new();
     let mut items = Vec::new();
@@ -1988,11 +2048,20 @@ fn history_json(
             ));
         }
     }
+    let total = items.len();
+    let paginated: Vec<_> = items
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect();
     Ok(format!(
-        "{{\"address\":{},\"balance\":{},\"txs\":{}}}",
+        "{{\"address\":{},\"balance\":{},\"txs\":{},\"limit\":{},\"offset\":{},\"total\":{}}}",
         jstr(&addr.to_hex()),
         n.balance(&addr).map_err(|e| e.to_string())?,
-        jarr(items.into_iter())
+        jarr(paginated.into_iter()),
+        limit,
+        offset,
+        total
     ))
 }
 
@@ -2007,25 +2076,43 @@ fn utxos_json(
         .unwrap_or_else(|| app.selected.clone());
     let n = app.mesh.node(&node).ok_or("unknown node")?;
     let bal = n.balance(&addr).map_err(|e| e.to_string())?;
+    let limit = parse_u64(q, "limit", 100)?.min(1000);
+    let offset = parse_u64(q, "offset", 0)?;
     let rows = n.utxos_of(&addr).map_err(|e| e.to_string())?;
-    let items = rows.into_iter().map(|(op, value)| {
-        format!(
-            "{{\"tx\":{},\"index\":{},\"value\":{}}}",
-            jstr(&op.tx.to_string()),
-            op.index,
-            value
-        )
-    });
+    let total = rows.len();
+    let items = rows
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .map(|(op, value)| {
+            format!(
+                "{{\"tx\":{},\"index\":{},\"value\":{}}}",
+                jstr(&op.tx.to_string()),
+                op.index,
+                value
+            )
+        });
     Ok(format!(
-        "{{\"address\":{},\"balance\":{},\"utxos\":{}}}",
+        "{{\"address\":{},\"balance\":{},\"utxos\":{},\"limit\":{},\"offset\":{},\"total\":{}}}",
         jstr(&addr.to_hex()),
         bal,
-        jarr(items)
+        jarr(items),
+        limit,
+        offset,
+        total
     ))
 }
 
 fn parse_addr(s: &str) -> Result<Address, String> {
     Address::parse(s).map_err(|e| e.to_string())
+}
+
+fn decode_block_id_hex(s: &str) -> Result<BlockId, String> {
+    let bytes = hex::decode(s.trim()).map_err(|_| "from is not hex".to_string())?;
+    let arr = bytes
+        .try_into()
+        .map_err(|_| "from must be 32 bytes".to_string())?;
+    Ok(BlockId::from_bytes(arr))
 }
 
 fn parse_sig(s: &str) -> Result<[u8; 64], String> {
@@ -3214,5 +3301,119 @@ mod tests {
         // dormant or not — never pays out.
         assert_eq!(network_profile().id, "kovanica-testnet");
         assert_ne!(NetworkProfile::mainnet().id, "kovanica-testnet");
+    }
+
+    // ---- C2: incremental sync + API pagination ----
+
+    #[test]
+    fn blocks_endpoint_paginates_from_a_block_id() {
+        let mut app = Explorer::boot();
+        app.mining = false;
+        app.mesh.produce_empty("alpha").unwrap();
+        app.mesh.produce_empty("alpha").unwrap();
+        app.mesh.produce_empty("alpha").unwrap();
+
+        let headers = app.mesh.node("alpha").unwrap().export_headers();
+        assert!(headers.len() >= 3, "want at least three non-genesis blocks");
+        let full = send_req_raw(
+            &mut app,
+            "GET /api/blocks HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+            b"",
+        );
+        assert_eq!(full.0, 200);
+        let all_records = decode_records(&full.1).expect("decode full records");
+        assert_eq!(all_records.len(), headers.len());
+
+        // Request strictly after the second header: expect everything after it.
+        let from = headers[1].id.to_hex();
+        let partial = send_req_raw(
+            &mut app,
+            &format!(
+                "GET /api/blocks?from={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                from
+            ),
+            b"",
+        );
+        assert_eq!(partial.0, 200, "pagination must return 200");
+        let paginated = decode_records(&partial.1).expect("decode paginated records");
+        assert_eq!(
+            paginated.len(),
+            headers.len() - 2,
+            "must return blocks strictly after from"
+        );
+
+        // Unknown / off-chain id falls back to the full export.
+        let unknown = BlockId::from_bytes([0xabu8; 32]).to_hex();
+        let fallback = send_req_raw(
+            &mut app,
+            &format!(
+                "GET /api/blocks?from={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                unknown
+            ),
+            b"",
+        );
+        assert_eq!(fallback.0, 200);
+        let fallback_records = decode_records(&fallback.1).expect("decode fallback records");
+        assert_eq!(fallback_records.len(), headers.len());
+
+        // Bad hex returns 400 JSON.
+        let bad = send_req(
+            &mut app,
+            "GET /api/blocks?from=nothex HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        );
+        assert_eq!(bad.0, 400);
+        assert!(bad.1.contains("\"ok\":false"));
+    }
+
+    #[test]
+    fn history_endpoint_paginates_limit_and_offset() {
+        let mut app = Explorer::boot();
+        app.mining = false;
+        // Each pool+produce creates one transfer block; the address receives
+        // one credit per block.
+        let addr = kovanica_state::KeyPair::from_u64(2).address().to_hex();
+        for _ in 0..3 {
+            app.mesh.pool("alpha", 1, ATOM, 2).unwrap();
+            app.mesh.produce("alpha").unwrap();
+        }
+        let body = send_req(
+            &mut app,
+            &format!(
+                "GET /api/history?address={}&limit=2&offset=1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                addr
+            ),
+        );
+        assert_eq!(body.0, 200);
+        let v: serde_json::Value = serde_json::from_str(&body.1).unwrap();
+        let txs = v["txs"].as_array().unwrap();
+        assert_eq!(txs.len(), 2, "limit=2 must return two txs");
+        assert_eq!(v["limit"], 2);
+        assert_eq!(v["offset"], 1);
+        assert_eq!(v["total"], 3);
+    }
+
+    #[test]
+    fn utxos_endpoint_paginates_limit_and_offset() {
+        let mut app = Explorer::boot();
+        app.mining = false;
+        // Produce several coinbases all paid to actor 1.
+        for _ in 0..3 {
+            app.mesh.produce_empty("alpha").unwrap();
+        }
+        let addr = kovanica_state::KeyPair::from_u64(1).address().to_hex();
+        let body = send_req(
+            &mut app,
+            &format!(
+                "GET /api/utxos?address={}&limit=2&offset=1 HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+                addr
+            ),
+        );
+        assert_eq!(body.0, 200);
+        let v: serde_json::Value = serde_json::from_str(&body.1).unwrap();
+        let utxos = v["utxos"].as_array().unwrap();
+        assert_eq!(utxos.len(), 2, "limit=2 must return two utxos");
+        assert_eq!(v["limit"], 2);
+        assert_eq!(v["offset"], 1);
+        assert!(v["total"].as_u64().unwrap() >= 3);
     }
 }
