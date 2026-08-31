@@ -10,6 +10,10 @@ android-light-node/
 ├── settings.gradle.kts          # includes :app + :kovanica-ffi (project-dir link)
 ├── gradle/libs.versions.toml    # AGP / Kotlin / Compose BOM pins
 ├── app/                         # the Compose app (MainActivity = slice-9a gate screen)
+│   └── src/main/java/com/kovanica/lightnode/
+│       ├── data/                # LightNodeRepository, WalletRepository, SecureSeedStorage, MultisigRepository
+│       ├── ui/                  # Compose screens, ViewModel, theme (unchanged Material3)
+│       └── work/                # WorkManager background sync + notifications (Slice 9e)
 └── README.md
 ```
 
@@ -36,6 +40,8 @@ Local (with SDK): install the NDK per the script header, run the two calls above
 - compileSdk/targetSdk 36, minSdk 24 (FFI floor)
 - Compose BOM 2026.06.00 · activity-compose 1.13.0 · Material3 (from BOM)
 - UniFFI 0.32 JNA bindings, `net.java.dev.jna:jna:5.14.0@aar` (transitively via the AAR)
+- WorkManager 2.10.0 (periodic background sync)
+- androidx.biometric 1.1.0 + Android Keystore StrongBox opt-in
 
 ## Slice-9a gate screen
 
@@ -51,3 +57,15 @@ live network, per `docs/plans/android-light-node-app.md` slice 9a:
 Live genesis params are pinned as app constants (the node endpoint that
 reports them is a pre-mainnet slice). All FFI work runs on a single
 serialized thread dispatcher.
+
+## Phase 7 slices
+
+- **Slice 9e (background sync):** `work/SyncWorker` runs a 15-minute periodic
+  sync constrained to network + charging. It posts local notifications for
+  newly received funds (rewards / faucet) and matured unbonds.
+- **Keystore hardening:** `SecureSeedStorage` automatically opts into a
+  StrongBox-backed AES key when the device supports it, with TEE fallback,
+  and exposes a biometric-auth path for API 30+.
+- **Multisig wrapper:** `MultisigRepository` provides the wallet-side shape
+  for RFC-001 M-of-N operations; the FFI calls are stubs until
+  `phase5-multisig-node` lands.

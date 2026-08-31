@@ -2,9 +2,12 @@ package com.kovanica.lightnode.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.content.pm.PackageManager
+import android.os.Build
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.biometric.BiometricManager
 import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -17,20 +20,51 @@ import javax.crypto.spec.GCMParameterSpec
  * The mnemonic is encrypted with AES/GCM using a key that never leaves the
  * Android Keystore. Only the IV + ciphertext are persisted in plain
  * SharedPreferences; the plaintext lives only in memory during use.
+ *
+ * This slice adds optional hardening:
+ *  - StrongBox-backed keys when the device supports a secure element (API 28+),
+ *    falling back to TEE-backed keys automatically.
+ *  - Biometric user-authentication for the key when requested and available
+ *    (API 30+), falling back to a non-biometric key.
  */
 class SecureSeedStorage(context: Context) {
 
+    private val context: Context = context.applicationContext
     private val prefs: SharedPreferences =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     private val keyStore: KeyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
 
     /**
-     * Encrypt and persist [mnemonic]. Overwrites any previously stored value.
+     * True if the device has a StrongBox-backed Keystore secure element.
      */
-    fun saveMnemonic(mnemonic: String) {
+    fun isStrongBoxAvailable(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+            context.packageManager.hasSystemFeature(PackageManager.FEATURE_STRONGBOX_KEYSTORE)
+    }
+
+    /**
+     * True if strong biometric authentication (Class 3) is available.
+     */
+    fun isBiometricAvailable(): Boolean {
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            BiometricManager.from(context)
+                .canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
+            BiometricManager.BIOMETRIC_SUCCESS
+    }
+
+    /**
+     * Encrypt and persist [mnemonic]. Overwrites any previously stored value.
+     *
+     * @param requireBiometric if true, attempt to create a key that requires
+     *   biometric authentication before decryption. Falls back to a plain
+     *   Keystore key if biometric authentication is unavailable. The actual
+     *   biometric prompt is intentionally not wired in this slice to keep the
+     *   existing UI unchanged.
+     */
+    fun saveMnemonic(mnemonic: String, requireBiometric: Boolean = false) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey(requireBiometric = requireBiometric))
         val iv = cipher.iv
         val ciphertext = cipher.doFinal(mnemonic.toByteArray(Charsets.UTF_8))
 
@@ -42,7 +76,9 @@ class SecureSeedStorage(context: Context) {
 
     /**
      * Decrypt and return the stored mnemonic, or null if nothing is stored or
-     * decryption fails (e.g. after a backup restore that invalidated the key).
+     * decryption fails (e.g. after a backup restore that invalidated the key,
+     * or if the key requires biometric authentication that has not yet been
+     * performed).
      */
     fun loadMnemonic(): String? {
         val ivB64 = prefs.getString(KEY_IV, null) ?: return null
@@ -67,29 +103,64 @@ class SecureSeedStorage(context: Context) {
         prefs.edit().clear().apply()
     }
 
-    private fun getOrCreateKey(): SecretKey {
+    private fun getOrCreateKey(requireBiometric: Boolean = false): SecretKey {
         keyStore.getKey(KEY_ALIAS, null)?.let { return it as SecretKey }
 
-        val generator = KeyGenerator.getInstance(
-            KeyProperties.KEY_ALGORITHM_AES,
-            "AndroidKeyStore",
-        )
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
-            )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setRandomizedEncryptionRequired(true)
-                .build()
-        )
-        return generator.generateKey()
+        val strongBox = isStrongBoxAvailable()
+        return try {
+            generateKey(buildSpec(useStrongBox = strongBox, requireBiometric = requireBiometric))
+        } catch (e: Exception) {
+            // StrongBox key generation can fail on some devices despite the
+            // feature flag (full secure element, keymint errors, etc.). Fall
+            // back to a TEE-backed key and keep the app usable.
+            if (strongBox) {
+                generateKey(buildSpec(useStrongBox = false, requireBiometric = requireBiometric))
+            } else {
+                throw e
+            }
+        }
     }
 
     private fun getKey(): SecretKey {
         return keyStore.getKey(KEY_ALIAS, null) as? SecretKey
             ?: throw IllegalStateException("Keystore seed key not found")
+    }
+
+    private fun buildSpec(useStrongBox: Boolean, requireBiometric: Boolean): KeyGenParameterSpec {
+        val builder = KeyGenParameterSpec.Builder(
+            KEY_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P && useStrongBox) {
+            builder.setIsStrongBoxBacked(true)
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            requireBiometric &&
+            isBiometricAvailable()
+        ) {
+            builder.setUserAuthenticationRequired(true)
+                .setUserAuthenticationParameters(
+                    BiometricManager.Authenticators.BIOMETRIC_STRONG,
+                    0,
+                )
+                .setInvalidatedByBiometricEnrollment(true)
+        }
+
+        return builder.build()
+    }
+
+    private fun generateKey(spec: KeyGenParameterSpec): SecretKey {
+        val generator = KeyGenerator.getInstance(
+            KeyProperties.KEY_ALGORITHM_AES,
+            "AndroidKeyStore",
+        )
+        generator.init(spec)
+        return generator.generateKey()
     }
 
     companion object {

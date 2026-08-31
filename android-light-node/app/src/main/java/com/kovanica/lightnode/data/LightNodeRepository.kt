@@ -45,8 +45,13 @@ private fun defaultConfig() = LightConfig(
  * All Rust calls are serialized through one background thread because the node
  * is order-sensitive and CPU-bound. HTTP transport is handled by [NodeClient]
  * and only raw byte blobs cross into the FFI layer.
+ *
+ * The repository is exposed as a process-level singleton via [getInstance]
+ * so that the UI and the background [com.kovanica.lightnode.work.SyncWorker]
+ * share one node state and do not corrupt the persisted light-sync blob by
+ * writing from two independent instances.
  */
-class LightNodeRepository(context: Context) {
+class LightNodeRepository private constructor(context: Context) {
 
     private val dispatcher = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
     private val prefs = com.kovanica.lightnode.ui.prefs.WalletPrefs(context)
@@ -303,8 +308,19 @@ class LightNodeRepository(context: Context) {
     suspend fun validatorPublicKeyHex(): Result<String?> =
         withContext(dispatcher) { runCatching { node.validatorPublicKeyHex() }.mapNodeError() }
 
+    /**
+     * Release the repository reference. The underlying dispatcher and singleton
+     * instance are only torn down when the last reference is closed.
+     */
     fun close() {
-        dispatcher.close()
+        synchronized(INSTANCE_LOCK) {
+            refCount--
+            if (refCount <= 0) {
+                dispatcher.close()
+                instance = null
+                refCount = 0
+            }
+        }
     }
 
     private fun <T> Result<T>.mapNodeError(): Result<T> =
@@ -362,6 +378,31 @@ class LightNodeRepository(context: Context) {
             if (this[i] != prefix[i]) return false
         }
         return true
+    }
+
+    companion object {
+        private val INSTANCE_LOCK = Any()
+        @Volatile private var instance: LightNodeRepository? = null
+        private var refCount: Int = 0
+
+        /**
+         * Return a process-wide [LightNodeRepository] instance, creating it if
+         * necessary. Callers must balance every [getInstance] with a matching
+         * [close].
+         */
+        fun getInstance(context: Context): LightNodeRepository {
+            synchronized(INSTANCE_LOCK) {
+                val existing = instance
+                if (existing != null) {
+                    refCount++
+                    return existing
+                }
+                val created = LightNodeRepository(context.applicationContext)
+                instance = created
+                refCount = 1
+                return created
+            }
+        }
     }
 }
 

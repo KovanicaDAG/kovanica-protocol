@@ -140,6 +140,13 @@ crates/
       challenger_consensus_sync.rs         Empirical consensus-invariant suite (10 tests: difficulty retarget clamps, SPV difficulty bounds, wall-clock drift, reorg locator sync, deep-reorg/fork convergence)
 ```
 
+android-light-node/            Jetpack Compose light-node wallet app (slices 9a–9e)
+  app/src/main/java/com/kovanica/lightnode/
+    data/                      LightNodeRepository (process singleton), WalletRepository, SecureSeedStorage, MultisigRepository
+    ui/                        Compose screens, ViewModel, Material3 theme
+    work/                      WorkManager periodic sync + local notifications (Slice 9e)
+  gradle/libs.versions.toml    AGP / Kotlin / Compose / WorkManager / biometric dependency pins
+
 VRF is shipped (Stage 3) — see `crates/kovanica-dag/src/vrf.rs` above and the Stage 3 checklist.
 
 ### Multisig — RFC-001 (M-of-N witness payloads & P2SH)
