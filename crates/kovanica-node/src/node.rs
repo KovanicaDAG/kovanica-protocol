@@ -364,6 +364,8 @@ pub struct Node {
     /// Stored locally so [`Node::build_multisig_spend`] can attach the script
     /// to a spend without requiring the caller to pass it back in.
     multisig_scripts: std::collections::HashMap<Address, Vec<u8>>,
+    /// Manually banned peers (IP address or NodeId hex), with optional expiry tick.
+    banned_peers: crate::p2p_hardening::P2pHardening,
 }
 
 /// Blocks per subsidy-halving era. Issuance is `cap >> (height / HALVING_ERA)`.
@@ -384,6 +386,9 @@ impl Default for Node {
             log: None,
             pending: Vec::new(),
             multisig_scripts: std::collections::HashMap::new(),
+            banned_peers: crate::p2p_hardening::P2pHardening::new(
+                crate::p2p_hardening::P2pHardeningConfig::default(),
+            ),
         }
     }
 }
@@ -407,6 +412,9 @@ impl Node {
             log: None,
             pending: Vec::new(),
             multisig_scripts: std::collections::HashMap::new(),
+            banned_peers: crate::p2p_hardening::P2pHardening::new(
+                crate::p2p_hardening::P2pHardeningConfig::default(),
+            ),
         }
     }
 
@@ -429,6 +437,37 @@ impl Node {
     /// a real node runs on the default wall clock.
     pub fn set_now_ms(&mut self, now_ms: u64) {
         self.clock = Clock::Fixed(now_ms);
+    }
+
+    // ------------------------------------------------------------------
+    // Peer banning (IP address or NodeId)
+    // ------------------------------------------------------------------
+
+    /// Ban a peer identified by `peer` (an IP address like `1.2.3.4` or a
+    /// NodeId hex string) for `expiry_ticks` mesh ticks. `0` means permanent.
+    pub fn ban_peer(&mut self, peer: &str, expiry_ticks: u64) {
+        self.banned_peers.ban_for(peer, expiry_ticks);
+    }
+
+    /// Remove a manual ban for `peer`.
+    pub fn unban_peer(&mut self, peer: &str) {
+        self.banned_peers.unban(peer);
+    }
+
+    /// Whether `peer` is currently banned.
+    pub fn is_peer_banned(&self, peer: &str) -> bool {
+        self.banned_peers.is_banned(peer)
+    }
+
+    /// Persist the current ban list to `path` (JSON).
+    pub fn save_bans<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
+        self.banned_peers.set_bans_path(path.as_ref());
+        self.banned_peers.save_bans()
+    }
+
+    /// Load a persisted ban list from `path` (JSON). Expired bans are dropped.
+    pub fn load_bans<P: AsRef<std::path::Path>>(&mut self, path: P) -> std::io::Result<()> {
+        self.banned_peers.load_bans(path)
     }
 
     /// The timestamp to stamp on a new block built on `parents`: the node's
@@ -1679,6 +1718,42 @@ impl Node {
         Ok(events)
     }
 
+    /// Find every block that lists `id` as one of its parents.
+    pub fn block_children(&self, id: &BlockId) -> Result<Vec<BlockId>, NodeError> {
+        let ledger = self.ledger()?;
+        let dag = ledger.dag();
+        let mut children = Vec::new();
+        for block_id in dag.linearize() {
+            if let Some(block) = dag.block(&block_id) {
+                if block.parents().contains(id) {
+                    children.push(block_id);
+                }
+            }
+        }
+        Ok(children)
+    }
+
+    /// Locate the confirming block for a transaction and its blue score.
+    ///
+    /// Returns `None` if the transaction is not in any known block payload.
+    pub fn tx_confirmation(&self, id: &TxId) -> Result<Option<(BlockId, u64)>, NodeError> {
+        let ledger = self.ledger()?;
+        let dag = ledger.dag();
+        for block_id in dag.linearize() {
+            let Some(block) = dag.block(&block_id) else {
+                continue;
+            };
+            let Ok(txs) = decode_block_payload(block.payload()) else {
+                continue;
+            };
+            if txs.iter().any(|tx| tx.id() == *id) {
+                let blue_score = dag.ghostdag(&block_id).map(|g| g.blue_score).unwrap_or(0);
+                return Ok(Some((block_id, blue_score)));
+            }
+        }
+        Ok(None)
+    }
+
     /// Export SPV block headers along the selected chain starting after the common
     /// ancestor found in `locator`, up to `stop` (or tip), bounded by `limit`.
     pub fn headers_from(
@@ -2068,8 +2143,10 @@ impl Node {
             log: Some(store),
             pending: Vec::new(),
             multisig_scripts: std::collections::HashMap::new(),
+            banned_peers: crate::p2p_hardening::P2pHardening::new(
+                crate::p2p_hardening::P2pHardeningConfig::default(),
+            ),
         })
-    }
     }
 
     /// Rebuild the node from a finality checkpoint at `path`.
@@ -2087,6 +2164,9 @@ impl Node {
             log: None,
             pending: Vec::new(),
             multisig_scripts: std::collections::HashMap::new(),
+            banned_peers: crate::p2p_hardening::P2pHardening::new(
+                crate::p2p_hardening::P2pHardeningConfig::default(),
+            ),
         })
     }
 

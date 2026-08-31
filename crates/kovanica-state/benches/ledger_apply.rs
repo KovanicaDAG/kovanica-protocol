@@ -2,7 +2,9 @@
 
 use criterion::{criterion_group, criterion_main, Criterion};
 use kovanica_dag::{Block, Dag};
-use kovanica_state::{apply_block, apply_dag, HalvingSchedule, KeyPair, Ledger, Transaction, TxOutput};
+use kovanica_state::{
+    apply_block, apply_dag, HalvingSchedule, KeyPair, Ledger, Transaction, TxOutput,
+};
 
 fn bench_ledger_apply(c: &mut Criterion) {
     let founder = KeyPair::from_u64(1);
