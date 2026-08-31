@@ -25,7 +25,8 @@ Header **Preview / Live**:
 | --- | --- |
 | `/` | Landing |
 | `/explorer` | BlockDAG graph |
-| `/wallet` | Create / import / send |
+| `/wallet` | Create / import / send / encrypt seed |
+| `/multisig` | M-of-N P2SH multisig (create, spend, combine) |
 | `/map` | Origin choropleth |
 | `/docs` | HTTP contract |
 | `/api/*` | Same contract as the node; `?source=live` proxies Rust |
@@ -36,6 +37,18 @@ Header **Preview / Live**:
 npm ci
 npm run dev
 ```
+
+The default dev script binds to `0.0.0.0:8080` so the Grok live preview can
+reach it. When running locally on the shared server, **bind to `127.0.0.1` and
+avoid port 3000** — that port is forwarded to the internet by the Cloudflare
+tunnel and must not be used for dev servers. Use:
+
+```sh
+npx vite dev --host 127.0.0.1 --port 8080
+```
+
+See the root `CLAUDE.md` § "Port 3000 is JAVAN" and "Što se trenutno vrti" for
+why this matters.
 
 VPS rebuild: `npm run build:vps` then rsync `.output` and `pm2 restart kovanica-web`. Do not steal ports from other apps on the box — see [DEPLOY.md](./DEPLOY.md).
 
