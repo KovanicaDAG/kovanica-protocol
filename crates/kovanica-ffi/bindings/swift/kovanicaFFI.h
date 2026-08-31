@@ -313,6 +313,16 @@ RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync(uint64_t pt
 int8_t uniffi_kovanica_ffi_fn_method_lightnode_filter_matches(uint64_t ptr, RustBuffer filter_blob, RustBuffer address, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_FILTER_MATCHES_ANY
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_FILTER_MATCHES_ANY
+int8_t uniffi_kovanica_ffi_fn_method_lightnode_filter_matches_any(uint64_t ptr, RustBuffer filter_blob, RustBuffer addresses, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_HISTORY_OF
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_HISTORY_OF
+RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_history_of(uint64_t ptr, RustBuffer address, uint32_t max_blocks, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_HYBRID_ENABLED
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_HYBRID_ENABLED
 int8_t uniffi_kovanica_ffi_fn_method_lightnode_hybrid_enabled(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -746,6 +756,18 @@ uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_FILTER_MATCHES
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_FILTER_MATCHES
 uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_FILTER_MATCHES_ANY
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_FILTER_MATCHES_ANY
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_HISTORY_OF
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_HISTORY_OF
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_history_of(void
     
 );
 #endif

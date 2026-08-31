@@ -695,6 +695,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_history_of(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_hybrid_enabled(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_load_snapshot(
@@ -787,6 +791,10 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_filter_matches(`ptr`: Long,`filterBlob`: RustBuffer.ByValue,`address`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_filter_matches_any(`ptr`: Long,`filterBlob`: RustBuffer.ByValue,`addresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_history_of(`ptr`: Long,`address`: RustBuffer.ByValue,`maxBlocks`: Int,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_hybrid_enabled(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     external fun uniffi_kovanica_ffi_fn_method_lightnode_load_snapshot(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -981,6 +989,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches() != 44042) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any() != 23729) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_history_of() != 27998) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_hybrid_enabled() != 35199) {
@@ -1567,6 +1581,21 @@ public interface LightNodeInterface {
     fun `filterMatches`(`filterBlob`: kotlin.ByteArray, `address`: kotlin.String): kotlin.Boolean
     
     /**
+     * Batch form of [`Self::filter_matches`]: does the filter match ANY of
+     * `addresses`? Decodes the filter once — use this when watching several
+     * addresses per block (multi-address watch wallets).
+     */
+    fun `filterMatchesAny`(`filterBlob`: kotlin.ByteArray, `addresses`: List<kotlin.String>): kotlin.Boolean
+    
+    /**
+     * Reconstruct the transaction history of `address` by scanning stored
+     * blocks in canonical order. Scanning stops after the first
+     * `max_blocks` blocks (`0` = scan everything). A send's change back to
+     * the sender appears as its own `Received` entry.
+     */
+    fun `historyOf`(`address`: kotlin.String, `maxBlocks`: kotlin.UInt): List<HistoryEntry>
+    
+    /**
      * Whether hybrid admission is active.
      */
     fun `hybridEnabled`(): kotlin.Boolean
@@ -2037,6 +2066,49 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
         
         FfiConverterByteArray.lower(`filterBlob`),
         FfiConverterString.lower(`address`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Batch form of [`Self::filter_matches`]: does the filter match ANY of
+     * `addresses`? Decodes the filter once — use this when watching several
+     * addresses per block (multi-address watch wallets).
+     */
+    @Throws(LightNodeException::class)override fun `filterMatchesAny`(`filterBlob`: kotlin.ByteArray, `addresses`: List<kotlin.String>): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_filter_matches_any(
+        it,
+        
+        FfiConverterByteArray.lower(`filterBlob`),
+        FfiConverterSequenceString.lower(`addresses`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Reconstruct the transaction history of `address` by scanning stored
+     * blocks in canonical order. Scanning stops after the first
+     * `max_blocks` blocks (`0` = scan everything). A send's change back to
+     * the sender appears as its own `Received` entry.
+     */
+    @Throws(LightNodeException::class)override fun `historyOf`(`address`: kotlin.String, `maxBlocks`: kotlin.UInt): List<HistoryEntry> {
+            return FfiConverterSequenceTypeHistoryEntry.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_history_of(
+        it,
+        
+        FfiConverterString.lower(`address`),
+        FfiConverterUInt.lower(`maxBlocks`),_status)
 }
     }
     )
@@ -2566,6 +2638,72 @@ public object FfiConverterTypeBlockInfo: FfiConverterRustBuffer<BlockInfo> {
 
 
 /**
+ * One reconstructed history event for an address.
+ *
+ * Entries come back in canonical (linearized) block order; a send's change
+ * back to the sender appears as its own `Received` entry.
+ */
+data class HistoryEntry (
+    /**
+     * Sealing block id (lowercase hex).
+     */
+    var `blockIdHex`: kotlin.String
+    , 
+    /**
+     * Transaction id (lowercase hex).
+     */
+    var `txIdHex`: kotlin.String
+    , 
+    /**
+     * Credit or debit.
+     */
+    var `direction`: TxDirection
+    , 
+    /**
+     * Value moved, in base units (decimal string).
+     */
+    var `amount`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeHistoryEntry: FfiConverterRustBuffer<HistoryEntry> {
+    override fun read(buf: ByteBuffer): HistoryEntry {
+        return HistoryEntry(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeTxDirection.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: HistoryEntry) = (
+            FfiConverterString.allocationSize(value.`blockIdHex`) +
+            FfiConverterString.allocationSize(value.`txIdHex`) +
+            FfiConverterTypeTxDirection.allocationSize(value.`direction`) +
+            FfiConverterString.allocationSize(value.`amount`)
+    )
+
+    override fun write(value: HistoryEntry, buf: ByteBuffer) {
+            FfiConverterString.write(value.`blockIdHex`, buf)
+            FfiConverterString.write(value.`txIdHex`, buf)
+            FfiConverterTypeTxDirection.write(value.`direction`, buf)
+            FfiConverterString.write(value.`amount`, buf)
+    }
+}
+
+
+
+/**
  * Genesis parameters for a fresh light node.
  */
 data class LightConfig (
@@ -2981,6 +3119,49 @@ public object FfiConverterTypeLightNodeError : FfiConverterRustBuffer<LightNodeE
 
 
 
+/**
+ * Direction of a [`HistoryEntry`] relative to the queried address.
+ */
+
+enum class TxDirection {
+    
+    /**
+     * The address received value.
+     */
+    RECEIVED,
+    /**
+     * The address spent previously-received value.
+     */
+    SENT;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTxDirection: FfiConverterRustBuffer<TxDirection> {
+    override fun read(buf: ByteBuffer) = try {
+        TxDirection.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: TxDirection) = 4UL
+
+    override fun write(value: TxDirection, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 /**
  * @suppress
@@ -3163,6 +3344,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer<List<HistoryEntry>> {
+    override fun read(buf: ByteBuffer): List<HistoryEntry> {
+        val len = buf.getInt()
+        return List<HistoryEntry>(len) {
+            FfiConverterTypeHistoryEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<HistoryEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeHistoryEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<HistoryEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeHistoryEntry.write(it, buf)
         }
     }
 }
