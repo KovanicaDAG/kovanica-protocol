@@ -856,10 +856,10 @@ Cross-repo execution plan from `Obsidian-Vault/Poslovno/KovanicaDAG/UPGRADE-PHAS
 
 | Phase | Status | PR |
 |---|---|---|
-| 1 — Foundation & consensus infra | 🔄 in progress | A2/A3 landed across Phase 1/4 |
-| 2 — Consensus evolution | pending | — |
-| 3 — Performance & scalability | ✅ completed | draft PR #37 |
-| 4 — Mobile light-node | ✅ completed / 🔄 in review | PR #38 |
+| 1 — Foundation & consensus infra | ✅ A1/A2/A3/H1 done; D2 pending | dormant mainnet profile, staked uplink, light_sync, rate limits, dead `mempool.rs` removed |
+| 2 — Consensus evolution | 🔄 in progress | B1 epoch randomness beacon · B2 DAG-level past-set pruning · B3 UTXO undo log |
+| 3 — Performance & scalability | ✅ completed | merged `c85013a` (#37) |
+| 4 — Mobile light-node | ✅ completed | merged `84b6516` (#38); Oracle follow-ups (seed/address mismatch, UI-state cleanup, NodeUrl/lastSyncedBlockId wiring, importWallet dedupe) fixed and merged |
 | 5 — Wallet & security | ✅ completed | multisig node layer + FFI bindings: `8a3bec6` (#41) |
 | 6 — Operations & reliability | ✅ completed | operations automation: `840e8f1` (#40) |
 | 7 — P2 polish | ✅ completed | see breakdown below |
@@ -868,11 +868,11 @@ Cross-repo execution plan from `Obsidian-Vault/Poslovno/KovanicaDAG/UPGRADE-PHAS
 
 | Item | Status | PR |
 |---|---|---|
-| Android background sync + Keystore hardening | 🔄 in progress | draft PR #39 |
+| Android background sync + Keystore hardening | ✅ completed | merged `f8d261f` (#39) |
 | Soak snapshot docs (genesis hash, rate recovery, no retune) | ✅ completed | merged `cee3e98` (#45) |
 | Fuzz/property tests + Criterion benchmarks + P2P ban persistence | ✅ completed | merged `9407d24` (#43) |
 | Explorer detail views + API docs | ✅ completed | merged `16ff775` (#44) |
 | Fee market & RBF | ✅ completed | merged `49dfce0` (#46) |
 | Web wallet custody + multisig UI | ✅ closed as superseded | UI merged via `0830c39` (#48); #47 closed |
 
-> **Follow-up note:** All Phase 7 PRs merged to `main` (final hash `0830c39`).
+> **Follow-up note:** All Phase 7 PRs merged to `main`. Android unit tests for `Format.kt`, KVLS header parsing, and address derivation remain pending — no SDK/device available to run them locally.
