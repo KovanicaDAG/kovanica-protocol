@@ -192,7 +192,7 @@ function CreatePanel() {
             <p className="text-xs font-medium uppercase tracking-wide">{result.threshold}-of-{result.pubkeys.length} address</p>
           </div>
           <p className="mt-2 break-all font-mono text-sm text-fg">{result.address}</p>
-          <p className="mt-1 break-all font-mono text-[11px] text-subtle">Redeem script: {result.redeemScript}</p>
+          <p className="mt-1 break-all font-mono text-[11px] text-subtle">Redeem script: {result.redeemScriptHex}</p>
           <div className="mt-3 flex flex-wrap gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => void navigator.clipboard.writeText(result.address).then(() => toast.success("Address copied"))}>
               <Copy className="size-3.5" />
@@ -346,7 +346,7 @@ function SpendPanel() {
       {proposal && (
         <section className="rounded-xl border border-teal/30 bg-teal/5 p-4">
           <p className="text-[10px] tracking-wide text-teal uppercase">Proposal</p>
-          <p className="mt-1 break-all font-mono text-xs text-fg">Sighash: {proposal.sighash}</p>
+          <p className="mt-1 break-all font-mono text-xs text-fg">Sighash: {proposal.sighashHex}</p>
           <p className="mt-2 text-xs text-muted">
             Share this sighash with the required number of cosigners. Each cosigner signs it with
             their own seed, then the signatures are combined on the Combine tab.
@@ -415,7 +415,7 @@ function CombinePanel() {
         <textarea
           value={proposalText}
           onChange={(e) => setProposalText(e.target.value)}
-          placeholder='{"sighash":"...","tx":"...","from":"...","outputs":[...]}'
+          placeholder='{"sighashHex":"...","txBlobHex":"...","from":"...","outputs":[...]}'
           rows={5}
           className="mt-2 min-h-24 w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-xs text-fg outline-none focus-visible:shadow-[var(--shadow-border-hover)]"
         />
@@ -455,7 +455,7 @@ function CombinePanel() {
       {result && (
         <section className="rounded-xl border border-ok/30 bg-ok/5 p-4">
           <p className="text-[10px] tracking-wide text-ok uppercase">Submitted</p>
-          <p className="mt-1 break-all font-mono text-xs text-fg">Tx: {result.tx || "(stub — fixer wiring needed)"}</p>
+          <p className="mt-1 break-all font-mono text-xs text-fg">Tx: {result.tx || "pending"}</p>
         </section>
       )}
 
@@ -466,19 +466,19 @@ function CombinePanel() {
 
 /** Helper for a cosigner who has this wallet unlocked to sign a sighash locally. */
 function SignLocallyCard() {
-  const [sighash, setSighash] = useState("");
+  const [txBlob, setTxBlob] = useState("");
   const [mnemonic, setMnemonic] = useState("");
   const [sig, setSig] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function onSign() {
-    if (!sighash || !mnemonic) {
-      toast.error("Enter sighash and seed");
+    if (!txBlob || !mnemonic) {
+      toast.error("Enter transaction blob and seed");
       return;
     }
     setBusy(true);
     try {
-      const s = await signMultisigPartial(mnemonic, 0, sighash);
+      const s = await signMultisigPartial(mnemonic, 0, txBlob);
       setSig(s);
       toast.success("Partial signature created");
     } catch (e) {
@@ -493,12 +493,12 @@ function SignLocallyCard() {
     <section className="rounded-xl border border-dashed border-border bg-surface/50 p-4">
       <p className="text-[10px] tracking-wide text-subtle uppercase">Cosigner tool: sign locally</p>
       <p className="mt-1 text-xs text-muted">
-        Paste a sighash and your seed to produce a partial signature. The seed stays in this
+        Paste a transaction blob and your seed to produce a partial signature. The seed stays in this
         browser and is cleared after signing.
       </p>
       <input
-        value={sighash}
-        onChange={(e) => setSighash(e.target.value)}
+        value={txBlob}
+        onChange={(e) => setTxBlob(e.target.value)}
         placeholder="Sighash (64 hex)"
         className="mt-3 h-11 w-full rounded-md border border-border bg-bg px-3 font-mono text-xs text-fg outline-none focus-visible:shadow-[var(--shadow-border-hover)]"
       />

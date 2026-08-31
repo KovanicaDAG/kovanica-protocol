@@ -51,3 +51,15 @@ export async function api<T = unknown>(path: string, method: "GET" | "POST" = "G
   if (ct.includes("json")) return r.json() as Promise<T>;
   return (await r.text()) as T;
 }
+
+/** POST a JSON body to the configured API source. */
+export async function apiPostJson<T = unknown>(path: string, body: unknown): Promise<T> {
+  const source = getApiSource();
+  const r = await fetch(withSource(path, source), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new Error(await r.text());
+  return r.json() as Promise<T>;
+}

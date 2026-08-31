@@ -235,6 +235,119 @@ mempool is at capacity, otherwise it falls back to the configured minimum fee
 rate. Wallets can use it to set a competitive fee for the next block.
 
 
+## Multisig (M-of-N P2SH)
+
+These endpoints let a web or mobile wallet coordinate threshold-multisig
+spends without the node ever holding signing keys. The node only stores the
+redeem script locally (for addresses it created) and validates/assembles the
+final transaction.
+
+### `POST /api/multisig/create`
+
+Create a threshold-multisig P2SH address.
+
+**Request body:**
+```json
+{
+  "threshold": 2,
+  "pubkeys_hex": ["aabbcc...", "112233...", "445566..."]
+}
+```
+
+- `threshold`: number `M` with `1 <= M <= N <= 16`
+- `pubkeys_hex`: array of 32-byte Ed25519 public keys as lowercase hex
+
+**Response:**
+```json
+{
+  "address": "kvnc1...",
+  "redeem_script_hex": "0203..."
+}
+```
+
+### `POST /api/multisig/build`
+
+Build an unsigned multisig spend from a single P2SH UTXO owned by the address.
+The transaction carries the redeem script in the input witness so cosigners can
+sign from the sighash alone.
+
+**Request body:**
+```json
+{
+  "address": "kvnc1...",
+  "outputs": [
+    { "address": "kvnc1...", "amount_atoms": 100000000 }
+  ]
+}
+```
+
+**Response:**
+```json
+{
+  "tx_blob_hex": "00...",
+  "sighash_hex": "aabbcc..."
+}
+```
+
+### `POST /api/multisig/sign`
+
+Produce one partial Ed25519 signature for a multisig transaction blob.
+
+**Request body:**
+```json
+{
+  "tx_blob_hex": "00...",
+  "secret_hex": "aabbcc..."
+}
+```
+
+- `secret_hex`: 32-byte Ed25519 seed as lowercase hex
+
+**Response:**
+```json
+{
+  "partial_sig_hex": "aabbcc..."
+}
+```
+
+### `POST /api/multisig/combine`
+
+Combine exactly `M` valid partial signatures into a fully-signed transaction.
+
+**Request body:**
+```json
+{
+  "tx_blob_hex": "00...",
+  "partial_sigs_hex": ["aabbcc...", "112233..."]
+}
+```
+
+**Response:**
+```json
+{
+  "signed_tx_blob_hex": "00..."
+}
+```
+
+### `POST /api/multisig/submit`
+
+Submit a fully-signed multisig transaction to the node's mempool. It will be
+included in a block by a subsequent block-production call.
+
+**Request body:**
+```json
+{
+  "signed_tx_blob_hex": "00..."
+}
+```
+
+**Response:**
+```json
+{
+  "tx_id_hex": "aabbcc..."
+}
+```
+
 ## Write endpoints
 
 The explorer also exposes `POST` endpoints used by the web UI and mining

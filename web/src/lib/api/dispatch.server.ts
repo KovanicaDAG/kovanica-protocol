@@ -67,6 +67,22 @@ function action(pathname: string): string {
   return rest.split("/")[0] ?? "";
 }
 
+
+async function proxyLocalNode(req: Request, url: URL): Promise<Response> {
+  const target = `http://127.0.0.1:8080${url.pathname}${url.search}`;
+  const body = req.method === "POST" ? await req.text() : undefined;
+  try {
+    const upstream = await fetch(target, {
+      method: req.method,
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body,
+    });
+    return withCors(new Response(upstream.body, { status: upstream.status, headers: upstream.headers }));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "local node unreachable";
+    return text(`local node unreachable: ${msg}`, 502);
+  }
+}
 export async function dispatchApi(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
 
@@ -92,7 +108,8 @@ export async function dispatchApi(req: Request): Promise<Response> {
     if (source === "mainnet" && !networkProxy(source)) {
       return text("mainnet launching soon", 503);
     }
-    return withCors(await fetchUpstream(`/api/${name}`, method, url.search, source));
+    const body = method === "POST" ? await req.text() : undefined;
+    return withCors(await fetchUpstream(`/api/${name}`, method, url.search, source, body));
   }
 
   if (method === "GET") {
@@ -145,6 +162,10 @@ export async function dispatchApi(req: Request): Promise<Response> {
         return json(localReset());
       case "origin":
         return okOrErr(localOrigin(q.get("iso3")));
+      case "multisig":
+        // Multisig is implemented by the Rust node; proxy a local dev node
+        // running on the default explorer port (127.0.0.1:8080).
+        return proxyLocalNode(req, url);
       default:
         return text("unknown action " + name, 400);
     }
