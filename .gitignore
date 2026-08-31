@@ -20,6 +20,7 @@ AGENTS.md
 AGENTS.project.md
 target/
 data/
+!android-light-node/app/src/main/java/com/kovanica/lightnode/data/
 crates/kovanica-node/data/
 
 # deepwork state

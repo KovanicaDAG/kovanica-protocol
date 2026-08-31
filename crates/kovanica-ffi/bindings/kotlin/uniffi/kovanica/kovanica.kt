@@ -685,15 +685,27 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake_from_secret(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_chain_height(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_block(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_block_by_id(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_blocks(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync_from(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_history_of(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_hybrid_enabled(
     ): Int
@@ -729,11 +741,15 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_synced_height(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_synced_tip_id(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_tips(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_total_stake(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_unbond(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_unbond_from_secret(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_validator_public_key_hex(
     ): Int
@@ -777,16 +793,28 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_bond_stake(`ptr`: Long,`seed`: Long,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_bond_stake_from_secret(`ptr`: Long,`secretHex`: RustBuffer.ByValue,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_chain_height(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_kovanica_ffi_fn_method_lightnode_enable_hybrid(`ptr`: Long,`rateNum`: Long,`rateDen`: Long,`nominalWork`: RustBuffer.ByValue,`retarget`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_export_block(`ptr`: Long,`blockIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_export_block_by_id(`ptr`: Long,`idHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_export_blocks(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync_from(`ptr`: Long,`fromIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_filter_matches(`ptr`: Long,`filterBlob`: RustBuffer.ByValue,`address`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_filter_matches_any(`ptr`: Long,`filterBlob`: RustBuffer.ByValue,`addresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): Byte
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_history_of(`ptr`: Long,`address`: RustBuffer.ByValue,`maxBlocks`: Int,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_hybrid_enabled(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     external fun uniffi_kovanica_ffi_fn_method_lightnode_load_snapshot(`ptr`: Long,`path`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -821,11 +849,15 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_synced_height(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_synced_tip_id(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_tips(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_total_stake(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
     external fun uniffi_kovanica_ffi_fn_method_lightnode_unbond(`ptr`: Long,`fromSeed`: Long,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_unbond_from_secret(`ptr`: Long,`secretHex`: RustBuffer.ByValue,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_validator_public_key_hex(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -968,10 +1000,19 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake() != 41825) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake_from_secret() != 24831) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_chain_height() != 36538) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid() != 31711) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_block() != 44821) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_block_by_id() != 11244) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_blocks() != 64729) {
@@ -980,7 +1021,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync() != 32984) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync_from() != 29986) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches() != 44042) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any() != 23729) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_history_of() != 27998) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_hybrid_enabled() != 35199) {
@@ -1034,6 +1084,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_synced_height() != 46770) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_synced_tip_id() != 23889) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_tips() != 38486) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1041,6 +1094,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_unbond() != 38383) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_unbond_from_secret() != 46109) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_validator_public_key_hex() != 29090) {
@@ -1533,6 +1589,14 @@ public interface LightNodeInterface {
     fun `bondStake`(`seed`: kotlin.ULong, `amount`: kotlin.ULong): kotlin.String
     
     /**
+     * Bond `amount` atoms from the wallet identity derived from a 32-byte
+     * Ed25519 secret (hex) to THIS node's validator key. The source coins,
+     * sizing split, and bond change all live at the wallet address, so
+     * staking spends wallet funds and returns the remainder to the wallet.
+     */
+    fun `bondStakeFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): kotlin.String
+    
+    /**
      * The current chain height (selected tip's blue score).
      */
     fun `chainHeight`(): kotlin.ULong
@@ -1549,6 +1613,18 @@ public interface LightNodeInterface {
     fun `enableHybrid`(`rateNum`: kotlin.ULong, `rateDen`: kotlin.ULong, `nominalWork`: U128Parts, `retarget`: kotlin.Boolean)
     
     /**
+     * Export a single block as a one-record wire-format blob. `None` if the
+     * block id is unknown or not a non-genesis block.
+     */
+    fun `exportBlock`(`blockIdHex`: kotlin.String): kotlin.ByteArray?
+    
+    /**
+     * Export a single block by lowercase-hex id as a wire-format blob.
+     * Returns `None` when the id is unknown.
+     */
+    fun `exportBlockById`(`idHex`: kotlin.String): kotlin.ByteArray?
+    
+    /**
      * Every known block as a wire-format blob (framed count + records, VRF
      * bundles included). Hand this to a peer; idempotent on their side.
      */
@@ -1561,10 +1637,32 @@ public interface LightNodeInterface {
     fun `exportLightSync`(): kotlin.ByteArray
     
     /**
+     * Like [`Self::export_light_sync`], but returns only headers strictly
+     * after `from_id_hex`. Unknown or off-chain ids fall back to the full
+     * header chain.
+     */
+    fun `exportLightSyncFrom`(`fromIdHex`: kotlin.String): kotlin.ByteArray
+    
+    /**
      * Whether `address` MIGHT appear in the filtered block (Golomb-Rice
      * false positives are possible; a miss is definitive).
      */
     fun `filterMatches`(`filterBlob`: kotlin.ByteArray, `address`: kotlin.String): kotlin.Boolean
+    
+    /**
+     * Batch form of [`Self::filter_matches`]: does the filter match ANY of
+     * `addresses`? Decodes the filter once — use this when watching several
+     * addresses per block (multi-address watch wallets).
+     */
+    fun `filterMatchesAny`(`filterBlob`: kotlin.ByteArray, `addresses`: List<kotlin.String>): kotlin.Boolean
+    
+    /**
+     * Reconstruct the transaction history of `address` by scanning stored
+     * blocks in canonical order. Scanning stops after the first
+     * `max_blocks` blocks (`0` = scan everything). A send's change back to
+     * the sender appears as its own `Received` entry.
+     */
+    fun `historyOf`(`address`: kotlin.String, `maxBlocks`: kotlin.UInt): List<HistoryEntry>
     
     /**
      * Whether hybrid admission is active.
@@ -1670,6 +1768,11 @@ public interface LightNodeInterface {
     fun `syncedHeight`(): kotlin.ULong?
     
     /**
+     * Id of the highest light-synced header (`None` before any sync).
+     */
+    fun `syncedTipId`(): kotlin.String?
+    
+    /**
      * Current tip set, lowercase hex.
      */
     fun `tips`(): List<kotlin.String>
@@ -1686,6 +1789,12 @@ public interface LightNodeInterface {
      * Sealed immediately in a mined block.
      */
     fun `unbond`(`fromSeed`: kotlin.ULong, `amount`: kotlin.ULong): SendReceipt
+    
+    /**
+     * Unbond `amount` of this validator's matured stake back to the wallet
+     * address derived from a 32-byte Ed25519 secret (hex).
+     */
+    fun `unbondFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): SendReceipt
     
     /**
      * This validator's VRF public key, lowercase hex, if a seed was set.
@@ -1948,6 +2057,28 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 
     
     /**
+     * Bond `amount` atoms from the wallet identity derived from a 32-byte
+     * Ed25519 secret (hex) to THIS node's validator key. The source coins,
+     * sizing split, and bond change all live at the wallet address, so
+     * staking spends wallet funds and returns the remainder to the wallet.
+     */
+    @Throws(LightNodeException::class)override fun `bondStakeFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_bond_stake_from_secret(
+        it,
+        
+        FfiConverterString.lower(`secretHex`),
+        FfiConverterULong.lower(`amount`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * The current chain height (selected tip's blue score).
      */
     @Throws(LightNodeException::class)override fun `chainHeight`(): kotlin.ULong {
@@ -1991,6 +2122,44 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 
     
     /**
+     * Export a single block as a one-record wire-format blob. `None` if the
+     * block id is unknown or not a non-genesis block.
+     */
+    @Throws(LightNodeException::class)override fun `exportBlock`(`blockIdHex`: kotlin.String): kotlin.ByteArray? {
+            return FfiConverterOptionalByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_export_block(
+        it,
+        
+        FfiConverterString.lower(`blockIdHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Export a single block by lowercase-hex id as a wire-format blob.
+     * Returns `None` when the id is unknown.
+     */
+    @Throws(LightNodeException::class)override fun `exportBlockById`(`idHex`: kotlin.String): kotlin.ByteArray? {
+            return FfiConverterOptionalByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_export_block_by_id(
+        it,
+        
+        FfiConverterString.lower(`idHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Every known block as a wire-format blob (framed count + records, VRF
      * bundles included). Hand this to a peer; idempotent on their side.
      */override fun `exportBlocks`(): kotlin.ByteArray {
@@ -2025,6 +2194,25 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 
     
     /**
+     * Like [`Self::export_light_sync`], but returns only headers strictly
+     * after `from_id_hex`. Unknown or off-chain ids fall back to the full
+     * header chain.
+     */override fun `exportLightSyncFrom`(`fromIdHex`: kotlin.String): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync_from(
+        it,
+        
+        FfiConverterString.lower(`fromIdHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Whether `address` MIGHT appear in the filtered block (Golomb-Rice
      * false positives are possible; a miss is definitive).
      */
@@ -2037,6 +2225,49 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
         
         FfiConverterByteArray.lower(`filterBlob`),
         FfiConverterString.lower(`address`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Batch form of [`Self::filter_matches`]: does the filter match ANY of
+     * `addresses`? Decodes the filter once — use this when watching several
+     * addresses per block (multi-address watch wallets).
+     */
+    @Throws(LightNodeException::class)override fun `filterMatchesAny`(`filterBlob`: kotlin.ByteArray, `addresses`: List<kotlin.String>): kotlin.Boolean {
+            return FfiConverterBoolean.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_filter_matches_any(
+        it,
+        
+        FfiConverterByteArray.lower(`filterBlob`),
+        FfiConverterSequenceString.lower(`addresses`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Reconstruct the transaction history of `address` by scanning stored
+     * blocks in canonical order. Scanning stops after the first
+     * `max_blocks` blocks (`0` = scan everything). A send's change back to
+     * the sender appears as its own `Received` entry.
+     */
+    @Throws(LightNodeException::class)override fun `historyOf`(`address`: kotlin.String, `maxBlocks`: kotlin.UInt): List<HistoryEntry> {
+            return FfiConverterSequenceTypeHistoryEntry.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_history_of(
+        it,
+        
+        FfiConverterString.lower(`address`),
+        FfiConverterUInt.lower(`maxBlocks`),_status)
 }
     }
     )
@@ -2362,6 +2593,22 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 
     
     /**
+     * Id of the highest light-synced header (`None` before any sync).
+     */override fun `syncedTipId`(): kotlin.String? {
+            return FfiConverterOptionalString.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_synced_tip_id(
+        it,
+        _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Current tip set, lowercase hex.
      */
     @Throws(LightNodeException::class)override fun `tips`(): List<kotlin.String> {
@@ -2409,6 +2656,26 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
         it,
         
         FfiConverterULong.lower(`fromSeed`),
+        FfiConverterULong.lower(`amount`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Unbond `amount` of this validator's matured stake back to the wallet
+     * address derived from a 32-byte Ed25519 secret (hex).
+     */
+    @Throws(LightNodeException::class)override fun `unbondFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): SendReceipt {
+            return FfiConverterTypeSendReceipt.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_unbond_from_secret(
+        it,
+        
+        FfiConverterString.lower(`secretHex`),
         FfiConverterULong.lower(`amount`),_status)
 }
     }
@@ -2560,6 +2827,72 @@ public object FfiConverterTypeBlockInfo: FfiConverterRustBuffer<BlockInfo> {
             FfiConverterTypeBlockKind.write(value.`kind`, buf)
             FfiConverterTypeU128Parts.write(value.`work`, buf)
             FfiConverterULong.write(value.`timestampMs`, buf)
+    }
+}
+
+
+
+/**
+ * One reconstructed history event for an address.
+ *
+ * Entries come back in canonical (linearized) block order; a send's change
+ * back to the sender appears as its own `Received` entry.
+ */
+data class HistoryEntry (
+    /**
+     * Sealing block id (lowercase hex).
+     */
+    var `blockIdHex`: kotlin.String
+    , 
+    /**
+     * Transaction id (lowercase hex).
+     */
+    var `txIdHex`: kotlin.String
+    , 
+    /**
+     * Credit or debit.
+     */
+    var `direction`: TxDirection
+    , 
+    /**
+     * Value moved, in base units (decimal string).
+     */
+    var `amount`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeHistoryEntry: FfiConverterRustBuffer<HistoryEntry> {
+    override fun read(buf: ByteBuffer): HistoryEntry {
+        return HistoryEntry(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterTypeTxDirection.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: HistoryEntry) = (
+            FfiConverterString.allocationSize(value.`blockIdHex`) +
+            FfiConverterString.allocationSize(value.`txIdHex`) +
+            FfiConverterTypeTxDirection.allocationSize(value.`direction`) +
+            FfiConverterString.allocationSize(value.`amount`)
+    )
+
+    override fun write(value: HistoryEntry, buf: ByteBuffer) {
+            FfiConverterString.write(value.`blockIdHex`, buf)
+            FfiConverterString.write(value.`txIdHex`, buf)
+            FfiConverterTypeTxDirection.write(value.`direction`, buf)
+            FfiConverterString.write(value.`amount`, buf)
     }
 }
 
@@ -2981,6 +3314,49 @@ public object FfiConverterTypeLightNodeError : FfiConverterRustBuffer<LightNodeE
 
 
 
+/**
+ * Direction of a [`HistoryEntry`] relative to the queried address.
+ */
+
+enum class TxDirection {
+    
+    /**
+     * The address received value.
+     */
+    RECEIVED,
+    /**
+     * The address spent previously-received value.
+     */
+    SENT;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTxDirection: FfiConverterRustBuffer<TxDirection> {
+    override fun read(buf: ByteBuffer) = try {
+        TxDirection.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: TxDirection) = 4UL
+
+    override fun write(value: TxDirection, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
+
+
+
 
 /**
  * @suppress
@@ -3163,6 +3539,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterString.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer<List<HistoryEntry>> {
+    override fun read(buf: ByteBuffer): List<HistoryEntry> {
+        val len = buf.getInt()
+        return List<HistoryEntry>(len) {
+            FfiConverterTypeHistoryEntry.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<HistoryEntry>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeHistoryEntry.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<HistoryEntry>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeHistoryEntry.write(it, buf)
         }
     }
 }

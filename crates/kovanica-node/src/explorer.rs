@@ -39,6 +39,10 @@ const GENESIS_SUBSIDY: u64 = 200 * ATOM;
 const GENESIS_PREMINE: u64 = 200 * ATOM;
 /// Founder actor seed used by `genesis_node()` (deterministic keys).
 const FOUNDER_SEED: u64 = 1;
+/// Finality depth used by the live testnet (blocks below this score become final).
+const TESTNET_FINALITY_DEPTH: u64 = 100;
+/// Payload pruning depth used by the live testnet (blocks below this score have payloads evicted).
+const TESTNET_PAYLOAD_PRUNING_DEPTH: u64 = 1000;
 const ACTORS: [u64; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 /// Single P2P path: plaintext TCP. Not 80/443/3010/8080 and not libp2p :30333.
 const P2P_LISTEN_DEFAULT: &str = "0.0.0.0:9000";
@@ -64,6 +68,12 @@ struct NetworkProfile {
     genesis_premine: u64,
     /// Founder actor seed (deterministic keys).
     founder_seed: u64,
+    /// Finality depth: blocks more than this many blue score below the tip
+    /// become final. `u64::MAX` disables finality pruning.
+    finality_depth: u64,
+    /// Payload pruning depth: blocks more than this many blue score below the
+    /// tip have their payloads evicted. `u64::MAX` disables payload pruning.
+    payload_pruning_depth: u64,
     /// Dormant placeholder: genesis parameters are TBD and the profile refuses
     /// to boot unless explicitly overridden.
     dormant: bool,
@@ -78,6 +88,8 @@ impl NetworkProfile {
             genesis_subsidy: GENESIS_SUBSIDY,
             genesis_premine: GENESIS_PREMINE,
             founder_seed: FOUNDER_SEED,
+            finality_depth: TESTNET_FINALITY_DEPTH,
+            payload_pruning_depth: TESTNET_PAYLOAD_PRUNING_DEPTH,
             dormant: false,
         }
     }
@@ -90,10 +102,12 @@ impl NetworkProfile {
     fn mainnet() -> Self {
         Self {
             id: "kovanica-mainnet",
-            genesis_k: 0,       // TBD — do not invent
-            genesis_subsidy: 0, // TBD — do not invent
-            genesis_premine: 0, // TBD — do not invent
-            founder_seed: 0,    // TBD — do not invent
+            genesis_k: 0,             // TBD — do not invent
+            genesis_subsidy: 0,       // TBD — do not invent
+            genesis_premine: 0,       // TBD — do not invent
+            founder_seed: 0,          // TBD — do not invent
+            finality_depth: 0,        // TBD — do not invent
+            payload_pruning_depth: 0, // TBD — do not invent
             dormant: true,
         }
     }
@@ -610,9 +624,6 @@ fn load_or_genesis(name: &str) -> Node {
     if snap.is_file() {
         let mut node = Node::new();
         if let Some(p) = snap.to_str() {
-            // Hybrid-era snapshots must replay under the same policy or staked
-            // ids silently change (identity-preserving replay lesson). Load
-            // with the hybrid reader when the operator runs hybrid mode.
             let loaded = if env_flag("KOVANICA_HYBRID", false) {
                 node.load_with_hybrid(p, HybridConfig::default())
             } else {
@@ -668,11 +679,13 @@ fn line_mesh() -> Mesh {
 fn genesis_node() -> Node {
     let profile = network_profile();
     let mut node = Node::new();
-    node.genesis(
+    node.genesis_with_finality(
         profile.genesis_k,
         profile.genesis_subsidy,
         profile.genesis_premine,
         profile.founder_seed,
+        profile.finality_depth,
+        profile.payload_pruning_depth,
     )
     .expect("genesis");
     // Hybrid PoW + staked-VRF admission (A2 uplink): opt-in via
@@ -1200,7 +1213,7 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
         );
         let profile = network_profile();
         let body = format!(
-            "{{\"network\":{},\"genesis\":{},\"tip\":{},\"listen\":{},\"peers\":{},\"pow\":{},\"min_fee\":{},\"atom\":{},\"token\":\"KVNC\",\"k\":{},\"subsidy\":{},\"founder_amount\":{},\"founder_seed\":{}}}",
+            "{{\"network\":{},\"genesis\":{},\"tip\":{},\"listen\":{},\"peers\":{},\"pow\":{},\"min_fee\":{},\"atom\":{},\"token\":\"KVNC\",\"k\":{},\"subsidy\":{},\"founder_amount\":{},\"founder_seed\":{},\"finality_depth\":{},\"payload_pruning_depth\":{},\"light_config\":{{\"k\":{},\"subsidy\":{},\"premine\":{},\"founder_seed\":{},\"finality_depth\":{},\"payload_pruning_depth\":{}}}}}",
             jstr(profile.id),
             jstr(&genesis),
             jstr(&tip),
@@ -1212,7 +1225,15 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
             profile.genesis_k,
             profile.genesis_subsidy,
             profile.genesis_premine,
-            profile.founder_seed
+            profile.founder_seed,
+            profile.finality_depth,
+            profile.payload_pruning_depth,
+            profile.genesis_k,
+            profile.genesis_subsidy,
+            profile.genesis_premine,
+            profile.founder_seed,
+            profile.finality_depth,
+            profile.payload_pruning_depth,
         );
         return respond(&mut stream, 200, "application/json", body.as_bytes());
     }
@@ -2813,6 +2834,8 @@ mod tests {
         assert_eq!(profile.genesis_subsidy, GENESIS_SUBSIDY);
         assert_eq!(profile.genesis_premine, GENESIS_PREMINE);
         assert_eq!(profile.founder_seed, FOUNDER_SEED);
+        assert_eq!(profile.finality_depth, TESTNET_FINALITY_DEPTH);
+        assert_eq!(profile.payload_pruning_depth, TESTNET_PAYLOAD_PRUNING_DEPTH);
     }
 
     #[test]
@@ -2825,6 +2848,11 @@ mod tests {
         assert_eq!(profile.genesis_k, 0, "mainnet k is TBD");
         assert_eq!(profile.genesis_subsidy, 0, "mainnet subsidy is TBD");
         assert_eq!(profile.genesis_premine, 0, "mainnet premine is TBD");
+        assert_eq!(profile.finality_depth, 0, "mainnet finality depth is TBD");
+        assert_eq!(
+            profile.payload_pruning_depth, 0,
+            "mainnet payload pruning depth is TBD"
+        );
     }
 
     #[test]
@@ -2838,6 +2866,55 @@ mod tests {
         assert_eq!(
             data_dir_for(&NetworkProfile::mainnet()),
             PathBuf::from("data/kovanica-mainnet")
+        );
+    }
+
+    #[test]
+    fn test_http_bootstrap_returns_light_config() {
+        let mut app = Explorer::boot();
+        let profile = network_profile();
+        let (status, body) = send_req(
+            &mut app,
+            "GET /api/bootstrap HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
+        );
+        assert_eq!(status, 200);
+        let json: serde_json::Value = serde_json::from_str(&body).expect("bootstrap JSON");
+
+        // Existing top-level fields remain for backward compatibility.
+        assert_eq!(json["network"].as_str().unwrap(), profile.id);
+        assert_eq!(json["k"].as_u64().unwrap(), u64::from(profile.genesis_k));
+        assert_eq!(json["subsidy"].as_u64().unwrap(), profile.genesis_subsidy);
+        assert_eq!(
+            json["founder_amount"].as_u64().unwrap(),
+            profile.genesis_premine
+        );
+        assert_eq!(json["founder_seed"].as_u64().unwrap(), profile.founder_seed);
+        assert_eq!(
+            json["finality_depth"].as_u64().unwrap(),
+            profile.finality_depth
+        );
+        assert_eq!(
+            json["payload_pruning_depth"].as_u64().unwrap(),
+            profile.payload_pruning_depth
+        );
+
+        // Nested light_config object expected by the mobile light node FFI.
+        let light = &json["light_config"];
+        assert!(!light.is_null(), "light_config must be present");
+        assert_eq!(light["k"].as_u64().unwrap(), u64::from(profile.genesis_k));
+        assert_eq!(light["subsidy"].as_u64().unwrap(), profile.genesis_subsidy);
+        assert_eq!(light["premine"].as_u64().unwrap(), profile.genesis_premine);
+        assert_eq!(
+            light["founder_seed"].as_u64().unwrap(),
+            profile.founder_seed
+        );
+        assert_eq!(
+            light["finality_depth"].as_u64().unwrap(),
+            profile.finality_depth
+        );
+        assert_eq!(
+            light["payload_pruning_depth"].as_u64().unwrap(),
+            profile.payload_pruning_depth
         );
     }
 
