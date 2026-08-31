@@ -657,6 +657,14 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
     func bondStake(seed: UInt64, amount: UInt64) throws  -> String
     
     /**
+     * Bond `amount` atoms from the wallet identity derived from a 32-byte
+     * Ed25519 secret (hex) to THIS node's validator key. The source coins,
+     * sizing split, and bond change all live at the wallet address, so
+     * staking spends wallet funds and returns the remainder to the wallet.
+     */
+    func bondStakeFromSecret(secretHex: String, amount: UInt64) throws  -> String
+    
+    /**
      * The current chain height (selected tip's blue score).
      */
     func chainHeight() throws  -> UInt64
@@ -671,6 +679,12 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
      * for PoW-path work claims.
      */
     func enableHybrid(rateNum: UInt64, rateDen: UInt64, nominalWork: U128Parts, retarget: Bool) throws 
+    
+    /**
+     * Export a single block as a one-record wire-format blob. `None` if the
+     * block id is unknown or not a non-genesis block.
+     */
+    func exportBlock(blockIdHex: String) throws  -> Data?
     
     /**
      * Export a single block by lowercase-hex id as a wire-format blob.
@@ -843,6 +857,12 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
      * Sealed immediately in a mined block.
      */
     func unbond(fromSeed: UInt64, amount: UInt64) throws  -> SendReceipt
+    
+    /**
+     * Unbond `amount` of this validator's matured stake back to the wallet
+     * address derived from a 32-byte Ed25519 secret (hex).
+     */
+    func unbondFromSecret(secretHex: String, amount: UInt64) throws  -> SendReceipt
     
     /**
      * This validator's VRF public key, lowercase hex, if a seed was set.
@@ -1024,6 +1044,23 @@ open func bondStake(seed: UInt64, amount: UInt64)throws  -> String  {
 }
     
     /**
+     * Bond `amount` atoms from the wallet identity derived from a 32-byte
+     * Ed25519 secret (hex) to THIS node's validator key. The source coins,
+     * sizing split, and bond change all live at the wallet address, so
+     * staking spends wallet funds and returns the remainder to the wallet.
+     */
+open func bondStakeFromSecret(secretHex: String, amount: UInt64)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_bond_stake_from_secret(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(secretHex),
+        FfiConverterUInt64.lower(amount),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * The current chain height (selected tip's blue score).
      */
 open func chainHeight()throws  -> UInt64  {
@@ -1054,6 +1091,20 @@ open func enableHybrid(rateNum: UInt64, rateDen: UInt64, nominalWork: U128Parts,
         FfiConverterBool.lower(retarget),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Export a single block as a one-record wire-format blob. `None` if the
+     * block id is unknown or not a non-genesis block.
+     */
+open func exportBlock(blockIdHex: String)throws  -> Data?  {
+    return try  FfiConverterOptionData.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_export_block(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(blockIdHex),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -1441,6 +1492,21 @@ open func unbond(fromSeed: UInt64, amount: UInt64)throws  -> SendReceipt  {
     uniffi_kovanica_ffi_fn_method_lightnode_unbond(
             self.uniffiCloneHandle(),
         FfiConverterUInt64.lower(fromSeed),
+        FfiConverterUInt64.lower(amount),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Unbond `amount` of this validator's matured stake back to the wallet
+     * address derived from a 32-byte Ed25519 secret (hex).
+     */
+open func unbondFromSecret(secretHex: String, amount: UInt64)throws  -> SendReceipt  {
+    return try  FfiConverterTypeSendReceipt_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_unbond_from_secret(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(secretHex),
         FfiConverterUInt64.lower(amount),uniffiCallStatus
     )
 })
@@ -2436,10 +2502,16 @@ private let initializationResult: InitializationResult = {
     if (uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake() != 41825) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake_from_secret() != 24831) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_chain_height() != 36538) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid() != 31711) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_export_block() != 44821) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_export_block_by_id() != 11244) {
@@ -2524,6 +2596,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_unbond() != 38383) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_unbond_from_secret() != 46109) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_validator_public_key_hex() != 29090) {
