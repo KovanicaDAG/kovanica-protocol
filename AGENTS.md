@@ -820,3 +820,32 @@ teaches us it needs.
    - BIP39/BIP44 derivation, transaction history
    - Fee estimation from mempool p90 (`POST /api/fee_estimate`, Rust + web preview)
    - Explorer: real-time DAG viz with zoom/pan + WebSocket updates, analytics panel
+
+---
+
+## Upgrade phases
+
+Cross-repo execution plan from `Obsidian-Vault/Poslovno/KovanicaDAG/UPGRADE-PHASES.md`.
+
+| Phase | Status | PR |
+|---|---|---|
+| 1 — Foundation & consensus infra | 🔄 in progress | A2/A3 landed across Phase 1/4 |
+| 2 — Consensus evolution | pending | — |
+| 3 — Performance & scalability | ✅ completed | draft PR #37 |
+| 4 — Mobile light-node | ✅ completed / 🔄 in review | PR #38 |
+| 5 — Wallet & security | 🔄 in progress | multisig node layer + FFI bindings: draft PR #41 |
+| 6 — Operations & reliability | 🔄 in progress | operations automation: draft PR #40 |
+| 7 — P2 polish | 🔄 in progress | see breakdown below |
+
+### Phase 7 breakdown
+
+| Item | Status | PR |
+|---|---|---|
+| Android background sync + Keystore hardening | 🔄 in progress | draft PR #39 |
+| Fuzz/property tests + Criterion benchmarks + P2P ban persistence | 🔄 in progress | draft PR #43 |
+| Explorer detail views + API docs | 🔄 in progress | draft PR #44 |
+| Fee market & RBF | 🔄 in progress | draft PR #46 |
+| Web wallet custody + multisig UI | 🔄 in progress | draft PR #47 |
+
+> **Follow-up note:** multisig backend web wiring is still pending; review/merge
+> of all open PRs is pending.
