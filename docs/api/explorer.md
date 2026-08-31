@@ -106,6 +106,111 @@ Response:
 }
 ```
 
+## Detail endpoints
+
+### `GET /api/block/:id`
+
+Detailed block header and topology.
+
+Response:
+```json
+{
+  "id": "<hex>",
+  "prev_hash": "<hex>",
+  "merkle_root": "<hex>",
+  "height": 1,
+  "timestamp_ms": 1699999999999,
+  "nonce": 12345,
+  "blue_score": 1,
+  "chain_blue_work": "2",
+  "work": "1",
+  "parents": ["<hex>"],
+  "children": ["<hex>"],
+  "txs": ["<hex>"],
+  "kind": "pow",
+  "colour": "chain",
+  "confirming_status": "confirmed"
+}
+```
+
+Fields:
+- `id` — block hash.
+- `prev_hash` — selected parent hash (genesis is all-zero).
+- `merkle_root` — BLAKE3 Merkle root over the block's transaction ids.
+- `height` — selected-chain height (0 = genesis).
+- `timestamp_ms`, `nonce`, `work` — consensus header fields.
+- `blue_score`, `chain_blue_work` — GHOSTDAG scores.
+- `parents`, `children` — parent and child block ids.
+- `txs` — transaction ids in the block.
+- `kind` — `"pow"` or `"staked"` depending on admission path.
+- `colour` — `"genesis"`, `"chain"`, `"blue"`, or `"red"`.
+- `confirming_status` — `"tip"`, `"confirmed"`, `"accepted"`, or `"pending"`.
+
+### `GET /api/tx/:id`
+
+Transaction inputs, outputs, addresses, amount, fee, and confirmation info.
+
+Response:
+```json
+{
+  "id": "<hex>",
+  "coinbase": false,
+  "confirmed": true,
+  "confirmations": 3,
+  "block": "<hex>",
+  "blue_score": 5,
+  "amount": 100000000,
+  "fee": 400,
+  "addresses": ["<hex>"],
+  "inputs": [
+    {"tx": "<hex>", "index": 0, "prev_owner": "<hex>", "value": 200000000}
+  ],
+  "outputs": [
+    {"value": 100000000, "owner": "<hex>"}
+  ],
+  "size": 237
+}
+```
+
+Fields:
+- `amount` — total value of all outputs.
+- `fee` — `sum(input values) - amount`; `0` for coinbase transactions.
+- `addresses` — distinct addresses appearing as inputs or outputs.
+- `inputs` — each input names the spent outpoint, its previous owner, and value
+  when known. For unconfirmed mempool transactions the value is taken from the
+  current UTXO set.
+- `outputs` — created outputs with value and owner.
+- `confirmations` — `tip_blue_score - block_blue_score + 1` for confirmed txs,
+  `0` for mempool txs.
+
+### `GET /api/address/:address`
+
+Address balance and paginated history.
+
+Query parameters:
+- `page` — 1-based page number (default `1`).
+- `per_page` — page size, clamped to `1..=100` (default `20`).
+- `node` — node name to query.
+
+Response:
+```json
+{
+  "address": "<hex>",
+  "balance": 100000000,
+  "page": 1,
+  "per_page": 20,
+  "total": 5,
+  "pages": 1,
+  "txs": [
+    {"tx": "<hex>", "block": "<hex>", "kind": "in", "amount": 100000000}
+  ]
+}
+```
+
+History items use `kind: "in"` for credits and `kind: "out"` for debits. Debit
+amounts are the full value of the consumed inputs; any change back to the same
+address appears as a separate `in` item.
+
 ## Fee market endpoints
 
 ### `GET /api/fee_estimate`
@@ -128,6 +233,7 @@ Response:
 `fee_rate` is the 75th percentile fee rate of pending transactions when the
 mempool is at capacity, otherwise it falls back to the configured minimum fee
 rate. Wallets can use it to set a competitive fee for the next block.
+
 
 ## Write endpoints
 

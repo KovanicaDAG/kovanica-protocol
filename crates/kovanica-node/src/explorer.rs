@@ -2672,23 +2672,51 @@ fn block_detail_json(app: &Explorer, id_hex: &str) -> Result<String, String> {
     let blue_set: HashSet<BlockId> = gd
         .map(|g| g.blue_anticone_sizes.keys().copied().collect())
         .unwrap_or_default();
-    let kind = block_kind(id, genesis, &chain, &blue_set);
+    let colour = block_kind(id, genesis, &chain, &blue_set);
+    let kind = if rec.vrf.is_some() { "staked" } else { "pow" };
+    let confirming_status = if tip_id == Some(id) {
+        "tip"
+    } else if chain.contains(&id) {
+        "confirmed"
+    } else if blue_set.contains(&id) {
+        "accepted"
+    } else {
+        "pending"
+    };
     let ghostdag = dag.ghostdag(&id);
     let blue_score = ghostdag.map(|g| g.blue_score).unwrap_or(0);
-    let blue_work = ghostdag.map(|g| g.blue_work).unwrap_or(0);
+    let chain_blue_work = ghostdag.map(|g| g.blue_work).unwrap_or(0);
+
+    let (prev_hash, merkle_root, height) = {
+        let mut height = 0u64;
+        let mut cur = ghostdag.and_then(|g| g.selected_parent);
+        while let Some(pid) = cur {
+            height += 1;
+            cur = dag.ghostdag(&pid).and_then(|g| g.selected_parent);
+        }
+        let prev = ghostdag
+            .and_then(|g| g.selected_parent)
+            .unwrap_or_else(|| BlockId::from_bytes([0u8; 32]));
+        (prev, kovanica_state::spv::merkle_root(&rec.txs), height)
+    };
 
     Ok(format!(
-        "{{\"id\":{},\"kind\":{},\"parents\":{},\"children\":{},\"work\":{},\"timestamp_ms\":{},\"nonce\":{},\"blue_score\":{},\"blue_work\":{},\"txs\":{}}}",
+        "{{\"id\":{},\"prev_hash\":{},\"merkle_root\":{},\"height\":{},\"timestamp_ms\":{},\"nonce\":{},\"blue_score\":{},\"chain_blue_work\":{},\"work\":{},\"parents\":{},\"children\":{},\"txs\":{},\"kind\":{},\"colour\":{},\"confirming_status\":{}}}",
         jstr(&id.to_string()),
-        jstr(kind),
-        jarr(rec.parents.iter().map(|p| jstr(&p.to_string()))),
-        jarr(children.iter().map(|c| jstr(&c.to_string()))),
-        rec.work,
+        jstr(&prev_hash.to_string()),
+        jstr(&hex::encode(merkle_root)),
+        height,
         rec.timestamp_ms,
         rec.nonce,
         blue_score,
-        blue_work,
-        jarr(rec.txs.iter().map(tx_json))
+        chain_blue_work,
+        rec.work,
+        jarr(rec.parents.iter().map(|p| jstr(&p.to_string()))),
+        jarr(children.iter().map(|c| jstr(&c.to_string()))),
+        jarr(rec.txs.iter().map(|tx| jstr(&tx.id().to_string()))),
+        jstr(kind),
+        jstr(colour),
+        jstr(confirming_status)
     ))
 }
 
@@ -2697,24 +2725,21 @@ fn tx_input_json(
     prev_by_tx: &HashMap<TxId, Transaction>,
     prev_by_outpoint: &HashMap<OutPoint, TxOutput>,
 ) -> String {
-    let prev_owner = prev_by_outpoint
-        .get(&input.outpoint)
-        .map(|o| o.owner.to_hex())
-        .or_else(|| {
-            prev_by_tx.get(&input.outpoint.tx).and_then(|p| {
-                p.outputs()
-                    .get(input.outpoint.index as usize)
-                    .map(|o| o.owner.to_hex())
-            })
-        });
+    let prev = prev_by_outpoint.get(&input.outpoint).copied().or_else(|| {
+        prev_by_tx
+            .get(&input.outpoint.tx)
+            .and_then(|p| p.outputs().get(input.outpoint.index as usize).copied())
+    });
+    let prev_owner = prev.map(|o| o.owner.to_hex());
     format!(
-        "{{\"tx\":{},\"index\":{},\"prev_owner\":{}}}",
+        "{{\"tx\":{},\"index\":{},\"prev_owner\":{},\"value\":{}}}",
         jstr(&input.outpoint.tx.to_string()),
         input.outpoint.index,
         prev_owner
             .as_deref()
             .map(jstr)
-            .unwrap_or_else(|| "null".into())
+            .unwrap_or_else(|| "null".into()),
+        prev.map(|o| o.value).unwrap_or(0)
     )
 }
 
@@ -2733,6 +2758,23 @@ fn tx_detail_json(app: &Explorer, id_hex: &str) -> Result<String, String> {
                 prev_by_outpoint.insert(input.outpoint, *out);
             }
         }
+        let amount: u64 = tx.outputs().iter().map(|o| o.value).sum();
+        let input_value: u64 = tx
+            .inputs()
+            .iter()
+            .map(|inp| {
+                prev_by_outpoint
+                    .get(&inp.outpoint)
+                    .map(|o| o.value)
+                    .unwrap_or(0)
+            })
+            .sum();
+        let fee = if tx.is_coinbase() {
+            0
+        } else {
+            input_value.saturating_sub(amount)
+        };
+        let addresses = tx_addresses(&tx, &HashMap::new(), &prev_by_outpoint);
         let inputs = jarr(
             tx.inputs()
                 .iter()
@@ -2746,9 +2788,12 @@ fn tx_detail_json(app: &Explorer, id_hex: &str) -> Result<String, String> {
             )
         }));
         return Ok(format!(
-            "{{\"id\":{},\"coinbase\":{},\"confirmed\":false,\"confirmations\":0,\"block\":null,\"blue_score\":null,\"inputs\":{},\"outputs\":{},\"size\":{}}}",
+            "{{\"id\":{},\"coinbase\":{},\"confirmed\":false,\"confirmations\":0,\"block\":null,\"blue_score\":null,\"amount\":{},\"fee\":{},\"addresses\":{},\"inputs\":{},\"outputs\":{},\"size\":{}}}",
             jstr(&tx.id().to_string()),
             tx.is_coinbase(),
+            amount,
+            fee,
+            jarr(addresses.into_iter().map(|s| jstr(&s))),
             inputs,
             outputs,
             tx.encode().len()
@@ -2782,6 +2827,27 @@ fn tx_detail_json(app: &Explorer, id_hex: &str) -> Result<String, String> {
         }
     }
 
+    let amount: u64 = tx.outputs().iter().map(|o| o.value).sum();
+    let input_value: u64 = tx
+        .inputs()
+        .iter()
+        .map(|inp| {
+            prev_by_tx
+                .get(&inp.outpoint.tx)
+                .and_then(|p| {
+                    p.outputs()
+                        .get(inp.outpoint.index as usize)
+                        .map(|o| o.value)
+                })
+                .unwrap_or(0)
+        })
+        .sum();
+    let fee = if tx.is_coinbase() {
+        0
+    } else {
+        input_value.saturating_sub(amount)
+    };
+    let addresses = tx_addresses(tx, &prev_by_tx, &HashMap::new());
     let inputs = jarr(
         tx.inputs()
             .iter()
@@ -2796,16 +2862,42 @@ fn tx_detail_json(app: &Explorer, id_hex: &str) -> Result<String, String> {
     }));
 
     Ok(format!(
-        "{{\"id\":{},\"coinbase\":{},\"confirmed\":true,\"confirmations\":{},\"block\":{},\"blue_score\":{},\"inputs\":{},\"outputs\":{},\"size\":{}}}",
+        "{{\"id\":{},\"coinbase\":{},\"confirmed\":true,\"confirmations\":{},\"block\":{},\"blue_score\":{},\"amount\":{},\"fee\":{},\"addresses\":{},\"inputs\":{},\"outputs\":{},\"size\":{}}}",
         jstr(&tx.id().to_string()),
         tx.is_coinbase(),
         confirmations,
         jstr(&block_id.to_string()),
         blue_score,
+        amount,
+        fee,
+        jarr(addresses.into_iter().map(|s| jstr(&s))),
         inputs,
         outputs,
         tx.encode().len()
     ))
+}
+
+fn tx_addresses(
+    tx: &Transaction,
+    prev_by_tx: &HashMap<TxId, Transaction>,
+    prev_by_outpoint: &HashMap<OutPoint, TxOutput>,
+) -> Vec<String> {
+    let mut set = HashSet::new();
+    for input in tx.inputs() {
+        if let Some(prev) = prev_by_outpoint.get(&input.outpoint).copied().or_else(|| {
+            prev_by_tx
+                .get(&input.outpoint.tx)
+                .and_then(|p| p.outputs().get(input.outpoint.index as usize).copied())
+        }) {
+            set.insert(prev.owner.to_hex());
+        }
+    }
+    for output in tx.outputs() {
+        set.insert(output.owner.to_hex());
+    }
+    let mut v: Vec<_> = set.into_iter().collect();
+    v.sort_unstable();
+    v
 }
 
 fn address_detail_json(
