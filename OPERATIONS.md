@@ -4,7 +4,7 @@
 > lessons. Mirrored to `Obsidian-Vault/KovanicaDAG/`. Keep in sync with
 > reality in the same change that alters any of it.
 
-*Updated: 2026-08-24*
+*Updated: 2026-08-31*
 
 ## 1. Topology (all on VPS `srv1745734`, 145.223.116.178)
 
@@ -18,9 +18,11 @@
 | Chain data (seed1) | `/root/kovanica-data` (`KOVANICA_DATA`) | **outside the git tree** so runtime writes never dirty it |
 | Soak logs | `/root/kovanica-data/soak/` | `testnet-measure.py`, 24h runs |
 
-Current network: genesis `76cc019de947cb9f6b2abe9428dc120bbf6f3ee3c3f0be89efa83a4e3af3c140`.
-The pre-reset chain (genesis `27d5f750…`, 127 blocks) was lost on 2026-08-24 — its
-data dir was inside a directory that got deleted while the old process held it.
+Current network: genesis `596874eac2d08723b12fc3cac8f891493139200da4818594c6632b3fe4d0048f`
+(the 9a live-sync spike genesis; unchanged since that gate). The 2026-08-24
+runbook still listed `76cc019d…` — that hash is stale after the later reset.
+The pre-reset chain (genesis `27d5f750…`, 127 blocks) was lost on 2026-08-24 —
+its data dir was inside a directory that got deleted while the old process held it.
 
 ## 2. Deploy pipelines
 
@@ -100,6 +102,45 @@ verifies genesis match against seed1.
   (`live_peers`), refreshed every ~5 s in the explorer idle tick.
 - **Baseline (2026-08-24 16:20 UTC):** height seed=448 / seed3=447,
   peer_count 2/2 both, mempool 0, orphans 0, blue_score≈height, no reorgs.
+- **Soak snapshot (2026-08-31 ~09:10 UTC)** — public explorer API
+  (`GET /api/head`, `/api/bootstrap`, `/api/state`):
+
+  | Field | Value |
+  | --- | --- |
+  | network | `kovanica-testnet` |
+  | genesis | `596874eac2…d0048f` |
+  | blocks / chain_len | **3817** |
+  | blue_score / blue_work | 3816 / 3816 |
+  | tips | 1 (linear selected chain) |
+  | k | 3 |
+  | PoW | on; per-block `work=1` (blue_work == blue_score) |
+  | subsidy | 200 KVNC / block (20_000_000_000 atoms) |
+  | supply | 76_340_000_000_000 atoms = 3817 × subsidy (coinbase-only, checks) |
+  | mempool | 0 |
+  | advertised peers | `seed2.kovanica.online:9001`, `seed3.kovanica.online:9000` |
+  | mining | true (`KOVANICA_MINE_SECS=60`) |
+
+  Rate vs plan:
+
+  | Window | Δ blocks | Δ time | rate |
+  | --- | --- | --- | --- |
+  | 2026-08-24 16:20 → 08-29 18:20 | +1394 (448→1842) | ~5.08 d | **11.4 blk/h** (~5.3 min/block) |
+  | 2026-08-29 18:20 → 08-31 09:10 | +1975 (1842→3817) | ~38.8 h | **50.9 blk/h** (~1.18 min/block) |
+  | whole soak 08-24 → 08-31 | +3369 | ~6.7 d | 20.9 blk/h (~2.9 min/block avg) |
+
+  The 5×-slow window after the genesis reset was difficulty retarget, not a
+  stall. The last ~39 h recovered to ~1.2 min/block, in range of the 1/min
+  mine interval. **Do not retune `k`, finality depth, payload pruning, or
+  the difficulty window on this snapshot** — the retarget is doing its job.
+  Revisit after another week of data.
+
+  Caveats (cannot close ANT-16 from the public API alone):
+  - `/metrics` is **not** public (`explorer.kovanica.online/metrics` → 404).
+    Orphan rate, propagation latency, reorg depth, disk, and `live_peers`
+    still need a VPS Prometheus scrape (`127.0.0.1:19080`).
+  - `mesh.nodes[0].peers` is the in-process demo mesh (empty) — not the
+    P2P overlay. Overlay health is the advertised `peers` list + Prometheus
+    `kovanica_peer_count`.
 
 ## 6. Quick commands
 

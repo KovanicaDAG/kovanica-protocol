@@ -33,8 +33,14 @@
        firewalled SSH tunnel), 15 alerts + 9 recording rules loaded
 3. [x] Baseline captured 2026-08-24 16:20 UTC: height 448/447, peers 2/2,
        mempool 0, orphans 0, blue_score≈height, no reorgs (OPERATIONS.md §5)
-4. [ ] Tuning review after 1–2 weeks of data (`k`, finality depth,
-   payload pruning depth, difficulty window)
+4. [x] Public-API soak snapshot 2026-08-31 ~09:10 UTC (OPERATIONS.md §5):
+       height 3817, genesis `596874ea…`, k=3, PoW on, work=1, supply checks,
+       advertised seed2+seed3. Post-reset window was ~5.3 min/block; last 39 h
+       recovered to ~1.18 min/block. **No retune** of k / finality / pruning /
+       difficulty on this data.
+5. [ ] VPS Prometheus scrape (orphan rate, propagation, fork/reorg, disk,
+       `live_peers` on seed + seed3) — `/metrics` is not public
+6. [ ] Revisit tuning after another week of recovered ~1/min mining
 
 Also this session: process manager unified on systemd — pm2 retired for node
 processes after a supervisor port fight; auto-deploy now swaps the binary
