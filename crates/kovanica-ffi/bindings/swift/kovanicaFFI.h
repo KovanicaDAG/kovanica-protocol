@@ -288,6 +288,11 @@ RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_block_filter(uint64_t ptr, Ru
 RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_bond_stake(uint64_t ptr, uint64_t seed, uint64_t amount, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_BOND_STAKE_FROM_SECRET
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_BOND_STAKE_FROM_SECRET
+RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_bond_stake_from_secret(uint64_t ptr, RustBuffer secret_hex, uint64_t amount, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_CHAIN_HEIGHT
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_CHAIN_HEIGHT
 uint64_t uniffi_kovanica_ffi_fn_method_lightnode_chain_height(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -296,6 +301,16 @@ uint64_t uniffi_kovanica_ffi_fn_method_lightnode_chain_height(uint64_t ptr, Rust
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_ENABLE_HYBRID
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_ENABLE_HYBRID
 void uniffi_kovanica_ffi_fn_method_lightnode_enable_hybrid(uint64_t ptr, uint64_t rate_num, uint64_t rate_den, RustBuffer nominal_work, int8_t retarget, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_EXPORT_BLOCK
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_EXPORT_BLOCK
+RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_export_block(uint64_t ptr, RustBuffer block_id_hex, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_EXPORT_BLOCK_BY_ID
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_EXPORT_BLOCK_BY_ID
+RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_export_block_by_id(uint64_t ptr, RustBuffer id_hex, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_EXPORT_BLOCKS
@@ -308,9 +323,24 @@ RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_export_blocks(uint64_t ptr, R
 RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_EXPORT_LIGHT_SYNC_FROM
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_EXPORT_LIGHT_SYNC_FROM
+RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync_from(uint64_t ptr, RustBuffer from_id_hex, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_FILTER_MATCHES
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_FILTER_MATCHES
 int8_t uniffi_kovanica_ffi_fn_method_lightnode_filter_matches(uint64_t ptr, RustBuffer filter_blob, RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_FILTER_MATCHES_ANY
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_FILTER_MATCHES_ANY
+int8_t uniffi_kovanica_ffi_fn_method_lightnode_filter_matches_any(uint64_t ptr, RustBuffer filter_blob, RustBuffer addresses, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_HISTORY_OF
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_HISTORY_OF
+RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_history_of(uint64_t ptr, RustBuffer address, uint32_t max_blocks, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_HYBRID_ENABLED
@@ -398,6 +428,11 @@ RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_synced_filter_matches(uint64_
 RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_synced_height(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_SYNCED_TIP_ID
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_SYNCED_TIP_ID
+RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_synced_tip_id(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_TIPS
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_TIPS
 RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_tips(uint64_t ptr, RustCallStatus *_Nonnull out_status
@@ -411,6 +446,11 @@ uint64_t uniffi_kovanica_ffi_fn_method_lightnode_total_stake(uint64_t ptr, RustC
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_UNBOND
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_UNBOND
 RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_unbond(uint64_t ptr, uint64_t from_seed, uint64_t amount, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_UNBOND_FROM_SECRET
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_UNBOND_FROM_SECRET
+RustBuffer uniffi_kovanica_ffi_fn_method_lightnode_unbond_from_secret(uint64_t ptr, RustBuffer secret_hex, uint64_t amount, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_FN_METHOD_LIGHTNODE_VALIDATOR_PUBLIC_KEY_HEX
@@ -719,6 +759,12 @@ uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_BOND_STAKE_FROM_SECRET
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_BOND_STAKE_FROM_SECRET
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake_from_secret(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_CHAIN_HEIGHT
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_CHAIN_HEIGHT
 uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_chain_height(void
@@ -728,6 +774,18 @@ uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_chain_height(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_ENABLE_HYBRID
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_ENABLE_HYBRID
 uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_EXPORT_BLOCK
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_EXPORT_BLOCK
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_export_block(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_EXPORT_BLOCK_BY_ID
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_EXPORT_BLOCK_BY_ID
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_export_block_by_id(void
     
 );
 #endif
@@ -743,9 +801,27 @@ uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_EXPORT_LIGHT_SYNC_FROM
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_EXPORT_LIGHT_SYNC_FROM
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync_from(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_FILTER_MATCHES
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_FILTER_MATCHES
 uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_FILTER_MATCHES_ANY
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_FILTER_MATCHES_ANY
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_HISTORY_OF
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_HISTORY_OF
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_history_of(void
     
 );
 #endif
@@ -851,6 +927,12 @@ uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_synced_height(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_SYNCED_TIP_ID
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_SYNCED_TIP_ID
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_synced_tip_id(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_TIPS
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_TIPS
 uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_tips(void
@@ -866,6 +948,12 @@ uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_total_stake(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_UNBOND
 #define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_UNBOND
 uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_unbond(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_UNBOND_FROM_SECRET
+#define UNIFFI_FFIDEF_UNIFFI_KOVANICA_FFI_CHECKSUM_METHOD_LIGHTNODE_UNBOND_FROM_SECRET
+uint16_t uniffi_kovanica_ffi_checksum_method_lightnode_unbond_from_secret(void
     
 );
 #endif

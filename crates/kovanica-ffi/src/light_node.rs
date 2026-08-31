@@ -400,6 +400,93 @@ impl LightNode {
         })
     }
 
+    /// Bond `amount` atoms from the wallet identity derived from a 32-byte
+    /// Ed25519 secret (hex) to THIS node's validator key. The source coins,
+    /// sizing split, and bond change all live at the wallet address, so
+    /// staking spends wallet funds and returns the remainder to the wallet.
+    pub fn bond_stake_from_secret(
+        &self,
+        secret_hex: String,
+        amount: u64,
+    ) -> Result<String, LightNodeError> {
+        if amount == 0 {
+            return Err(invalid("bond amount must be positive"));
+        }
+        let kp = keypair_from_secret(&secret_hex)?;
+        let addr = kp.address();
+
+        let mut node = self.lock();
+        let vrf_pk = node
+            .validator_public_key()
+            .map(|pk| *pk.as_bytes())
+            .ok_or_else(|| invalid("call set_validator_seed before bonding"))?;
+
+        let candidates: Vec<(OutPoint, u64)> = node
+            .utxos_of(&addr)?
+            .into_iter()
+            .filter(|(op, _)| !node.outpoint_is_frozen(op).unwrap_or(true))
+            .collect();
+
+        let exact = candidates.iter().find(|(_, v)| *v == amount).copied();
+        let source_op = match exact {
+            Some((op, _)) => op,
+            None => {
+                let funder = candidates
+                    .iter()
+                    .filter(|(_, v)| *v > amount)
+                    .max_by_key(|(_, v)| *v)
+                    .map(|(op, _)| *op)
+                    .ok_or(LightNodeError::InsufficientFunds { needed: amount })?;
+                let rest = candidates
+                    .iter()
+                    .find(|(op, _v)| *op == funder)
+                    .map(|(_, v)| *v - amount)
+                    .unwrap_or(0);
+                let mut outputs = vec![TxOutput::new(amount, addr)];
+                if rest > 0 {
+                    outputs.push(TxOutput::new(rest, addr));
+                }
+                let mut split =
+                    Transaction::unsigned(std::slice::from_ref(&funder), outputs, Vec::new());
+                split.attach_signature(0, Sig::from_bytes(kp.sign(&split.sighash())));
+                let split_id = split.id();
+                node.submit_tx(split)?;
+                node.produce_block()?.expect("mempool non-empty");
+                OutPoint::new(split_id, 0)
+            }
+        };
+
+        let bond = Transaction::signed(
+            &[(source_op, &kp)],
+            vec![TxOutput::new(amount, addr)],
+            bond_tag(&vrf_pk),
+        );
+        let bond_id = bond.id();
+        node.submit_tx(bond)?;
+        node.produce_block()?.expect("mempool non-empty");
+        Ok(hex::encode(bond_id.as_bytes()))
+    }
+
+    /// Unbond `amount` of this validator's matured stake back to the wallet
+    /// address derived from a 32-byte Ed25519 secret (hex).
+    pub fn unbond_from_secret(
+        &self,
+        secret_hex: String,
+        amount: u64,
+    ) -> Result<SendReceipt, LightNodeError> {
+        let kp = keypair_from_secret(&secret_hex)?;
+        let mut node = self.lock();
+        let vrf_pk = node
+            .validator_public_key()
+            .map(|pk| *pk.as_bytes())
+            .ok_or_else(|| invalid("call set_validator_seed before unbonding"))?;
+        let sent = node.unbond_with(&kp, &vrf_pk, amount, kp.address())?;
+        Ok(SendReceipt {
+            block_id_hex: sent.block.to_hex(),
+            tx_id_hex: hex::encode(sent.tx.as_bytes()),
+        })
+    }
+
     /// Earliest height at which bonded stake unlocks next (`None` when
     /// everything already has). Compare against [`Self::chain_height`].
     pub fn pending_unbond_height(&self) -> Result<Option<u64>, LightNodeError> {
@@ -483,6 +570,23 @@ impl LightNode {
     /// bundles included). Hand this to a peer; idempotent on their side.
     pub fn export_blocks(&self) -> Vec<u8> {
         net::encode_records(&self.lock().export())
+    }
+
+    /// Export a single block as a one-record wire-format blob. `None` if the
+    /// block id is unknown or not a non-genesis block.
+    pub fn export_block(&self, block_id_hex: String) -> Result<Option<Vec<u8>>, LightNodeError> {
+        let id = parse_block_id(&block_id_hex)?;
+        let node = self.lock();
+        match node.block_record(&id) {
+            Some(rec) => Ok(Some(net::encode_records(std::slice::from_ref(&rec)))),
+            None => Ok(None),
+        }
+    }
+
+    /// Export a single block by lowercase-hex id as a wire-format blob.
+    /// Returns `None` when the id is unknown.
+    pub fn export_block_by_id(&self, id_hex: String) -> Result<Option<Vec<u8>>, LightNodeError> {
+        self.export_block(id_hex)
     }
 
     /// Apply a blob produced by [`Self::export_blocks`] (or any full node
@@ -643,27 +747,14 @@ impl LightNode {
     /// The selected chain as verified headers + per-block filters: everything
     /// a phone needs to track payments without full payloads.
     pub fn export_light_sync(&self) -> Vec<u8> {
-        let node = self.lock();
-        let mut out = Vec::new();
-        out.extend_from_slice(LIGHT_SYNC_MAGIC);
-        out.push(LIGHT_SYNC_VERSION);
-        let headers = node.export_spv_headers();
-        out.extend_from_slice(&(headers.len() as u32).to_be_bytes());
-        for h in &headers {
-            encode_header(h, &mut out);
-            match node.block_filter(&h.id, FILTER_K) {
-                Some(f) => encode_filter_into(&f, &mut out),
-                None => encode_filter_into(
-                    &kovanica_state::spv::BlockFilter {
-                        k: FILTER_K,
-                        n: 1,
-                        data: Vec::new(),
-                    },
-                    &mut out,
-                ),
-            }
-        }
-        out
+        encode_light_sync(&self.lock(), None)
+    }
+
+    /// Like [`Self::export_light_sync`], but returns only headers strictly
+    /// after `from_id_hex`. Unknown or off-chain ids fall back to the full
+    /// header chain.
+    pub fn export_light_sync_from(&self, from_id_hex: String) -> Vec<u8> {
+        encode_light_sync(&self.lock(), Some(from_id_hex))
     }
 
     /// Accept a light-sync blob: header chain is verified for linkage,
@@ -694,6 +785,16 @@ impl LightNode {
     pub fn synced_height(&self) -> Option<u64> {
         let light = self.light.lock().unwrap_or_else(|p| p.into_inner());
         light.headers.values().map(|e| e.header.height).max()
+    }
+
+    /// Id of the highest light-synced header (`None` before any sync).
+    pub fn synced_tip_id(&self) -> Option<String> {
+        let light = self.light.lock().unwrap_or_else(|p| p.into_inner());
+        light
+            .headers
+            .values()
+            .max_by_key(|e| e.header.height)
+            .map(|e| e.header.id.to_hex())
     }
 
     /// Whether `address` MIGHT appear in the given light-synced block,
@@ -751,6 +852,36 @@ impl LightNode {
         }
         Ok(proof.verify())
     }
+}
+
+fn encode_light_sync(node: &Node, from_id_hex: Option<String>) -> Vec<u8> {
+    let mut headers = node.export_spv_headers();
+    if let Some(hex) = from_id_hex {
+        if let Ok(id) = parse_block_id(&hex) {
+            if let Some(pos) = headers.iter().position(|h| h.id == id) {
+                headers = headers.split_off(pos + 1);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    out.extend_from_slice(LIGHT_SYNC_MAGIC);
+    out.push(LIGHT_SYNC_VERSION);
+    out.extend_from_slice(&(headers.len() as u32).to_be_bytes());
+    for h in &headers {
+        encode_header(h, &mut out);
+        match node.block_filter(&h.id, FILTER_K) {
+            Some(f) => encode_filter_into(&f, &mut out),
+            None => encode_filter_into(
+                &kovanica_state::spv::BlockFilter {
+                    k: FILTER_K,
+                    n: 1,
+                    data: Vec::new(),
+                },
+                &mut out,
+            ),
+        }
+    }
+    out
 }
 
 fn decode_hex(s: &str, field: &str) -> Result<Vec<u8>, LightNodeError> {
