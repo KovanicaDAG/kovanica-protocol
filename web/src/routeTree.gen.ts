@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as MapRouteImport } from './routes/map'
+import { Route as MultisigRouteImport } from './routes/multisig'
 import { Route as PoolRouteImport } from './routes/pool'
 import { Route as WalletRouteImport } from './routes/wallet'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
@@ -37,6 +38,11 @@ const MapRoute = MapRouteImport.update({
   path: '/map',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MultisigRoute = MultisigRouteImport.update({
+  id: '/multisig',
+  path: '/multisig',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PoolRoute = PoolRouteImport.update({
   id: '/pool',
   path: '/pool',
@@ -58,6 +64,7 @@ export interface FileRoutesByFullPath {
   '/docs': typeof DocsRoute
   '/explorer': typeof ExplorerRoute
   '/map': typeof MapRoute
+  '/multisig': typeof MultisigRoute
   '/pool': typeof PoolRoute
   '/wallet': typeof WalletRoute
   '/api/$': typeof ApiSplatRoute
@@ -67,6 +74,7 @@ export interface FileRoutesByTo {
   '/docs': typeof DocsRoute
   '/explorer': typeof ExplorerRoute
   '/map': typeof MapRoute
+  '/multisig': typeof MultisigRoute
   '/pool': typeof PoolRoute
   '/wallet': typeof WalletRoute
   '/api/$': typeof ApiSplatRoute
@@ -77,6 +85,7 @@ export interface FileRoutesById {
   '/docs': typeof DocsRoute
   '/explorer': typeof ExplorerRoute
   '/map': typeof MapRoute
+  '/multisig': typeof MultisigRoute
   '/pool': typeof PoolRoute
   '/wallet': typeof WalletRoute
   '/api/$': typeof ApiSplatRoute
@@ -84,15 +93,31 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/docs' | '/explorer' | '/map' | '/pool' | '/wallet' | '/api/$'
+    | '/'
+    | '/docs'
+    | '/explorer'
+    | '/map'
+    | '/multisig'
+    | '/pool'
+    | '/wallet'
+    | '/api/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/docs' | '/explorer' | '/map' | '/pool' | '/wallet' | '/api/$'
+  to:
+    | '/'
+    | '/docs'
+    | '/explorer'
+    | '/map'
+    | '/multisig'
+    | '/pool'
+    | '/wallet'
+    | '/api/$'
   id:
     | '__root__'
     | '/'
     | '/docs'
     | '/explorer'
     | '/map'
+    | '/multisig'
     | '/pool'
     | '/wallet'
     | '/api/$'
@@ -103,6 +128,7 @@ export interface RootRouteChildren {
   DocsRoute: typeof DocsRoute
   ExplorerRoute: typeof ExplorerRoute
   MapRoute: typeof MapRoute
+  MultisigRoute: typeof MultisigRoute
   PoolRoute: typeof PoolRoute
   WalletRoute: typeof WalletRoute
   ApiSplatRoute: typeof ApiSplatRoute
@@ -138,6 +164,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MapRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/multisig': {
+      id: '/multisig'
+      path: '/multisig'
+      fullPath: '/multisig'
+      preLoaderRoute: typeof MultisigRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pool': {
       id: '/pool'
       path: '/pool'
@@ -167,6 +200,7 @@ const rootRouteChildren: RootRouteChildren = {
   DocsRoute: DocsRoute,
   ExplorerRoute: ExplorerRoute,
   MapRoute: MapRoute,
+  MultisigRoute: MultisigRoute,
   PoolRoute: PoolRoute,
   WalletRoute: WalletRoute,
   ApiSplatRoute: ApiSplatRoute,

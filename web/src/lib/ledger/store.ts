@@ -44,6 +44,18 @@ function freshDag() {
   };
 }
 
+function stripInMemorySecrets(w: WalletRec | null): WalletRec | null {
+  if (!w) return w;
+  if (w.type === "hardware") return w;
+  if (w.kind === "watch") return w;
+  // For software wallets: drop plaintext mnemonic from persisted snapshot when
+  // an encrypted copy exists. Existing plaintext-only wallets stay as-is.
+  if (w.encryptedMnemonic && w.mnemonic) {
+    return { ...w, mnemonic: undefined };
+  }
+  return w;
+}
+
 export const useLedger = create<LedgerSnapshot & Actions>()(
   persist(
     (set, get) => ({
@@ -147,7 +159,7 @@ export const useLedger = create<LedgerSnapshot & Actions>()(
     {
       name: "kovanica.ledger",
       partialize: (s) => ({
-        wallet: s.wallet,
+        wallet: stripInMemorySecrets(s.wallet),
         balances: s.balances,
         history: s.history,
         originPulses: s.originPulses,
