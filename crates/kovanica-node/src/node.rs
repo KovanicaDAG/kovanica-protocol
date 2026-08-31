@@ -14,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use kovanica_dag::{pow, Block, BlockId, Dag, VrfPublicKey, VrfSecretKey};
 use kovanica_dag::{vrf_keypair_from_seed, vrf_prove};
-use kovanica_state::stake::{Freeze, StakeState, UNBOND_MATURITY, UNBOND_PREFIX};
+use kovanica_state::stake::{Freeze, UNBOND_MATURITY, UNBOND_PREFIX};
 use kovanica_state::{
     apply_block, decode_block_payload, encode_block_payload, verify, Address, HalvingSchedule,
     HybridConfig, KeyPair, Ledger, LedgerError, LedgerInsertError, LedgerStore, OutPoint, Sig,
@@ -641,7 +641,7 @@ impl Node {
         let tip = ledger.dag().selected_tip();
         Ok(ledger
             .stake_state(&tip)
-            .map(StakeState::total_stake)
+            .map(|s| s.total_stake())
             .unwrap_or(0))
     }
 
