@@ -610,6 +610,9 @@ fn load_or_genesis(name: &str) -> Node {
     if snap.is_file() {
         let mut node = Node::new();
         if let Some(p) = snap.to_str() {
+            // Hybrid-era snapshots must replay under the same policy or staked
+            // ids silently change (identity-preserving replay lesson). Load
+            // with the hybrid reader when the operator runs hybrid mode.
             let loaded = if env_flag("KOVANICA_HYBRID", false) {
                 node.load_with_hybrid(p, HybridConfig::default())
             } else {
