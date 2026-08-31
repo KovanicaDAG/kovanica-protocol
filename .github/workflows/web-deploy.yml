@@ -1,0 +1,98 @@
+name: Web Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'web/**'
+      - '.github/workflows/web-deploy.yml'
+  workflow_dispatch:
+
+# Make sure only one deploy to the VPS runs at a time.
+concurrency:
+  group: vps-web-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-web:
+    name: Build web app
+    # Pinned base image — never use a floating -latest tag.
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build (node-server preset)
+        run: npm run build:vps
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-web-output
+          path: web/.output/
+          include-hidden-files: true
+          retention-days: 7
+
+  deploy-web:
+    name: Deploy web to VPS
+    # Pinned base image for the deploy runner too.
+    runs-on: ubuntu-24.04
+    needs: build-web
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Deploy is best-effort: a transient VPS outage must not fail the overall
+    # CI run after a green build.
+    continue-on-error: true
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kovanica-web-output
+          path: web-output/
+
+      - name: Copy build to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_PRIVATE_KEY }}
+          port: 2222
+          source: "web-output/"
+          target: /root/
+
+      - name: Deploy web via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_PRIVATE_KEY }}
+          port: 2222
+          script: |
+            set -euo pipefail
+            # Bind to loopback only. Port 3010 is the production web port on
+            # the VPS; port 3000 must never be exposed publicly (see CLAUDE.md).
+            mkdir -p /root/kovanica-web/.output
+            rsync -a --delete /root/web-output/ /root/kovanica-web/.output/
+            pm2 delete kovanica-web 2>/dev/null || true
+            cd /root/kovanica-web
+            HOST=127.0.0.1 PORT=3010 pm2 start .output/server/index.mjs --name kovanica-web
+            pm2 save

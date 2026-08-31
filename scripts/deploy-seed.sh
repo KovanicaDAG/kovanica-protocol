@@ -89,12 +89,13 @@ fi'
 
 echo "[4/7] Installing Rust toolchain..."
 ssh "$TARGET" 'if ! command -v cargo >/dev/null; then
-    curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal >/dev/null 2>&1;
+    # Install rustup with no default toolchain; rust-toolchain.toml pins the version.
+    curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none >/dev/null 2>&1;
 fi;
 source "$HOME/.cargo/env"'
 
 echo "[5/7] Building release binary (this takes a few minutes)..."
-ssh "$TARGET" "source \$HOME/.cargo/env && cd '$REMOTE_SRC' && cargo build --release -p kovanica-node"
+ssh "$TARGET" "source \$HOME/.cargo/env && cd '$REMOTE_SRC' && cargo build --release --locked -p kovanica-node"
 
 echo "[6/7] Installing service..."
 ssh "$TARGET" "sudo mkdir -p '$REMOTE_DATA' && \
