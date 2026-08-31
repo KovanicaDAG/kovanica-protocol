@@ -22,14 +22,18 @@ export type Block = {
 };
 
 import type { HardwareDeviceType } from "@/lib/wallet/hardware/types";
+import type { EncryptedBundle } from "@/lib/wallet/vault";
 
 export type SoftwareWalletRec = {
   type?: "mnemonic";
-  mnemonic: string;
+  /** Plain BIP39 mnemonic. Keep in memory only; never persist without encryption. */
+  mnemonic?: string;
+  /** Encrypted mnemonic, safe to persist. When present and `mnemonic` is absent the wallet is locked. */
+  encryptedMnemonic?: EncryptedBundle;
   address: string;
   index: number;
   shown: boolean;
-  kind?: "local" | "hardware" | "watch";
+  kind?: "local" | "watch";
 };
 
 export type HardwareWalletRec = {
