@@ -1444,6 +1444,15 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
             }
         }
     }
+    if method == "GET" && path == "/api/fee_estimate" {
+        match fee_estimate_json(app, &query) {
+            Ok(body) => return respond(&mut stream, 200, "application/json", body.as_bytes()),
+            Err(e) => {
+                let err = format!("{{\"ok\":false,\"error\":{}}}", jstr(&e));
+                return respond(&mut stream, 400, "application/json", err.as_bytes());
+            }
+        }
+    }
     if method == "POST" && path == "/api/mine/submit" {
         let node_name = query
             .get("node")
@@ -2853,6 +2862,24 @@ fn address_detail_json(
         total,
         pages,
         jarr(items)
+    ))
+}
+fn fee_estimate_json(
+    app: &Explorer,
+    q: &std::collections::HashMap<String, String>,
+) -> Result<String, String> {
+    let node = q
+        .get("node")
+        .cloned()
+        .unwrap_or_else(|| app.selected.clone());
+    let n = app.mesh.node(&node).ok_or("unknown node")?;
+    let rate = n.fee_estimate().map_err(|e| e.to_string())?;
+    Ok(format!(
+        "{{\"fee_rate\":{},\"unit\":{},\"mempool\":{},\"bytes\":{}}}",
+        rate,
+        jstr("atoms/byte"),
+        n.pending_count(),
+        n.mempool_bytes()
     ))
 }
 

@@ -1208,8 +1208,9 @@ impl Node {
     pub fn pool(&mut self, from_seed: u64, amount: u64, to_seed: u64) -> Result<TxId, NodeError> {
         let tx = self.build_transfer(from_seed, amount, to_seed)?;
         let id = tx.id();
+        let utxo = self.ledger()?.ledger_state();
         self.mempool
-            .add(tx)
+            .add(tx, &utxo)
             .map_err(|e| NodeError::Mempool(e.to_string()))?;
         Ok(id)
     }
@@ -1221,10 +1222,11 @@ impl Node {
             return Err(NodeError::UnexpectedCoinbase);
         }
         let id = tx.id();
+        let utxo = self.ledger()?.ledger_state();
         let start = std::time::Instant::now();
         let result = self
             .mempool
-            .add(tx)
+            .add(tx, &utxo)
             .map_err(|e| NodeError::Mempool(e.to_string()));
         let duration = start.elapsed();
         match &result {
@@ -1232,6 +1234,31 @@ impl Node {
             Err(_) => crate::metrics::record_tx_validation(duration, true),
         }
         result.map(|_| id)
+    }
+
+    /// Replace a pending transaction via RBF. `tx` must spend at least one of
+    /// the same inputs as a transaction already in the mempool, and its fee
+    /// rate must exceed the replaced transaction's rate by at least
+    /// `min_fee_bump` atoms/byte.
+    pub fn replace_by_fee(
+        &mut self,
+        tx: Transaction,
+        min_fee_bump: u64,
+    ) -> Result<TxId, NodeError> {
+        if tx.is_coinbase() {
+            return Err(NodeError::UnexpectedCoinbase);
+        }
+        let id = tx.id();
+        let utxo = self.ledger()?.ledger_state();
+        self.mempool
+            .replace_by_fee(tx, &utxo, min_fee_bump)
+            .map_err(|e| NodeError::Mempool(e.to_string()))?;
+        Ok(id)
+    }
+
+    /// Estimated competitive fee rate from the mempool, in atoms/byte.
+    pub fn fee_estimate(&self) -> Result<u64, NodeError> {
+        Ok(self.mempool.fee_estimate())
     }
 
     /// Assemble the largest valid prefix of the mempool into a block on the
