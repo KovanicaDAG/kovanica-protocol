@@ -860,19 +860,18 @@ Cross-repo execution plan from `Obsidian-Vault/Poslovno/KovanicaDAG/UPGRADE-PHAS
 | 2 — Consensus evolution | pending | — |
 | 3 — Performance & scalability | ✅ completed | draft PR #37 |
 | 4 — Mobile light-node | ✅ completed / 🔄 in review | PR #38 |
-| 5 — Wallet & security | 🔄 in progress | multisig node layer + FFI bindings: draft PR #41 |
-| 6 — Operations & reliability | 🔄 in progress | operations automation: draft PR #40 |
-| 7 — P2 polish | 🔄 in progress | see breakdown below |
+| 5 — Wallet & security | ✅ completed | multisig node layer + FFI bindings: `df850df` (#41) |
+| 6 — Operations & reliability | ✅ completed | operations automation: `840e8f1` (#40) |
+| 7 — P2 polish | ✅ completed | see breakdown below |
 
 ### Phase 7 breakdown
 
 | Item | Status | PR |
 |---|---|---|
 | Android background sync + Keystore hardening | 🔄 in progress | draft PR #39 |
-| Fuzz/property tests + Criterion benchmarks + P2P ban persistence | 🔄 in progress | draft PR #43 |
-| Explorer detail views + API docs | 🔄 in progress | draft PR #44 |
-| Fee market & RBF | 🔄 in progress | draft PR #46 |
-| Web wallet custody + multisig UI | 🔄 in progress | draft PR #47 |
+| Fuzz/property tests + Criterion benchmarks + P2P ban persistence | ✅ completed | merged `9407d24` (#43) |
+| Explorer detail views + API docs | ✅ completed | merged `16ff775` (#44) |
+| Fee market & RBF | ✅ completed | merged `49dfce0` (#46) |
+| Web wallet custody + multisig UI | ✅ closed as superseded | UI merged via `0830c39` (#48); #47 closed |
 
-> **Follow-up note:** multisig backend web wiring is still pending; review/merge
-> of all open PRs is pending.
+> **Follow-up note:** All Phase 7 PRs merged to `main` (final hash `0830c39`).
