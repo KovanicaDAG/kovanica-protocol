@@ -14,7 +14,8 @@ use std::time::Duration;
 
 use kovanica_dag::{Block, BlockId};
 use kovanica_state::{
-    decode_block_payload, encode_block_payload, Address, HybridConfig, OutPoint, Transaction, TxId, TxOutput,
+    decode_block_payload, encode_block_payload, Address, HybridConfig, OutPoint, Transaction, TxId,
+    TxOutput,
 };
 
 use crate::dht::{NodeId, PeerContact, RoutingTable};
@@ -1714,7 +1715,7 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
         };
         match node.submit_tx(tx) {
             Ok(tx_id) => {
-                persist_all(&app.mesh);
+                persist_all(&mut app.mesh);
                 let body = format!("{{\"ok\":true,\"tx\":{}}}", jstr(&tx_id.to_string()));
                 return respond(&mut stream, 200, "application/json", body.as_bytes());
             }

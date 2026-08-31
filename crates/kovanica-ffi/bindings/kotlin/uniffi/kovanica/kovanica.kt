@@ -687,7 +687,13 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake_from_secret(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_build_multisig_spend(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_chain_height(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_combine_multisig_sigs(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_create_multisig_address(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid(
     ): Int
@@ -736,6 +742,10 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_set_miner_seed(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_set_validator_seed(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_sign_multisig_partial(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_submit_multisig_tx(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_synced_filter_matches(
     ): Int
@@ -795,8 +805,14 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_bond_stake_from_secret(`ptr`: Long,`secretHex`: RustBuffer.ByValue,`amount`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_build_multisig_spend(`ptr`: Long,`address`: RustBuffer.ByValue,`outputs`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_chain_height(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Long
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_combine_multisig_sigs(`ptr`: Long,`txBlob`: RustBuffer.ByValue,`partialSigs`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_create_multisig_address(`ptr`: Long,`threshold`: Byte,`pubkeysHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_enable_hybrid(`ptr`: Long,`rateNum`: Long,`rateDen`: Long,`nominalWork`: RustBuffer.ByValue,`retarget`: Byte,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
     external fun uniffi_kovanica_ffi_fn_method_lightnode_export_block(`ptr`: Long,`blockIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -845,6 +861,10 @@ internal object UniffiLib {
     ): Unit
     external fun uniffi_kovanica_ffi_fn_method_lightnode_set_validator_seed(`ptr`: Long,`seed`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_sign_multisig_partial(`ptr`: Long,`txBlob`: RustBuffer.ByValue,`secretHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_submit_multisig_tx(`ptr`: Long,`txBlob`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_synced_filter_matches(`ptr`: Long,`blockIdHex`: RustBuffer.ByValue,`address`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_synced_height(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1003,7 +1023,16 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_bond_stake_from_secret() != 24831) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_build_multisig_spend() != 63072) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_chain_height() != 36538) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_combine_multisig_sigs() != 55489) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_create_multisig_address() != 49800) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_enable_hybrid() != 31711) {
@@ -1076,6 +1105,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_set_validator_seed() != 59967) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_sign_multisig_partial() != 43077) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_submit_multisig_tx() != 2479) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_synced_filter_matches() != 35807) {
@@ -1263,6 +1298,33 @@ private class JavaLangRefCleanable(
     val cleanable: java.lang.ref.Cleaner.Cleanable
 ) : UniffiCleaner.Cleanable {
     override fun clean() = cleanable.clean()
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterUByte: FfiConverter<UByte, Byte> {
+    override fun lift(value: Byte): UByte {
+        return value.toUByte()
+    }
+
+    fun lift(value: Int): UByte {
+        return value.toUByte()
+    }
+
+    override fun read(buf: ByteBuffer): UByte {
+        return lift(buf.get())
+    }
+
+    override fun lower(value: UByte): Byte {
+        return value.toByte()
+    }
+
+    override fun allocationSize(value: UByte) = 1UL
+
+    override fun write(value: UByte, buf: ByteBuffer) {
+        buf.put(value.toByte())
+    }
 }
 
 /**
@@ -1597,9 +1659,30 @@ public interface LightNodeInterface {
     fun `bondStakeFromSecret`(`secretHex`: kotlin.String, `amount`: kotlin.ULong): kotlin.String
     
     /**
+     * Build an unsigned multisig spend paying `outputs` from a single UTXO
+     * owned by `address`. Returns a transaction blob encoding the unsigned tx
+     * with the redeem script attached as `witness[0]`.
+     */
+    fun `buildMultisigSpend`(`address`: kotlin.String, `outputs`: List<MultisigSpendOutput>): kotlin.ByteArray
+    
+    /**
      * The current chain height (selected tip's blue score).
      */
     fun `chainHeight`(): kotlin.ULong
+    
+    /**
+     * Combine `partial_sigs` (each from [`Self::sign_multisig_partial`]) with
+     * the unsigned transaction blob to produce a fully-signed transaction
+     * blob ready for [`Self::submit_multisig_tx`].
+     */
+    fun `combineMultisigSigs`(`txBlob`: kotlin.ByteArray, `partialSigs`: List<kotlin.ByteArray>): kotlin.ByteArray
+    
+    /**
+     * Create a threshold-multisig P2SH address from `threshold` and a list of
+     * 64-hex Ed25519 public keys. Returns the human address plus the redeem
+     * script (which must be shared with all cosigners out of band).
+     */
+    fun `createMultisigAddress`(`threshold`: kotlin.UByte, `pubkeysHex`: List<kotlin.String>): MultisigAddress
     
     /**
      * Enable hybrid admission: blocks enter by PoW or by eligible VRF draw.
@@ -1754,6 +1837,19 @@ public interface LightNodeInterface {
      * [`Self::bond_stake`] before production draws can win.
      */
     fun `setValidatorSeed`(`seed`: kotlin.ByteArray)
+    
+    /**
+     * Sign a multisig transaction blob with a 32-byte Ed25519 secret (hex).
+     * Returns the raw 64-byte partial signature.
+     */
+    fun `signMultisigPartial`(`txBlob`: kotlin.ByteArray, `secretHex`: kotlin.String): kotlin.ByteArray
+    
+    /**
+     * Submit a fully-signed multisig transaction blob to the mempool. Returns
+     * the transaction id (lowercase hex); mine it with
+     * [`Self::produce_block`] / [`Self::produce_empty_block`].
+     */
+    fun `submitMultisigTx`(`txBlob`: kotlin.ByteArray): kotlin.String
     
     /**
      * Whether `address` MIGHT appear in the given light-synced block,
@@ -2079,6 +2175,27 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 
     
     /**
+     * Build an unsigned multisig spend paying `outputs` from a single UTXO
+     * owned by `address`. Returns a transaction blob encoding the unsigned tx
+     * with the redeem script attached as `witness[0]`.
+     */
+    @Throws(LightNodeException::class)override fun `buildMultisigSpend`(`address`: kotlin.String, `outputs`: List<MultisigSpendOutput>): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_build_multisig_spend(
+        it,
+        
+        FfiConverterString.lower(`address`),
+        FfiConverterSequenceTypeMultisigSpendOutput.lower(`outputs`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * The current chain height (selected tip's blue score).
      */
     @Throws(LightNodeException::class)override fun `chainHeight`(): kotlin.ULong {
@@ -2088,6 +2205,48 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
     UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_chain_height(
         it,
         _status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Combine `partial_sigs` (each from [`Self::sign_multisig_partial`]) with
+     * the unsigned transaction blob to produce a fully-signed transaction
+     * blob ready for [`Self::submit_multisig_tx`].
+     */
+    @Throws(LightNodeException::class)override fun `combineMultisigSigs`(`txBlob`: kotlin.ByteArray, `partialSigs`: List<kotlin.ByteArray>): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_combine_multisig_sigs(
+        it,
+        
+        FfiConverterByteArray.lower(`txBlob`),
+        FfiConverterSequenceByteArray.lower(`partialSigs`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Create a threshold-multisig P2SH address from `threshold` and a list of
+     * 64-hex Ed25519 public keys. Returns the human address plus the redeem
+     * script (which must be shared with all cosigners out of band).
+     */
+    @Throws(LightNodeException::class)override fun `createMultisigAddress`(`threshold`: kotlin.UByte, `pubkeysHex`: List<kotlin.String>): MultisigAddress {
+            return FfiConverterTypeMultisigAddress.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_create_multisig_address(
+        it,
+        
+        FfiConverterUByte.lower(`threshold`),
+        FfiConverterSequenceString.lower(`pubkeysHex`),_status)
 }
     }
     )
@@ -2556,6 +2715,46 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 
     
     /**
+     * Sign a multisig transaction blob with a 32-byte Ed25519 secret (hex).
+     * Returns the raw 64-byte partial signature.
+     */
+    @Throws(LightNodeException::class)override fun `signMultisigPartial`(`txBlob`: kotlin.ByteArray, `secretHex`: kotlin.String): kotlin.ByteArray {
+            return FfiConverterByteArray.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_sign_multisig_partial(
+        it,
+        
+        FfiConverterByteArray.lower(`txBlob`),
+        FfiConverterString.lower(`secretHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Submit a fully-signed multisig transaction blob to the mempool. Returns
+     * the transaction id (lowercase hex); mine it with
+     * [`Self::produce_block`] / [`Self::produce_empty_block`].
+     */
+    @Throws(LightNodeException::class)override fun `submitMultisigTx`(`txBlob`: kotlin.ByteArray): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_submit_multisig_tx(
+        it,
+        
+        FfiConverterByteArray.lower(`txBlob`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Whether `address` MIGHT appear in the given light-synced block,
      * answered from locally stored filters (`None` = block not synced).
      * A `true` is a probabilistic hit worth fetching full blocks for.
@@ -2973,6 +3172,100 @@ public object FfiConverterTypeLightConfig: FfiConverterRustBuffer<LightConfig> {
             FfiConverterULong.write(value.`founderSeed`, buf)
             FfiConverterULong.write(value.`finalityDepth`, buf)
             FfiConverterULong.write(value.`payloadPruningDepth`, buf)
+    }
+}
+
+
+
+/**
+ * A newly created multisig P2SH address plus its redeem script.
+ */
+data class MultisigAddress (
+    /**
+     * Human-readable `kvnc…dag` address.
+     */
+    var `address`: kotlin.String
+    , 
+    /**
+     * The canonical `[M, N, pk1, ..., pkN]` redeem script, lowercase hex.
+     */
+    var `redeemScriptHex`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMultisigAddress: FfiConverterRustBuffer<MultisigAddress> {
+    override fun read(buf: ByteBuffer): MultisigAddress {
+        return MultisigAddress(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: MultisigAddress) = (
+            FfiConverterString.allocationSize(value.`address`) +
+            FfiConverterString.allocationSize(value.`redeemScriptHex`)
+    )
+
+    override fun write(value: MultisigAddress, buf: ByteBuffer) {
+            FfiConverterString.write(value.`address`, buf)
+            FfiConverterString.write(value.`redeemScriptHex`, buf)
+    }
+}
+
+
+
+/**
+ * One output of a multisig spend, as seen from the mobile FFI.
+ */
+data class MultisigSpendOutput (
+    /**
+     * Value to send, in atoms.
+     */
+    var `value`: kotlin.ULong
+    , 
+    /**
+     * Recipient address: 64-hex, 66-hex, or `kvnc…dag`.
+     */
+    var `address`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMultisigSpendOutput: FfiConverterRustBuffer<MultisigSpendOutput> {
+    override fun read(buf: ByteBuffer): MultisigSpendOutput {
+        return MultisigSpendOutput(
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: MultisigSpendOutput) = (
+            FfiConverterULong.allocationSize(value.`value`) +
+            FfiConverterString.allocationSize(value.`address`)
+    )
+
+    override fun write(value: MultisigSpendOutput, buf: ByteBuffer) {
+            FfiConverterULong.write(value.`value`, buf)
+            FfiConverterString.write(value.`address`, buf)
     }
 }
 
@@ -3549,6 +3842,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
 /**
  * @suppress
  */
+public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.ByteArray>> {
+    override fun read(buf: ByteBuffer): List<kotlin.ByteArray> {
+        val len = buf.getInt()
+        return List<kotlin.ByteArray>(len) {
+            FfiConverterByteArray.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<kotlin.ByteArray>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterByteArray.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<kotlin.ByteArray>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterByteArray.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer<List<HistoryEntry>> {
     override fun read(buf: ByteBuffer): List<HistoryEntry> {
         val len = buf.getInt()
@@ -3567,6 +3888,34 @@ public object FfiConverterSequenceTypeHistoryEntry: FfiConverterRustBuffer<List<
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeHistoryEntry.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeMultisigSpendOutput: FfiConverterRustBuffer<List<MultisigSpendOutput>> {
+    override fun read(buf: ByteBuffer): List<MultisigSpendOutput> {
+        val len = buf.getInt()
+        return List<MultisigSpendOutput>(len) {
+            FfiConverterTypeMultisigSpendOutput.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<MultisigSpendOutput>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeMultisigSpendOutput.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<MultisigSpendOutput>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeMultisigSpendOutput.write(it, buf)
         }
     }
 }
