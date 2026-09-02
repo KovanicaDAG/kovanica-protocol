@@ -1,6 +1,6 @@
-# Phase 2 Merge Status: Consensus Layer (In Progress)
+# Phase 2 Merge Status: Consensus Layer (Complete)
 
-**Status**: 🔄 MERGING
+**Status**: ✅ COMPLETE / MERGED
 **Date**: 2026-09-02
 **Branch**: `merge/phases-1-to-20`
 
@@ -114,9 +114,10 @@ Phase 2 introduces critical consensus infrastructure:
 
 ## Next Steps
 
-✅ Merge Phase 2 DAG + consensus changes (independent)
-⏭️ Phase 3 will integrate node.rs changes + explorer adaptation
+✅ Phase 2 DAG + consensus changes merged (`merge/phases-1-to-20`, #51; plus #49 epoch beacon and #50 undo log)
+✅ Node-layer integration landed on main: `stake_state` return-type + insert points wired, and the staked-block producer now uses `epoch_vrf_input_for_parents()` in `node.rs`/`ledger.rs`
+🔄 Phase 3 follows in the upgrade plan (incremental on-disk store, incremental sync + API pagination) — no longer gated on Phase 2 integration
 
 ---
 
-**Status**: Phase 2 DAG layer ready. Awaiting Phase 3 for node-layer integration.
+**Status**: ✅ Phase 2 complete — merged to main with node/explorer integration landed.
