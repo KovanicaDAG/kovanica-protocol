@@ -1,4 +1,4 @@
-Name: android.yml
+name: android light node
 
 on:
   push:
