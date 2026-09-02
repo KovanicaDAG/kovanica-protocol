@@ -50,7 +50,7 @@ dependencies {
 
     // Navigation, ViewModel, coroutines, HTTP client
     implementation(libs.navigation.compose)
-    implementation(libs.lifecycle.viewmodel.compose)
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.coroutines.android)
     implementation(libs.okhttp)
