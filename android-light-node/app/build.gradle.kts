@@ -47,4 +47,20 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
     implementation(libs.activity.compose)
+
+    // Navigation, ViewModel, coroutines, HTTP client
+    implementation(libs.navigation.compose)
+    implementation(libs.lifecycle.viewmodel.compose)
+    implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.coroutines.android)
+    implementation(libs.okhttp)
+
+    // Background sync (WorkManager), notification compat, and biometric Keystore
+    implementation(libs.work.runtime.ktx)
+    implementation(libs.biometric)
+    implementation(libs.core.ktx)
+
+    // Local cryptography: Ed25519 key derivation + PBKDF2 for BIP39 seed.
+    // The FFI handles signing; this is only used to derive the display address.
+    implementation(libs.bouncycastle)
 }

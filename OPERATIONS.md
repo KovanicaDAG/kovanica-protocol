@@ -4,7 +4,7 @@
 > lessons. Mirrored to `Obsidian-Vault/KovanicaDAG/`. Keep in sync with
 > reality in the same change that alters any of it.
 
-*Updated: 2026-08-24*
+*Updated: 2026-08-31*
 
 ## 1. Topology (all on VPS `srv1745734`, 145.223.116.178)
 
@@ -18,9 +18,11 @@
 | Chain data (seed1) | `/root/kovanica-data` (`KOVANICA_DATA`) | **outside the git tree** so runtime writes never dirty it |
 | Soak logs | `/root/kovanica-data/soak/` | `testnet-measure.py`, 24h runs |
 
-Current network: genesis `76cc019de947cb9f6b2abe9428dc120bbf6f3ee3c3f0be89efa83a4e3af3c140`.
-The pre-reset chain (genesis `27d5f750…`, 127 blocks) was lost on 2026-08-24 — its
-data dir was inside a directory that got deleted while the old process held it.
+Current network: genesis `596874eac2d08723b12fc3cac8f891493139200da4818594c6632b3fe4d0048f`
+(the 9a live-sync spike genesis; unchanged since that gate). The 2026-08-24
+runbook still listed `76cc019d…` — that hash is stale after the later reset.
+The pre-reset chain (genesis `27d5f750…`, 127 blocks) was lost on 2026-08-24 —
+its data dir was inside a directory that got deleted while the old process held it.
 
 ## 2. Deploy pipelines
 
@@ -100,6 +102,45 @@ verifies genesis match against seed1.
   (`live_peers`), refreshed every ~5 s in the explorer idle tick.
 - **Baseline (2026-08-24 16:20 UTC):** height seed=448 / seed3=447,
   peer_count 2/2 both, mempool 0, orphans 0, blue_score≈height, no reorgs.
+- **Soak snapshot (2026-08-31 ~09:10 UTC)** — public explorer API
+  (`GET /api/head`, `/api/bootstrap`, `/api/state`):
+
+  | Field | Value |
+  | --- | --- |
+  | network | `kovanica-testnet` |
+  | genesis | `596874eac2…d0048f` |
+  | blocks / chain_len | **3817** |
+  | blue_score / blue_work | 3816 / 3816 |
+  | tips | 1 (linear selected chain) |
+  | k | 3 |
+  | PoW | on; per-block `work=1` (blue_work == blue_score) |
+  | subsidy | 200 KVNC / block (20_000_000_000 atoms) |
+  | supply | 76_340_000_000_000 atoms = 3817 × subsidy (coinbase-only, checks) |
+  | mempool | 0 |
+  | advertised peers | `seed2.kovanica.online:9001`, `seed3.kovanica.online:9000` |
+  | mining | true (`KOVANICA_MINE_SECS=60`) |
+
+  Rate vs plan:
+
+  | Window | Δ blocks | Δ time | rate |
+  | --- | --- | --- | --- |
+  | 2026-08-24 16:20 → 08-29 18:20 | +1394 (448→1842) | ~5.08 d | **11.4 blk/h** (~5.3 min/block) |
+  | 2026-08-29 18:20 → 08-31 09:10 | +1975 (1842→3817) | ~38.8 h | **50.9 blk/h** (~1.18 min/block) |
+  | whole soak 08-24 → 08-31 | +3369 | ~6.7 d | 20.9 blk/h (~2.9 min/block avg) |
+
+  The 5×-slow window after the genesis reset was difficulty retarget, not a
+  stall. The last ~39 h recovered to ~1.2 min/block, in range of the 1/min
+  mine interval. **Do not retune `k`, finality depth, payload pruning, or
+  the difficulty window on this snapshot** — the retarget is doing its job.
+  Revisit after another week of data.
+
+  Caveats (cannot close ANT-16 from the public API alone):
+  - `/metrics` is **not** public (`explorer.kovanica.online/metrics` → 404).
+    Orphan rate, propagation latency, reorg depth, disk, and `live_peers`
+    still need a VPS Prometheus scrape (`127.0.0.1:19080`).
+  - `mesh.nodes[0].peers` is the in-process demo mesh (empty) — not the
+    P2P overlay. Overlay health is the advertised `peers` list + Prometheus
+    `kovanica_peer_count`.
 
 ## 6. Quick commands
 
@@ -142,3 +183,78 @@ Roadmap naming: **seed3** = first true off-box node — shipped 2026-08-24 as
 AWS EC2 `t3.micro` in eu-north-1 (Amazon Linux 2023, systemd
 `kovanica-seed3`, mining on). DNS `A seed3.kovanica.online` (DNS-only) is live;
 joining every node's `KOVANICA_PEERS` is the follow-up.
+
+## 8. Seed backup & restore (A8)
+
+Backups are encrypted **at source** before they touch disk. The passphrase is
+read from `KOV_BACKUP_PASSPHRASE` or `KOV_BACKUP_PASSPHRASE_FILE`; it is never
+passed as a command-line argument and is never committed. Backups are stored in
+`/root/kovanica-backups` with permissions `700` on the directory and `600` on
+the files.
+
+The scripts back up the node data directory (`data/` or `$KOVANICA_DATA`) and
+any wallet seed files matching `*.miner`, `*.seed`, `*.wallet`, or `*.key`.
+
+### Create a backup
+
+```sh
+# from the repo
+KOV_BACKUP_PASSPHRASE="$(cat /run/secrets/kov-backup-passphrase)" \
+  ./scripts/backup-node.sh
+
+# or point at the production data directory
+KOV_BACKUP_PASSPHRASE="..." ./scripts/backup-node.sh --data /root/kovanica-data
+```
+
+Dry-run first to see what would be captured:
+
+```sh
+./scripts/backup-node.sh --dry-run --data /root/kovanica-data
+```
+
+Options:
+- `--data DIR` — data directory to back up (default: `./data`, else `/root/kovanica-data`)
+- `--out DIR` / `--backup-dir DIR` — destination (default: `/root/kovanica-backups`)
+- `--name NAME` — backup set name (default: hostname)
+- `--retention N` — keep the newest `N` sets (default: 7)
+- `--dry-run` — show sizes and paths without writing anything
+
+### Restore from backup
+
+```sh
+KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh --data-dir /root/kovanica-data
+```
+
+The script picks the newest data and seed archives in the backup directory. To
+use specific archives:
+
+```sh
+KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh \
+  --data-archive /root/kovanica-backups/srv1745734-data-20260828-000000.tar.gz.enc \
+  --seed-archive /root/kovanica-backups/srv1745734-seeds-20260828-000000.tar.gz.enc \
+  --data-dir /root/kovanica-data
+```
+
+Verify an archive without extracting:
+
+```sh
+KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh --verify-only \
+  --data-archive /root/kovanica-backups/srv1745734-data-20260828-000000.tar.gz.enc
+```
+
+Restore will refuse to overwrite a non-empty target directory unless `--force`
+is given.
+
+### Restore drill
+
+Run at least once per quarter:
+
+```sh
+mkdir -p /tmp/kov-restore-drill
+KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh \
+  --data-dir /tmp/kov-restore-drill/data --force
+# start a throwaway node against the restored data and check head matches seed1
+KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed.kovanica.online:9000 \
+  /usr/local/bin/kovanica-node explorer 127.0.0.1:18081 &
+curl -s http://127.0.0.1:18081/api/head | jq .genesis
+```

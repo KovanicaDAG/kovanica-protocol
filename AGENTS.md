@@ -82,6 +82,7 @@ crates/
       difficulty.rs            Retarget::next_work(): difficulty retargeting for block work (algorithm); enforced via Dag::set_difficulty
       pow.rs                   meets_target()/mine(): Nakamoto hash-target proof-of-work (H*work < 2^256); enforced via Dag::set_proof_of_work
       reachability.rs          Reachability oracle: interval-tree + future-covering sets (the Dag's backing for is_ancestor + mergeset)
+      vrf.rs                   ECVRF over Ristretto255 (Ed25519 curve), IRTF CFRG draft; vrf_prove/vrf_verify for leader selection / randomness beacon (Stage 3)
     tests/
       consensus.rs             Integration + adversarial tests (wide fork, determinism, k-cluster invariant, validator hook)
       reachability.rs          Differential: Dag/oracle is_ancestor == naive parent-walk over random adversarial DAGs
@@ -96,6 +97,7 @@ crates/
       ledger.rs                apply_block()/apply_dag() (batch) + Ledger (per-block state, stateful insert, snapshot, finality/pruning)
       store.rs                 LedgerStore: incremental append-only on-disk replay log
       validation.rs            TxStructureValidator: context-free structural checks (a BlockValidator)
+      multisig.rs               M-of-N multisignature (RFC-001 P2SH): MultisigScript, script hash, threshold signature verification (see docs/RFC-001-Multisig.md)
     tests/
       ledger.rs                Integration + adversarial (double-spend across parallel blocks, order-independence)
       validation.rs            Integration: structural rejection at insert vs stateful rejection at apply
@@ -104,16 +106,26 @@ crates/
       store.rs                 Integration: append-only log grows; reopen matches snapshot
       finality.rs              Integration: finality-depth pruning, deep-reorg rejection, implicit re-org
       difficulty.rs            Integration: Ledger::set_difficulty enforces work/timestamp end-to-end
+      multisig_consensus.rs     Adversarial consensus suite for RFC-001 multisig (35 tests: M-of-N spends, malformed scripts, activation gating, mixed P2PK/P2SH, snapshot roundtrip)
   kovanica-node/               Runnable node binary, mempool, and block gossip (third slice + multi-node)
     src/
       lib.rs                   Crate docs + re-exports + a doctest of the RPC
       node.rs                  Node: Ledger + Mempool; genesis/send/pool/produce/balance/tips/save/load + gossip; multi-input prepare_transfer/submit_signed (UTXOs accumulated largest-first, one signature attached to every input)
       mempool.rs               Mempool: pending txs, deterministic (id) ordering for block assembly
+      mempool_v2.rs            Mempool upgrades: orphan pool (missing-input txs held and re-tried), fee-based eviction, capacity limits
       net.rs                   gossip() (in-process) + serve_blocks/pull_blocks (one-shot TCP sync) + framed bidirectional exchange (pull_blocks_timeout/serve_exchange: read peer dump, apply, send own back; old one-way peers still work)
       p2p.rs                   Mesh: peer discovery (hello), delayed relay loop, block+tx flood
+      p2p_hardening.rs         P2P hardening: per-peer rate limiting, duplicate suppression, peer scoring/banning
+      dht.rs                   Lightweight Kademlia-based DHT for peer routing (256-bit NodeId space, XOR metric, k-buckets)
+      dns_seed.rs              DNS multi-seed resolver for peer discovery (injectable DnsResolver: StdDnsResolver + MockDnsResolver)
       relay.rs                 RelaySession: long-lived TCP framing of hello/block/tx
+      rpc.rs                   Line RPC: one text command per line in, one line out (execute_line is a pure function of node + command)
+      spv.rs                   SPV light client wire sync + proof verification over persistent RelaySession connections
       explorer.rs              self-hosted explorer: JSON API + static UI over Mesh (WebSocket /ws, open faucet, dual-stack P2P listeners, KOVANICA_MINE_SECS interval)
       explorer.html            UI served by `kovanica-node explorer`
+      metrics.rs               Prometheus metrics + structured logging (block rate, peer count, histograms)
+      fuzz.rs                  Fuzzing infrastructure: Arbitrary impls for core types + libfuzzer/cargo-fuzz targets
+      bip39-english.txt        BIP-39 English wordlist (2048 words) for mnemonic seed phrases (data file, not .rs)
       main.rs                  Binary: `serve` (stdin/stdout REPL) and `demo` (scripted scenario)
     tests/
       rpc.rs                   Integration: end-to-end transfers, errors, snapshot round-trip via RPC
@@ -122,9 +134,59 @@ crates/
       p2p.rs                   Integration: discovery, relay, tx dissemination, mempool eviction
       relay.rs                 Integration: persistent TCP session, block/tx over a live socket
       timestamps.rs            Integration: wall-clock timestamp policy (pinned clock, monotone stamps, far-future reject)
+      challenger_1_mining_adversarial.rs   Adversarial/empirical stress on external mining endpoints (9 tests: malformed JSON, invalid parents, corrupted payloads, work/nonce types, timestamp drift, template queries, fuzz burst)
+      challenger_external_mining.rs        Empirical external-mining JSON endpoint suite (7 tests: full mine loop, invalid nonce, duplicate idempotency, mempool packing, custom payout, mesh propagation, malformed inputs)
+      challenger_e2e_mining_lifecycle.rs   Challenger 2 e2e external-mining lifecycle + consensus integration harness (1 test: template → PoW → submit → DAG/mempool/coinbase verification)
+      challenger_consensus_sync.rs         Empirical consensus-invariant suite (10 tests: difficulty retarget clamps, SPV difficulty bounds, wall-clock drift, reorg locator sync, deep-reorg/fork convergence)
 ```
 
-Not built yet (**TODO**): VRF and beyond. Update this tree when you add them.
+android-light-node/            Jetpack Compose light-node wallet app (slices 9a–9e)
+  app/src/main/java/com/kovanica/lightnode/
+    data/                      LightNodeRepository (process singleton), WalletRepository, SecureSeedStorage, MultisigRepository
+    ui/                        Compose screens, ViewModel, Material3 theme
+    work/                      WorkManager periodic sync + local notifications (Slice 9e)
+  gradle/libs.versions.toml    AGP / Kotlin / Compose / WorkManager / biometric dependency pins
+
+VRF is shipped (Stage 3) — see `crates/kovanica-dag/src/vrf.rs` above and the Stage 3 checklist.
+
+### Multisig — RFC-001 (M-of-N witness payloads & P2SH)
+
+Shipped in `kovanica-state`; full spec in `docs/RFC-001-Multisig.md`. Multisig
+outputs lock value behind a **threshold redeem script** and spend via a witness
+stack, using **Version 0x01 (P2SH)** addresses distinct from the ordinary
+Version 0x00 (P2PK) single-key addresses.
+
+- **Redeem script** `[M (1B), N (1B), pk_1 (32B), …, pk_N (32B)]`; `1 <= M <= N`,
+  `N <= 16` (`MAX_MULTISIG_KEYS`). Strictly validated at parse (M/N bounds,
+  exact length, valid distinct Ed25519 points).
+- **Address** = `0x01 || BLAKE3(redeem_script)` (33 versioned bytes; renders as
+  `kvnc…dag` like P2PK). `MultisigScript::address()` / `Address::from_script`.
+- **Witness layout** on a P2SH input: `witness[0]` = raw redeem script,
+  `witness[1..=M]` = exactly `M` valid 64-byte Ed25519 signatures over the
+  transaction `sighash` (BLAKE3 of the witness-free encoding). Spend validation
+  checks script-hash match, script validity, witness count (`1 + M`), signature
+  size, and threshold verification against **distinct** authorized keys
+  (duplicates rejected).
+- **Activation gating**: P2SH is a consensus upgrade gated on blue score
+  (`MULTISIG_ACTIVATION_SCORE = 0` default; `Ledger::set_multisig_activation_score`).
+  Pre-activation (`blue_score <= activation_score`) rejects P2SH outputs and
+  P2SH/multi-witness spends (`PreActivationMultisig`); post-activation P2PK
+  remains valid forever. Enforced identically in the incremental `Ledger` and
+  batch `apply_dag`/`apply_block` paths.
+- **Tests**: `crates/kovanica-state/tests/multisig_consensus.rs` (35 tests) —
+  M-of-N spends (1-of-1 … 16-of-16), invalid M/N, malformed scripts, hash
+  mismatches, witness anomalies, crypto integrity, duplicate-signature attacks,
+  activation boundary, mixed P2PK/P2SH blocks, parallel-DAG double-spend, and
+  snapshot roundtrip.
+
+### Web app — Grok preview bridge (dev-only)
+
+`web/src/lib/preview-host-bridge.ts`, `web/src/lib/preview-embedder-origin.ts`, and
+`web/src/components/preview-host-bridge.tsx` (mounted in `web/src/routes/__root.tsx`)
+implement a dev-only `postMessage` bridge for the Grok preview chrome. It activates only
+when the app is framed by an allowlisted Grok embedder origin (`grok.com`/
+`grok-sandbox.com`); top-level runs (local dev, deployed sites) noop. It lets the preview
+chrome drive navigation and query registered routes. Not part of the production web surface.
 
 ### Deliberate first-slice simplifications (do not mistake for the final design)
 
@@ -355,7 +417,7 @@ CI gates every push (`fmt --check`, `clippy -D warnings`,
 - [x] Halving schedule (`HalvingSchedule` in `ledger.rs`, `Node::issuance_at()` in `node.rs`)
 - [x] TX size limits (`MAX_TX_SIZE`, `MAX_BLOCK_PAYLOAD_SIZE`, `MAX_TXS_PER_BLOCK` in `validation.rs`)
 - [x] WebSocket explorer (`/ws` endpoint in `explorer.rs`, `WsMsg` types)
-- [x] Live frontend WS client/hooks (`kovanica-web/src/lib/api/client.ts`: `wsClient`, `useWsMessage`, `useWsState`, `useWsBlocks`, `useWsTxs`)
+- [x] Live frontend WS client/hooks (`web/src/lib/api/client.ts`: `wsClient`, `useWsMessage`, `useWsState`, `useWsBlocks`, `useWsTxs`)
 - [x] CORS proxy for live explorer (`/proxy` path on explorer.kovanica.online)
 - [x] Human addresses (`Address::to_kvnc`/`parse`, `kvnc…dag` base58 wrap over the
       32 key bytes; parse also accepts 64-hex) — reconciled from the testnet
@@ -669,6 +731,33 @@ deterministic + adversarial tests per the conventions above.
     network genesis byte-for-byte; then `receive_blocks` converges to the live
     tip. v0.1 pins these params as app constants (`/api/bootstrap` doesn't
     expose subsidy/premine/seed); add them to the endpoint before mainnet.
+  - **9b wallet UX landed**: Onboarding (create/import mnemonic), home, send,
+    receive, history and settings screens in Compose/Material3. Secure seed
+    storage via Android Keystore `AES/GCM/NoPadding`; the mnemonic only exists
+    in memory during derivation/signing. Address derivation matches the Rust
+    `KeyPair::from_seed(seed).address()` path (`0x00 || ed25519_pk`, base58
+    wrapped as `kvnc…dag`).
+  - **9c light sync landed**: `LightNodeRepository` owns the in-process
+    `uniffi.kovanica.LightNode` and persists the KVLS v1 light-sync blob to
+    `filesDir/light_sync.bin`. Startup calls `receiveLightSync` on the saved
+    blob; `sync(nodeUrl, walletAddress)` fetches `/api/light_sync?from=<tip>`,
+    merges it, writes the merged blob back, then checks Golomb-Rice filters
+    with `syncedFilterMatches` and pulls only matching full blocks via
+    `/api/blocks?from=<id>`. Wallet address, balance and history are exposed
+    through the FFI surface.
+  - **9d staking uplink landed**: `WalletRepository` wraps seed-derived
+    transfers (`sendFrom`), bonding (`bondStake`), unbonding (`unbond`), and
+    validator enablement (`setValidatorSeed` + `enableHybrid`). `produceBlock`
+    now calls `produceBlock`/`produceEmptyBlock`, exports the produced block
+    with the new `export_block` FFI method, and submits the wire-format blob
+    to `POST /api/mine/submit` (octet-stream path) so phone-produced staked
+    blocks land on the explorer. `NodeClient` implements the HTTP surface
+    (light sync, full blocks, history, UTXOs, faucet, block submit).
+  - New Android data layer files:
+    `android-light-node/app/src/main/java/com/kovanica/lightnode/data/NodeUrl.kt`,
+    `NodeClient.kt`, `LightNodeRepository.kt`, `WalletRepository.kt`,
+    `Format.kt`; `WalletViewModel.kt` wires them to the designer's UI state.
+    Kotlin UniFFI bindings regenerated to include `export_block`.
 
 ## 8. Hard-won Lessons & Invariants (Do Not Break)
 - **SPV Block Filters**: When encoding 64-bit addresses into the Golomb-Rice filter, you *must* map them into a bounded interval (`N * 2^k`) first. Never attempt to push the raw 64-bit difference as unary 1s, or it will deadlock the encoder.
@@ -695,9 +784,12 @@ deterministic + adversarial tests per the conventions above.
 
 ### Beyond
 
-Ideas parked until Stages 1–3 close: light clients / SPV-style proofs over
-the linearized chain, multi-seed discovery (DNS seeds / DHT), and anything
-the testnet teaches us it needs.
+Formerly-parked ideas that have since shipped (see Post-Stage 3 below):
+**light clients / SPV-style proofs** over the linearized chain (header chain,
+Merkle proofs, Golomb-Rice block filters, `SpvClient`) and **multi-seed
+discovery** (DNS seeds + DHT Kademlia) — the latter shipped with its remaining
+deployment wiring tracked in `TODO.md`. Still parked: anything the testnet
+teaches us it needs.
 
 ### Post-Stage 3 — Production hardening (suggested order)
 
@@ -762,3 +854,32 @@ the testnet teaches us it needs.
    - BIP39/BIP44 derivation, transaction history
    - Fee estimation from mempool p90 (`POST /api/fee_estimate`, Rust + web preview)
    - Explorer: real-time DAG viz with zoom/pan + WebSocket updates, analytics panel
+
+---
+
+## Upgrade phases
+
+Cross-repo execution plan from `Obsidian-Vault/Poslovno/KovanicaDAG/UPGRADE-PHASES.md`.
+
+| Phase | Status | PR |
+|---|---|---|
+| 1 — Foundation & consensus infra | ✅ A1/A2/A3/H1 done; D2 pending | dormant mainnet profile, staked uplink, light_sync, rate limits, dead `mempool.rs` removed |
+| 2 — Consensus evolution | 🔄 in progress | B1 epoch randomness beacon · B2 DAG-level past-set pruning · B3 UTXO undo log |
+| 3 — Performance & scalability | ✅ completed | merged `c85013a` (#37) |
+| 4 — Mobile light-node | ✅ completed | merged `84b6516` (#38); Oracle follow-ups (seed/address mismatch, UI-state cleanup, NodeUrl/lastSyncedBlockId wiring, importWallet dedupe) fixed and merged |
+| 5 — Wallet & security | ✅ completed | multisig node layer + FFI bindings: `8a3bec6` (#41) |
+| 6 — Operations & reliability | ✅ completed | operations automation: `840e8f1` (#40) |
+| 7 — P2 polish | ✅ completed | see breakdown below |
+
+### Phase 7 breakdown
+
+| Item | Status | PR |
+|---|---|---|
+| Android background sync + Keystore hardening | ✅ completed | merged `f8d261f` (#39) |
+| Soak snapshot docs (genesis hash, rate recovery, no retune) | ✅ completed | merged `cee3e98` (#45) |
+| Fuzz/property tests + Criterion benchmarks + P2P ban persistence | ✅ completed | merged `9407d24` (#43) |
+| Explorer detail views + API docs | ✅ completed | merged `16ff775` (#44) |
+| Fee market & RBF | ✅ completed | merged `49dfce0` (#46) |
+| Web wallet custody + multisig UI | ✅ closed as superseded | UI merged via `0830c39` (#48); #47 closed |
+
+> **Follow-up note:** All Phase 7 PRs merged to `main`. Android unit tests for `Format.kt`, KVLS header parsing, and address derivation remain pending — no SDK/device available to run them locally.

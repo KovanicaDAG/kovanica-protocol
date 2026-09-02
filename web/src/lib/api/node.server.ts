@@ -13,6 +13,8 @@ import type { Block, Tx } from "@/lib/ledger/types";
 import {
   ATOM,
   DECIMALS,
+  FOUNDER_AMOUNT,
+  FOUNDER_SEED,
   HALVING_ERA,
   K,
   MIN_FEE,
@@ -163,7 +165,7 @@ function nodeView(s: Store): ApiNode {
     miner: s.miner,
     atom: ATOM,
     pow: false,
-    ui: "preview",
+    ui: "local",
     utxos: s.utxos.length,
     chain_len: chainLen,
     mempool: s.pending.length,
@@ -189,11 +191,14 @@ export function localHead(): ApiHead {
 export function localBootstrap(upstream: ApiBootstrap["upstream"]): ApiBootstrap {
   return {
     ...localHead(),
-    listen: "preview",
+    listen: "local",
     peers: [],
     pow: false,
     token: TOKEN,
     k: K,
+    subsidy: SUBSIDY,
+    founder_amount: FOUNDER_AMOUNT,
+    founder_seed: FOUNDER_SEED,
     source: "local",
     upstream,
   };
@@ -210,7 +215,7 @@ export function localState(): ApiState {
     allow_reset: true,
     operator: true,
     network: NETWORK_ID,
-    listen: "preview",
+    listen: "local",
     peers: [],
     mesh: {
       now,
@@ -261,7 +266,7 @@ export function localOrigins(): ApiOrigins {
 export function localP2p(): { path: string; listen: string; peers: string[]; bootstrap: string } {
   return {
     path: "tcp",
-    listen: "preview",
+    listen: "local",
     peers: [],
     bootstrap: "seed.kovanica.online:9000",
   };

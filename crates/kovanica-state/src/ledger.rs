@@ -31,16 +31,38 @@
 //! applied last. Because the coinbase is applied last, its outputs are not
 //! spendable within the same block (a light-touch maturity rule).
 //!
-//! ## Deliberate first-slice simplifications
+//! ## Undo-log / delta semantics
 //!
-//! * `subsidy` is a single per-block constant passed in, not a halving schedule.
-//! * No coinbase maturity beyond "not in the same block"; no fee floor; no tx
-//!   size/weight limits.
-//! * [`apply_dag`] applies against a fresh state each call (the batch view). The
-//!   incremental [`Ledger`] follows the selected tip, so re-orgs above the
-//!   finality point are implicit (no revert), and [`Ledger::with_finality`] prunes
-//!   the stored state of final blocks and rejects blocks built on final history.
-//!   Pruning is of the per-block *state* only; the DAG itself is still append-only.
+//! The incremental [`Ledger`] does not store a full UTXO set per block. It keeps
+//! a **single materialised state at the selected tip** plus compact per-block
+//! **undo deltas** along the selected-parent tree:
+//!
+//! * `deltas[&B]` records the net UTXO change from `selected_parent(B)`'s view
+//!   to `B`'s own view: outputs created by `B` (or its mergeset in `B`'s view)
+//!   and outputs spent in that transition.
+//! * `stake_deltas[&B]` records the analogous net change in the stake registry.
+//!
+//! Reconstructing a non-final block's view walks its selected-parent chain down
+//! to the deepest block whose selected parent is final (or genesis), applying
+//! each delta in order. Because final blocks' deltas are **folded into their
+//! children** before they are dropped, a child's delta is always relative to the
+//! deepest non-final ancestor in its chain. Folding is compositional: applying
+//! the folded delta reproduces the same state as applying the original sequence.
+//!
+//! Pruning is triggered automatically after every block insertion. It is
+//! **idempotent**: once the current finality threshold has been processed, a
+//! second call at the same threshold removes no additional deltas and changes no
+//! reconstructable state. The threshold only advances when the selected tip's
+//! blue score grows, so a folded delta is never lost while it is still needed.
+//!
+//! ## Finality
+//!
+//! A `Ledger` built with [`Ledger::with_finality`] treats blocks more than
+//! `finality_depth` blue score below the selected tip as **final**: their
+//! per-block state is pruned and new blocks may not build on them. Re-orgs above
+//! the finality point are implicit — [`Ledger::ledger_state`] follows the current
+//! selected tip — and pruning affects only the per-block *state*, not the DAG
+//! itself, which remains append-only.
 
 use std::collections::{HashMap, HashSet};
 
@@ -50,7 +72,10 @@ use kovanica_dag::{
 
 use crate::keys::{verify, Address};
 use crate::multisig::{verify_threshold_signatures, MultisigScript};
-use crate::stake::{is_unbond_tag, parse_bond_tag, StakeError, StakeState};
+use crate::stake::{
+    is_unbond_tag, parse_bond_tag, Freeze, StakeError, StakeState, UNBOND_MATURITY,
+};
+use crate::TxOutput;
 
 /// Default blue-score threshold for RFC-001 multisig activation.
 pub const MULTISIG_ACTIVATION_SCORE: u64 = 0;
@@ -91,8 +116,16 @@ impl HalvingSchedule {
 pub const DEFAULT_HALVING_ERA: u64 = 500_000;
 
 /// The VRF bundle a bonded validator attaches to a staked block: the public key
-/// the bonded stake is registered under, the ECVRF proof over the block's
-/// parent-tip input, and the resulting output (the sortition draw).
+/// the bonded stake is registered under, the ECVRF proof over the VRF input,
+/// and the resulting output (the sortition draw).
+///
+/// The VRF input is the **epoch randomness beacon** of the block's selected
+/// parent by default ([`Dag::epoch_vrf_input_for_parents`][ep]). Set
+/// [`HybridConfig::use_epoch_beacon`] to `false` only when replaying legacy
+/// snapshots produced before the B1 epoch-beacon activation, which reverts
+/// the input to the pre-B1 parent-tip hash ([`Dag::vrf_input`]).
+///
+/// [ep]: kovanica_dag::Dag::epoch_vrf_input_for_parents
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StakedVrf {
     /// The validator's VRF public key (32 bytes, Ed25519/Ristretto255).
@@ -107,7 +140,7 @@ pub struct StakedVrf {
 /// (hash target met, work pinned to the retargeting policy's implication) or by
 /// **stake-weighted VRF sortition** ([`StakedVrf`], eligibility proportional to
 /// bonded stake). See [`Ledger::set_hybrid`] and [`Ledger::insert_with_vrf`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HybridConfig {
     /// Sortition rate numerator: a validator holding the *whole* bonded supply
     /// wins with probability ≈ `rate_num/rate_den` per block. `1/1` = every
@@ -123,17 +156,23 @@ pub struct HybridConfig {
     /// (PoW blocks then only need their hash to meet their claimed target —
     /// useful for tests; production should set this).
     pub retarget: Option<Retarget>,
+    /// Whether to use the epoch randomness beacon as the staked-VRF input.
+    /// Default `true` for all new blocks. Set `false` only to replay legacy
+    /// snapshots produced before the B1 epoch-beacon activation.
+    pub use_epoch_beacon: bool,
 }
 
 impl Default for HybridConfig {
     /// One expected win per block per whole-stake at nominal work 1, with the
-    /// default retargeting policy (1 s target interval, 20-block window).
+    /// default retargeting policy (1 s target interval, 20-block window) and
+    /// epoch-beacon VRF input enabled.
     fn default() -> Self {
         Self {
             rate_num: 1,
             rate_den: 1,
             stake_nominal_work: 1,
             retarget: Some(Retarget::default()),
+            use_epoch_beacon: true,
         }
     }
 }
@@ -873,13 +912,147 @@ impl core::fmt::Display for LedgerInsertError {
 
 impl std::error::Error for LedgerInsertError {}
 
-/// A DAG together with the **per-block UTXO state** each block induces.
+/// Net UTXO change of one block relative to its selected parent's view:
+/// `created` are outputs present after the block but not before; `spent` are
+/// outputs present before but not after. Applying a delta inserts `created`
+/// then removes `spent`; reverting inserts `spent` then removes `created`.
+/// Within one block the two lists are disjoint; across composed deltas an
+/// outpoint created by the first part and spent by the second cancels under
+/// the insert-then-remove order.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct BlockDelta {
+    spent: Vec<(OutPoint, TxOutput)>,
+    created: Vec<(OutPoint, TxOutput)>,
+}
+
+/// Net stake-registry change of one block, mirroring [`BlockDelta`]: `frozen`
+/// entries were added to the registry, `unfrozen` entries were released.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct StakeDelta {
+    unfrozen: Vec<(OutPoint, Freeze)>,
+    frozen: Vec<(OutPoint, Freeze)>,
+}
+
+/// Diff two UTXO sets into a net delta: `created` are outputs in `post` but
+/// not `pre`, `spent` are outputs in `pre` but not `post`. Outputs are
+/// immutable once created, so the two lists are disjoint.
+fn diff_utxo(pre: &UtxoSet, post: &UtxoSet) -> BlockDelta {
+    let mut spent = Vec::new();
+    let mut created = Vec::new();
+    for (op, out) in pre.iter() {
+        if post.get(op) != Some(out) {
+            spent.push((*op, *out));
+        }
+    }
+    for (op, out) in post.iter() {
+        if pre.get(op) != Some(out) {
+            created.push((*op, *out));
+        }
+    }
+    BlockDelta { spent, created }
+}
+
+/// Diff two stake registries into a net delta.
+fn diff_stake(pre: &StakeState, post: &StakeState) -> StakeDelta {
+    let mut unfrozen = Vec::new();
+    let mut frozen = Vec::new();
+    for (op, f) in pre.iter_frozen() {
+        if !post.is_frozen(op) {
+            unfrozen.push((*op, *f));
+        }
+    }
+    for (op, f) in post.iter_frozen() {
+        if !pre.is_frozen(op) {
+            frozen.push((*op, *f));
+        }
+    }
+    StakeDelta { frozen, unfrozen }
+}
+
+/// Apply a net delta to a UTXO set: insert `created`, then remove `spent`.
+/// The order matters — an outpoint created by one part of a composed delta and
+/// spent by a later part must end up spent.
+fn apply_delta(delta: &BlockDelta, state: &mut UtxoSet) {
+    for (op, out) in &delta.created {
+        state.insert(*op, *out);
+    }
+    for (op, _) in &delta.spent {
+        state.remove(op);
+    }
+}
+
+/// Compose two deltas applied in sequence (`first` then `second`).
+///
+/// For the UTXO set this is plain concatenation: an outpoint cannot be spent by
+/// `first` and created by `second` (its creator would have to be both in
+/// `first`'s selected-parent past and in `second`'s mergeset — disjoint), and
+/// an outpoint created by `first` and spent by `second` cancels under
+/// [`apply_delta`]'s insert-then-remove order.
+fn compose_delta(first: &BlockDelta, second: &BlockDelta) -> BlockDelta {
+    let mut spent = first.spent.clone();
+    spent.extend(second.spent.iter().copied());
+    let mut created = first.created.clone();
+    created.extend(second.created.iter().copied());
+    BlockDelta { spent, created }
+}
+
+/// Apply a net stake delta to a registry. The two lists are disjoint (a bond
+/// cannot be unbonded in the same block — maturity), so order is irrelevant.
+/// Unbonds are replayed at the bond's maturity height, which satisfies the
+/// registry's maturity check.
+fn apply_stake_delta(delta: &StakeDelta, stake: &mut StakeState) {
+    for (op, f) in &delta.frozen {
+        stake.freeze(*op, f.vrf_pk, f.value, f.bond_height);
+    }
+    for (op, f) in &delta.unfrozen {
+        let matures_at = f.bond_height.saturating_add(UNBOND_MATURITY);
+        stake
+            .unfreeze_spend(*op, matures_at)
+            .expect("stake delta application is consistent");
+    }
+}
+
+/// Compose two stake deltas applied in sequence (`first` then `second`).
+///
+/// Unlike the UTXO set, an outpoint *can* be unfrozen by `first` and frozen by
+/// `second` (an unbond followed by a re-bond), or frozen by `first` and
+/// unfrozen by `second` (a bond followed by a matured unbond). Both cancel to
+/// no net change, so the composed lists must exclude them.
+fn compose_stake_delta(first: &StakeDelta, second: &StakeDelta) -> StakeDelta {
+    let mut frozen = Vec::new();
+    let mut unfrozen = Vec::new();
+    for (op, f) in &first.frozen {
+        if !second.unfrozen.iter().any(|(o, _)| o == op) {
+            frozen.push((*op, *f));
+        }
+    }
+    for (op, f) in &second.frozen {
+        if !first.unfrozen.iter().any(|(o, _)| o == op) {
+            frozen.push((*op, *f));
+        }
+    }
+    for (op, f) in &first.unfrozen {
+        if !second.frozen.iter().any(|(o, _)| o == op) {
+            unfrozen.push((*op, *f));
+        }
+    }
+    for (op, f) in &second.unfrozen {
+        if !first.frozen.iter().any(|(o, _)| o == op) {
+            unfrozen.push((*op, *f));
+        }
+    }
+    StakeDelta { frozen, unfrozen }
+}
+
+/// A DAG together with the **per-block UTXO and stake view** each block induces.
 ///
 /// [`apply_dag`] is the batch view: it (re)linearizes a finished DAG and folds
 /// every transaction from scratch. A `Ledger` is the *incremental* view. It owns
-/// a [`Dag`] and, for every block `B`, stores the UTXO set of `B`'s own view —
-/// the state after applying, in the recursive GHOSTDAG order, every transaction
-/// in `past(B) ∪ {B}`. That state is built cheaply from `B`'s selected parent:
+/// a [`Dag`] and, for every non-final block `B`, stores a compact **delta**
+/// describing the net change from `selected_parent(B)`'s view to `B`'s own view
+/// — the state after applying, in the recursive GHOSTDAG order, every
+/// transaction in `past(B) ∪ {B}`. That state is built cheaply from `B`'s
+/// selected parent:
 ///
 /// ```text
 /// state(B) = apply( state(selected_parent(B)),
@@ -898,8 +1071,19 @@ impl std::error::Error for LedgerInsertError {}
 /// The structural [`TxStructureValidator`] is also installed on the underlying
 /// DAG, so malformed blocks are rejected even if the DAG is used directly.
 ///
-/// State is kept per block in full (mirroring the crate's other O(n²) first-slice
-/// simplifications); storing compact per-block diffs is a later optimisation.
+/// State is kept as a **single materialised UTXO set and stake registry at the
+/// selected tip** plus compact per-block undo deltas
+/// (Bitcoin/Kaspa UTXO + undo-log style): `deltas[&b]` records the net UTXO
+/// change from `b`'s selected parent's view to `b`'s own view, and
+/// `stake_deltas[&b]` records the analogous stake-registry change. Any
+/// non-final block's view can be reconstructed on demand by walking its
+/// selected-parent chain and applying deltas. Final blocks' deltas are folded
+/// into their children before being dropped, so a child's delta is always
+/// relative to the deepest non-final ancestor in its chain. Folding is
+/// compositional and pruning is idempotent: applying the folded delta reproduces
+/// the same view as the original sequence, and calling [`Self::prune`] twice at
+/// the same finality threshold removes no additional state. Memory is bounded to
+/// `O(U + S + n·d)` (one tip state plus per-block deltas) instead of `O(n·U)`.
 ///
 /// ## Finality and pruning
 ///
@@ -933,12 +1117,16 @@ pub struct Ledger {
     /// Payload pruning depth for the underlying DAG: blocks this far in blue
     /// score below the selected tip have their payloads evicted. `u64::MAX` = never.
     payload_pruning_depth: u64,
-    /// Per-block view UTXO state: `states[&b]` is the ledger state in `b`'s view.
-    /// Final blocks (below the finality point) are pruned from this map.
-    states: HashMap<BlockId, UtxoSet>,
-    /// Per-block stake registry, mirroring [`Self::states`]: `stakes[&b]` is the
-    /// bonded-stake state in `b`'s own view.
-    stakes: HashMap<BlockId, StakeState>,
+    /// The UTXO state at the selected tip — the single materialised state.
+    tip_state: UtxoSet,
+    /// The stake registry at the selected tip.
+    tip_stake: StakeState,
+    /// Per-block net undo deltas: `deltas[&b]` is the net change from `b`'s
+    /// selected parent's view to `b`'s own view (or from the empty set when the
+    /// selected parent is final — see [`Self::prune`]). Non-final blocks only.
+    deltas: HashMap<BlockId, BlockDelta>,
+    /// Per-block stake deltas, mirroring [`Self::deltas`].
+    stake_deltas: HashMap<BlockId, StakeDelta>,
     /// Hybrid PoW/staked-VRF admission policy; `None` = legacy behaviour (VRF
     /// fields on incoming blocks are ignored/stripped).
     hybrid: Option<HybridConfig>,
@@ -972,10 +1160,13 @@ impl Ledger {
         let mut dag = Dag::with_validator(k, genesis, Box::new(TxStructureValidator));
         dag.set_payload_pruning_depth(u64::MAX);
 
-        let mut states = HashMap::new();
-        states.insert(genesis_id, state);
-        let mut stakes = HashMap::new();
-        stakes.insert(genesis_id, StakeState::new());
+        // Genesis's delta is relative to the empty set: applying it to an empty
+        // UTXO set reproduces the genesis state.
+        let genesis_delta = diff_utxo(&UtxoSet::new(), &state);
+        let mut deltas = HashMap::new();
+        deltas.insert(genesis_id, genesis_delta);
+        let mut stake_deltas = HashMap::new();
+        stake_deltas.insert(genesis_id, StakeDelta::default());
         let mut heights = HashMap::new();
         heights.insert(genesis_id, 0);
         Ok(Self {
@@ -984,8 +1175,10 @@ impl Ledger {
             genesis: genesis_id,
             finality_depth: u64::MAX,
             payload_pruning_depth: u64::MAX,
-            states,
-            stakes,
+            tip_state: state,
+            tip_stake: StakeState::new(),
+            deltas,
+            stake_deltas,
             hybrid: None,
             staked_seen: HashMap::new(),
             heights,
@@ -1137,13 +1330,98 @@ impl Ledger {
     }
 
     /// The UTXO state in `block`'s own view, if `block` is present.
-    pub fn state(&self, block: &BlockId) -> Option<&UtxoSet> {
-        self.states.get(block)
+    ///
+    /// Reconstructed on demand from the per-block undo deltas (the selected
+    /// tip's state is materialised and returned directly). `None` for blocks
+    /// that are final (their deltas were folded into their children and
+    /// dropped) or absent from the DAG.
+    pub fn state(&self, block: &BlockId) -> Option<UtxoSet> {
+        if *block == self.dag.selected_tip() {
+            return Some(self.tip_state.clone());
+        }
+        self.reconstruct_state(block)
     }
 
     /// The stake registry in `block`'s own view, if `block` is present.
-    pub fn stake_state(&self, block: &BlockId) -> Option<&StakeState> {
-        self.stakes.get(block)
+    ///
+    /// Reconstructed on demand from the per-block stake deltas; `None` for
+    /// final or absent blocks.
+    pub fn stake_state(&self, block: &BlockId) -> Option<StakeState> {
+        if *block == self.dag.selected_tip() {
+            return Some(self.tip_stake.clone());
+        }
+        self.reconstruct_stake(block)
+    }
+
+    /// Whether `id` is final: below the finality score, so its delta has been
+    /// folded into its children and dropped. `false` when finality is disabled
+    /// or not yet active.
+    fn is_final(&self, id: &BlockId) -> bool {
+        let threshold = self.finality_score();
+        threshold != 0
+            && self
+                .dag
+                .ghostdag(id)
+                .is_some_and(|g| g.blue_score < threshold)
+    }
+
+    /// Reconstruct the UTXO state in `block`'s view from the undo log.
+    ///
+    /// Walks `block`'s selected-parent chain down to the deepest non-final
+    /// ancestor (or genesis when nothing is final). That block's delta is
+    /// relative to the empty set — either it is genesis, or its selected parent
+    /// is final and the prune-time folding made it so — so applying the deltas
+    /// back up the chain reproduces `block`'s view exactly. `None` when `block`
+    /// is absent, final (its delta was dropped), or its chain crosses a missing
+    /// delta.
+    fn reconstruct_state(&self, block: &BlockId) -> Option<UtxoSet> {
+        let mut path = vec![*block];
+        let mut cur = *block;
+        loop {
+            let gd = self.dag.ghostdag(&cur)?;
+            match gd.selected_parent {
+                None => break,
+                Some(sp) => {
+                    if self.is_final(&sp) {
+                        break;
+                    }
+                    path.push(sp);
+                    cur = sp;
+                }
+            }
+        }
+        let mut state = UtxoSet::new();
+        for p in path.iter().rev() {
+            let delta = self.deltas.get(p)?;
+            apply_delta(delta, &mut state);
+        }
+        Some(state)
+    }
+
+    /// Reconstruct the stake registry in `block`'s view, mirroring
+    /// [`Self::reconstruct_state`].
+    fn reconstruct_stake(&self, block: &BlockId) -> Option<StakeState> {
+        let mut path = vec![*block];
+        let mut cur = *block;
+        loop {
+            let gd = self.dag.ghostdag(&cur)?;
+            match gd.selected_parent {
+                None => break,
+                Some(sp) => {
+                    if self.is_final(&sp) {
+                        break;
+                    }
+                    path.push(sp);
+                    cur = sp;
+                }
+            }
+        }
+        let mut stake = StakeState::new();
+        for p in path.iter().rev() {
+            let delta = self.stake_deltas.get(p)?;
+            apply_stake_delta(delta, &mut stake);
+        }
+        Some(stake)
     }
 
     /// Enable hybrid PoW / staked-VRF admission with policy `config`.
@@ -1223,7 +1501,10 @@ impl Ledger {
     /// blocks never out-compete mined blocks in blue-work accumulation, no
     /// matter how a validator grinds parent combinations. Admission requires:
     ///
-    /// 1. a valid ECVRF proof over [`Dag::vrf_input(parents)`](kovanica_dag::Dag::vrf_input);
+    /// 1. a valid ECVRF proof over the epoch randomness beacon of the block's
+    ///    selected parent ([`Dag::epoch_vrf_input_for_parents`](kovanica_dag::Dag::epoch_vrf_input_for_parents)),
+    ///    or the legacy parent-tip input ([`Dag::vrf_input`](kovanica_dag::Dag::vrf_input))
+    ///    when [`HybridConfig::use_epoch_beacon`] is `false`;
     /// 2. eligibility — `output < threshold(stake_of(pk), total_stake, rate)`
     ///    evaluated against the **selected parent's** stake view (pre-state, so
     ///    bonds inside the block itself do not count for it);
@@ -1340,7 +1621,7 @@ impl Ledger {
         // this very block must not vote for its own producer.
         let sp = preview.selected_parent;
         if let Some(cfg) = self.hybrid.as_ref() {
-            let pre_stake = self.stakes.get(&sp).cloned().unwrap_or_default();
+            let pre_stake = self.reconstruct_stake(&sp).unwrap_or_default();
             self.hybrid_admit(&block, &preview, staked.as_ref(), cfg, &pre_stake)?;
         }
 
@@ -1348,12 +1629,15 @@ impl Ledger {
         let new_height = parent_height + 1;
         let block_blue_score = parent_score + 1;
 
+        // Reconstruct the selected parent's view state from the undo log. The
+        // finality check above guarantees `sp` is non-final, so its delta is
+        // present and the reconstruction succeeds.
         let mut state = self
-            .states
-            .get(&sp)
-            .expect("non-final selected parent always has a stored state")
-            .clone();
-        let mut stake = self.stakes.get(&sp).cloned().unwrap_or_default();
+            .reconstruct_state(&sp)
+            .expect("non-final selected parent always has a stored delta");
+        let mut stake = self.reconstruct_stake(&sp).unwrap_or_default();
+        let state_pre = state.clone();
+        let stake_pre = stake.clone();
         for merged in &preview.mergeset {
             let merged_height = self.heights.get(merged).copied().unwrap_or(0);
             let merged_blue_score = self.dag.ghostdag(merged).map_or(0, |g| g.blue_score);
@@ -1390,14 +1674,23 @@ impl Ledger {
             self.multisig_activation_score,
         )?;
 
-        // Commit: add to the DAG (structural checks run here) and store the state.
+        // Commit: add to the DAG (structural checks run here), then store the
+        // block's net delta relative to its selected parent's view.
         let id = self.dag.insert(block)?;
         if let Some(s) = staked {
             self.staked_seen.insert((s.vrf_pk, sp), id);
         }
-        self.states.insert(id, state);
-        self.stakes.insert(id, stake);
+        let delta = diff_utxo(&state_pre, &state);
+        let stake_delta = diff_stake(&stake_pre, &stake);
+        self.deltas.insert(id, delta);
+        self.stake_deltas.insert(id, stake_delta);
         self.heights.insert(id, new_height);
+        // The selected tip can only change to the block just inserted; when it
+        // does, its state is the single materialised tip state.
+        if self.dag.selected_tip() == id {
+            self.tip_state = state;
+            self.tip_stake = stake;
+        }
         self.prune();
         Ok(id)
     }
@@ -1434,7 +1727,11 @@ impl Ledger {
                 // stake-proportional threshold under the pre-state registry.
                 let key = kovanica_dag::VrfPublicKey::from_bytes(&s.vrf_pk)
                     .map_err(|_| LedgerInsertError::BadStakeProof { vrf_pk: s.vrf_pk })?;
-                let input = Dag::vrf_input(block.parents());
+                let input = if cfg.use_epoch_beacon {
+                    self.dag.epoch_vrf_input_for_parents(block.parents())
+                } else {
+                    Dag::vrf_input(block.parents())
+                };
                 let verified = kovanica_dag::vrf::vrf_verify(&key, &input, &s.proof)
                     .ok()
                     .filter(|out| *out == s.output);
@@ -1498,18 +1795,29 @@ impl Ledger {
         Ok(())
     }
 
-    /// Drop the stored state of every block that is now final (below
-    /// [`Ledger::finality_score`]). Finality only rises, so a pruned block stays
-    /// prunable; and only final blocks are dropped, which are never a future
-    /// block's selected parent (that is a finality violation) nor needed by
+    /// Drop the stored delta of every block that is now final (below
+    /// [`Ledger::finality_score`]).
+    ///
+    /// A final block's delta is first **folded into every child** (a block
+    /// whose selected parent it is): composing the deltas preserves the child's
+    /// reconstruction exactly, and makes the child's delta relative to the
+    /// empty set when the child's selected parent is final. Without this, a
+    /// non-final side branch whose selected-parent chain crosses the finality
+    /// boundary could not be reconstructed once the final blocks below it were
+    /// dropped. Finality only rises, so a pruned block stays prunable; and only
+    /// final blocks are dropped, which are never a future block's selected
+    /// parent (that is a finality violation) nor needed by
     /// [`Ledger::ledger_state`] (which starts from the selected tip).
     fn prune(&mut self) {
         let threshold = self.finality_score();
         if threshold == 0 {
             return;
         }
-        let stale: Vec<BlockId> = self
-            .states
+        // Fold final blocks' deltas into their children, deepest first (blue
+        // score ascending), so a chain of final blocks propagates its composed
+        // delta up to the first non-final child.
+        let mut stale: Vec<BlockId> = self
+            .deltas
             .keys()
             .copied()
             .filter(|id| {
@@ -1518,9 +1826,33 @@ impl Ledger {
                     .is_some_and(|g| g.blue_score < threshold)
             })
             .collect();
+        stale.sort_by_key(|id| self.dag.ghostdag(id).map_or(0, |g| g.blue_score));
         for id in stale {
-            self.states.remove(&id);
-            self.stakes.remove(&id);
+            let Some(delta) = self.deltas.remove(&id) else {
+                continue;
+            };
+            let Some(stake_delta) = self.stake_deltas.remove(&id) else {
+                continue;
+            };
+            let children: Vec<BlockId> = self
+                .deltas
+                .keys()
+                .copied()
+                .filter(|c| {
+                    self.dag
+                        .ghostdag(c)
+                        .is_some_and(|g| g.selected_parent == Some(id))
+                })
+                .collect();
+            for c in children {
+                let child_delta = self.deltas.get_mut(&c).expect("child has a delta");
+                *child_delta = compose_delta(&delta, child_delta);
+                let child_stake = self
+                    .stake_deltas
+                    .get_mut(&c)
+                    .expect("child has a stake delta");
+                *child_stake = compose_stake_delta(&stake_delta, child_stake);
+            }
             self.heights.remove(&id);
         }
         // The sibling-spam guard only needs to remember staked blocks whose
@@ -1552,11 +1884,7 @@ impl Ledger {
             .position(|b| *b == selected_tip)
             .expect("selected tip is in the order");
 
-        let mut state = self
-            .states
-            .get(&selected_tip)
-            .expect("selected tip has a stored state")
-            .clone();
+        let mut state = self.tip_state.clone();
         for block in &order[tip_pos + 1..] {
             let height = self.heights.get(block).copied().unwrap_or(0);
             let payload = self
@@ -1691,10 +2019,11 @@ impl Ledger {
             }
         }
 
-        // The checkpoint UTXO set is the state in the checkpoint block's view.
+        // The checkpoint UTXO set is the state in the checkpoint block's view,
+        // reconstructed from the undo log (the checkpoint block is non-final,
+        // so its delta is present).
         let checkpoint_state = self
-            .states
-            .get(&checkpoint_block)
+            .reconstruct_state(&checkpoint_block)
             .ok_or(LedgerCheckpointError::MissingCheckpointState)?;
 
         // The checkpoint block's height in the selected chain (for subsidy calculation).
@@ -1741,9 +2070,7 @@ impl Ledger {
         // v3: the stake registry as of the checkpoint block's view, applied
         // directly on load (the tip-segment replay then extends it).
         let stake_bytes = self
-            .stakes
-            .get(&checkpoint_block)
-            .cloned()
+            .reconstruct_stake(&checkpoint_block)
             .unwrap_or_default()
             .encode();
         buf.extend_from_slice(&(stake_bytes.len() as u64).to_le_bytes());
@@ -1875,25 +2202,31 @@ impl Ledger {
         let mut dag = Dag::with_validator(k, checkpoint_block, Box::new(TxStructureValidator));
         dag.set_payload_pruning_depth(payload_pruning_depth);
 
-        // Build ledger with the checkpoint state applied directly.
+        // Build ledger with the checkpoint state applied directly: it becomes
+        // the materialised tip state, and the checkpoint block's delta is
+        // relative to the empty set (it is the trusted genesis of the restored
+        // ledger), so its view state reconstructs to exactly the checkpoint.
+        let checkpoint_delta = diff_utxo(&UtxoSet::new(), &checkpoint_state);
+        let checkpoint_stake_delta = diff_stake(&StakeState::new(), &checkpoint_stake);
         let mut ledger = Ledger {
             dag,
             schedule,
             genesis: checkpoint_id,
             finality_depth,
             payload_pruning_depth,
-            states: HashMap::new(),
-            stakes: HashMap::new(),
+            tip_state: checkpoint_state,
+            tip_stake: checkpoint_stake,
+            deltas: HashMap::new(),
+            stake_deltas: HashMap::new(),
             hybrid: None,
             staked_seen: HashMap::new(),
             heights: HashMap::new(),
             multisig_activation_score: MULTISIG_ACTIVATION_SCORE,
         };
-        // Apply checkpoint state as the ledger's current state and the checkpoint block's view state.
+        ledger.deltas.insert(checkpoint_id, checkpoint_delta);
         ledger
-            .states
-            .insert(checkpoint_id, checkpoint_state.clone());
-        ledger.stakes.insert(checkpoint_id, checkpoint_stake);
+            .stake_deltas
+            .insert(checkpoint_id, checkpoint_stake_delta);
         ledger.heights.insert(checkpoint_id, checkpoint_height);
         if let Some(config) = hybrid {
             ledger.set_hybrid(config);
@@ -2514,5 +2847,98 @@ mod tests {
         ledger
             .insert(vec![b_unbond], 1, 301, 0, &[spend])
             .expect("unbonded value is ordinary");
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+    use crate::keys::KeyPair;
+    use crate::tx::{OutPoint, Transaction, TxOutput};
+
+    #[test]
+    fn prune_is_idempotent_and_preserves_reconstruction() {
+        // Build a chain past the finality boundary with non-trivial deltas,
+        // then call prune repeatedly. Non-final block states must not change,
+        // and a second prune must be a no-op.
+        let alice = KeyPair::from_u64(1);
+        let bob = KeyPair::from_u64(2);
+        let genesis_cb =
+            Transaction::coinbase(vec![TxOutput::new(1_000, alice.address())], b"g".to_vec());
+        let genesis_cb_id = genesis_cb.id();
+        let mut ledger =
+            Ledger::with_finality(3, HalvingSchedule::new(1_000, 1_000), &[genesis_cb], 5).unwrap();
+
+        // Spend the genesis coin so deltas carry real UTXO changes.
+        let coin = OutPoint::new(genesis_cb_id, 0);
+        let spend = Transaction::signed(
+            &[(coin, &alice)],
+            vec![TxOutput::new(500, bob.address())],
+            Vec::new(),
+        );
+        let mut tip = ledger
+            .insert(vec![ledger.genesis()], 1, 1, 0, &[spend])
+            .unwrap();
+
+        // Extend well past finality so some deltas are already folded.
+        for h in 2..20 {
+            tip = ledger.insert(vec![tip], 1, h, 0, &[]).unwrap();
+        }
+
+        assert!(ledger.finality_score() > 0, "finality must be active");
+
+        // Snapshot every non-final block's reconstructed state.
+        let before: Vec<(BlockId, UtxoSet, StakeState)> = ledger
+            .dag()
+            .linearize()
+            .into_iter()
+            .filter(|id| ledger.state(id).is_some())
+            .map(|id| {
+                (
+                    id,
+                    ledger.state(&id).unwrap(),
+                    ledger.stake_state(&id).unwrap(),
+                )
+            })
+            .collect();
+        assert!(!before.is_empty(), "non-final blocks must exist");
+
+        // First explicit prune.
+        ledger.prune();
+        for (id, ref_utxo, ref_stake) in &before {
+            assert_eq!(
+                ledger.state(id).as_ref(),
+                Some(ref_utxo),
+                "first prune changed UTXO view of {id}"
+            );
+            assert_eq!(
+                ledger.stake_state(id).as_ref(),
+                Some(ref_stake),
+                "first prune changed stake view of {id}"
+            );
+        }
+
+        // Second prune must be idempotent: the threshold has not advanced,
+        // so no new deltas are eligible for folding.
+        ledger.prune();
+        for (id, ref_utxo, ref_stake) in &before {
+            assert_eq!(
+                ledger.state(id).as_ref(),
+                Some(ref_utxo),
+                "second prune changed UTXO view of {id}"
+            );
+            assert_eq!(
+                ledger.stake_state(id).as_ref(),
+                Some(ref_stake),
+                "second prune changed stake view of {id}"
+            );
+        }
+
+        // The ledger must keep accepting blocks after redundant pruning.
+        let next = ledger.insert(vec![tip], 1, 20, 0, &[]).unwrap();
+        assert!(
+            ledger.state(&next).is_some(),
+            "new block above finality reconstructs"
+        );
     }
 }
