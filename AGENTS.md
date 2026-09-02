@@ -863,8 +863,8 @@ Cross-repo execution plan from `Obsidian-Vault/Poslovno/KovanicaDAG/UPGRADE-PHAS
 
 | Phase | Status | PR |
 |---|---|---|
-| 1 — Foundation & consensus infra | ✅ A1/A2/A3/H1 done; D2 pending | dormant mainnet profile, staked uplink, light_sync, rate limits, dead `mempool.rs` removed |
-| 2 — Consensus evolution | 🔄 in progress | B1 epoch randomness beacon · B2 DAG-level past-set pruning · B3 UTXO undo log |
+| 1 — Foundation & consensus infra | ✅ completed | dormant mainnet profile, staked uplink, light_sync, rate limits, dead `mempool.rs` removed, cargo-audit CI (D2) |
+| 2 — Consensus evolution | ✅ completed | B1 epoch randomness beacon (#49) · B2 DAG-level past-set pruning (#36, #51) · B3 UTXO undo log (#50); node/explorer integration landed |
 | 3 — Performance & scalability | ✅ completed | merged `c85013a` (#37) |
 | 4 — Mobile light-node | ✅ completed | merged `84b6516` (#38); Oracle follow-ups (seed/address mismatch, UI-state cleanup, NodeUrl/lastSyncedBlockId wiring, importWallet dedupe) fixed and merged |
 | 5 — Wallet & security | ✅ completed | multisig node layer + FFI bindings: `8a3bec6` (#41) |
