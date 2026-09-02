@@ -1,4 +1,5 @@
 import { hashHex } from "./hash";
+import { HALVING_ERA } from "../api/contract";
 import { ATOM, K, SUBSIDY, type Block, type Colour, type Tx } from "./types";
 
 const TREASURY = "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc";
@@ -147,7 +148,7 @@ function heaviest(blocks: Block[], ids: string[]): string {
 }
 
 export function subsidyAt(height: number): number {
-  const era = Math.floor(height / 1000);
+  const era = Math.floor(height / HALVING_ERA);
   return Math.max(ATOM, SUBSIDY / 2 ** era);
 }
 

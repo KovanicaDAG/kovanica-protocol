@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { ATOM, NETWORK, type Block, type HistoryRow, type Tx, type WalletRec } from "./types";
+import { ATOM, NETWORK, SUBSIDY, type Block, type HistoryRow, type Tx, type WalletRec } from "./types";
 import {
   TREASURY,
   linearize,
@@ -73,7 +73,7 @@ export const useLedger = create<LedgerSnapshot & Actions>()(
         const next = recast([...blocks, block]);
         const nextBalances = { ...balances };
         if (miner) {
-          const minted = block.txs[0]?.amount ?? 50 * ATOM;
+          const minted = block.txs[0]?.amount ?? SUBSIDY;
           nextBalances[miner] = (nextBalances[miner] ?? 0) + minted;
         }
         set({
