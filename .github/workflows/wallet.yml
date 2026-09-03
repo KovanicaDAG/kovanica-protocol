@@ -49,3 +49,26 @@ jobs:
           name: kovanica-wallet-apk
           path: kovanica-wallet/android/app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+  # The iOS app cannot be compiled on the dev Linux host (no Xcode). This job
+  # is the only real build verification — it is structurally validated here, but
+  # a genuine compile/link needs a macOS runner.
+  build-ios-app:
+    name: Build iOS wallet (simulator, no code signing)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build for iOS simulator (validates Swift compile + link, project structure)
+        run: |
+          xcodebuild \
+            -project kovanica-wallet/ios/KovanicaWallet.xcodeproj \
+            -scheme KovanicaWallet \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
