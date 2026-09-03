@@ -118,9 +118,21 @@ is scraped. Revisit tuning only after those series are flowing for a full week.
   `kovanica-explorer.service.bak.*`), `systemctl daemon-reload && systemctl
   restart kovanica-explorer`. Height resumed: 5239 → 5240 → 5241 (≥1 block/min).
 - **Recovery observed:** the seed is now both miner and validation node, so it
-  keeps producing until seed3 is reachable and its mining confirmed again.
-- **Open follow-ups:** (1) seed3 SSH unreachable from VPS and local — needs
-  network/SG review to restore the independent AWS miner and its metrics;
-  (2) once mining is deterministically covered by ≥2 nodes, consider reverting
-  this to the documented "validation-only seed" split if desired.
+  keeps producing while seed3 is down.
+- **Open follow-ups (updated 2026-09-03):**
+  - (1) **seed3 is OOM-crash-looping, not an SSH problem.** seed3 SSH works from
+    the VPS (`aws_seed3` key, reachable). Its node is killed by the kernel OOM
+    killer at **~790–794 MB anon RSS** (dmesg: `Out of memory: Killed process
+    kovanica-node … anon-rss:79{0-4}…kB`) on a **913 MB** EC2 instance — it
+    cannot fit at current chain size, so `kovanica-seed3` flips between
+    `active`/`activating` forever. The independent AWS miner is therefore down.
+  - (2) **Seed3 fix = bigger instance or memory reduction.** Options: resize to
+    ≥2 GB (t3.small+ / the 4 GB Oracle Always-Free tier from OPERATIONS.md §7),
+    or, as a soak/tuning item, reduce the node's memory footprint (finality /
+    payload-pruning depth trade against the per-block-state O(n²) note in
+    AGENTS.md §2). Deferred — do not tune consensus params to fit a 1 GB box
+    without the normal soak data gate. seed3's binary (2026-08-24, pre-metrics
+    `c8590a5`) also needs a redeploy once it has a box that can hold it.
+  - (3) once mining is deterministically covered by ≥2 nodes again, consider
+    reverting the seed to validation-only if desired.
 
