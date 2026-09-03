@@ -24,7 +24,7 @@ final class WalletViewModel: ObservableObject {
         var isLoadingHistory: Bool = false
         var faucetLoading: Bool = false
         var faucetMessage: String?
-        var nodeURL: String
+        var nodeURL: String = NetworkConstants.KOVANICA_API_DEFAULT
     }
 
     @Published var state: WalletUIState = .loading
