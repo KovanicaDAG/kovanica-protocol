@@ -118,7 +118,7 @@ struct UTXOResponse: Codable {
     }
 }
 
-struct HistoryEntry: Codable, Identifiable {
+struct HistoryEntry: Codable, Identifiable, Equatable, Hashable {
     var id: String { tx + String(height) }
     let block: String
     let tx: String

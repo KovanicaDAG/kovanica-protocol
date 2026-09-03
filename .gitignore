@@ -21,6 +21,7 @@ AGENTS.project.md
 target/
 data/
 !android-light-node/app/src/main/java/com/kovanica/lightnode/data/
+!kovanica-wallet/android/app/src/main/java/com/kovanica/wallet/data/
 crates/kovanica-node/data/
 
 # deepwork state
