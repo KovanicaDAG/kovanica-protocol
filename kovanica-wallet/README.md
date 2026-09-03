@@ -12,7 +12,7 @@ A standalone **Kovanica Wallet** app for **Android** and **iOS**. It is a
 | Platform | Stack | Path | Build |
 |---|---|---|---|
 | Android | Kotlin + Jetpack Compose (Material3) | `android/` | `./gradlew -p android :app:assembleDebug` (wired into `.github/workflows/wallet.yml`) |
-| iOS | Swift + SwiftUI | `ios/` | `xcodebuild -project KovanicaWallet.xcodeproj -scheme KovanicaWallet` (needs a Mac/Xcode; not buildable on Linux) |
+| iOS | Swift + SwiftUI | `ios/` | `xcodebuild -project KovanicaWallet.xcodeproj -scheme KovanicaWallet` (needs a Mac/Xcode; not buildable on Linux). CI also exports an **unsigned, sideloadable `.ipa`** (see `ios/README.md` → "Install on a real iPhone — no Mac needed") |
 
 ## What it does (v1)
 
