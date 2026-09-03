@@ -176,6 +176,10 @@ pub fn record_block_produced(height: u64, blue_score: u64, duration: Duration) {
 /// blocks received from peers on a `KOVANICA_MINE=0` seed — so soak
 /// monitoring sees chain progress without counting these as produced.
 /// [`names::BLOCKS_PRODUCED_TOTAL`] is intentionally not touched here.
+///
+/// Both values are passed as the block's *blue score*, matching
+/// [`record_block_produced`]'s use of blue score for `BLOCK_HEIGHT`, so the
+/// produced and observed series stay comparable (see `Node::note_inserted`).
 pub fn record_block_observed(height: u64, blue_score: u64) {
     gauge!(names::BLOCK_HEIGHT).set(height as f64);
     gauge!(names::DAG_BLUE_SCORE).set(blue_score as f64);

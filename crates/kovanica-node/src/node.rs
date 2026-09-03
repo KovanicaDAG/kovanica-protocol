@@ -2255,13 +2255,17 @@ impl Node {
     /// from peers, so without this the height/blue-score gauges would never be
     /// observed by the metrics recorder — the soak-monitoring gap this fixes.
     fn note_inserted(&mut self, id: BlockId) {
-        let (height, blue_score) = self
+        // Both gauges intentionally report the block's *blue score* (the size
+        // of its blue set), not a linear chain height: this is the same
+        // convention `note_block_produced` uses for `BLOCK_HEIGHT`, so the
+        // produced and observed series stay directly comparable under a soak.
+        let score = self
             .ledger
             .as_ref()
             .and_then(|l| l.dag().ghostdag(&id))
-            .map(|g| (g.blue_score, g.blue_score))
-            .unwrap_or((0, 0));
-        record_block_observed(height, blue_score);
+            .map(|g| g.blue_score)
+            .unwrap_or(0);
+        record_block_observed(score, score);
         set_mempool_counts(
             self.mempool.len_pending(),
             self.mempool.len_orphans(),
