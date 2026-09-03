@@ -4,8 +4,10 @@ kotlin = "2.2.20"
 compose-bom = "2026.06.00"
 activity-compose = "1.13.0"
 navigation-compose = "2.9.8"
-lifecycle-viewmodel-compose = "2.11.0"
-lifecycle-runtime-compose = "2.11.0"
+# Keep lifecycle on 2.9.x: 2.11.0 requires AGP 9.1.0+ and compileSdk 37
+# (checkDebugAarMetadata hard-fails on AGP 8.10.1 / compileSdk 36).
+lifecycle-viewmodel-compose = "2.9.4"
+lifecycle-runtime-compose = "2.9.4"
 coroutines = "1.10.2"
 okhttp = "4.12.0"
 coreKtx = "1.15.0"
