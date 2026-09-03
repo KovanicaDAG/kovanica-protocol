@@ -5,23 +5,25 @@ FastAPI entrypoint. Two routes:
   POST /confirm  - approve or reject a pending diff, resumes the graph
 
 Role is derived from auth, not from the request body. The `Authorization`
-header handling below is a stub — replace `resolve_role()` with a real
-Keycloak/JWT check before this touches anything but localhost.
+header is verified with real JWT auth (see auth.py): JWKS mode when
+AUTH_JWKS_URL is set, dev-token mode otherwise. Only `dev` may confirm.
 """
 
 import json
+import os
 import time
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
+from auth import verify_token
 from graph import build_graph
 
 app = FastAPI(title="Kovanica DevTeam Agent")
 agent_graph = build_graph()
 
-AUDIT_LOG = Path("/var/log/kovanica-agent/audit.jsonl")
+AUDIT_LOG = Path(os.environ.get("AGENT_AUDIT_LOG", "/data/audit.jsonl"))
 AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -29,14 +31,6 @@ def audit(event: dict) -> None:
     event["ts"] = time.time()
     with AUDIT_LOG.open("a") as f:
         f.write(json.dumps(event) + "\n")
-
-
-def resolve_role(authorization: str | None) -> str:
-    """STUB. Replace with a real Keycloak/JWT role claim lookup.
-    Must never trust a client-supplied role directly."""
-    if authorization == "Bearer DEV_TOKEN_PLACEHOLDER":
-        return "dev"
-    return "user"
 
 
 class ChatRequest(BaseModel):
@@ -51,7 +45,7 @@ class ConfirmRequest(BaseModel):
 
 @app.post("/chat")
 def chat(req: ChatRequest, authorization: str | None = Header(default=None)):
-    role = resolve_role(authorization)
+    role = verify_token(authorization)
     config = {"configurable": {"thread_id": req.session_id}}
 
     result = agent_graph.invoke(
@@ -74,7 +68,7 @@ def chat(req: ChatRequest, authorization: str | None = Header(default=None)):
 
 @app.post("/confirm")
 def confirm(req: ConfirmRequest, authorization: str | None = Header(default=None)):
-    role = resolve_role(authorization)
+    role = verify_token(authorization)
     if role != "dev":
         raise HTTPException(status_code=403, detail="Only dev role can confirm changes")
 
