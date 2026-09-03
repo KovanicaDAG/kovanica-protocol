@@ -1,0 +1,345 @@
+// !$*UTF8*$!
+{
+  "archiveVersion" : 1,
+  "classes" : {
+  },
+  "objectVersion" : 46,
+  "objects" : {
+    /* Begin PBXBuildFile section */
+    "7A0100000000000000000001" /* KovanicaWalletApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000001 /* KovanicaWalletApp.swift */; };
+    "7A0100000000000000000002" /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000002 /* ContentView.swift */; };
+    "7A0100000000000000000003" /* WalletModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000003 /* WalletModels.swift */; };
+    "7A0100000000000000000004" /* KovAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000004 /* KovAPIClient.swift */; };
+    "7A0100000000000000000005" /* WalletRepository.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000005 /* WalletRepository.swift */; };
+    "7A0100000000000000000006" /* WalletViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000006 /* WalletViewModel.swift */; };
+    "7A0100000000000000000007" /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000007 /* HomeView.swift */; };
+    "7A0100000000000000000008" /* ReceiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000008 /* ReceiveView.swift */; };
+    "7A0100000000000000000009" /* HistoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B0100000000000000000009 /* HistoryView.swift */; };
+    "7A010000000000000000000A" /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B010000000000000000000A /* Theme.swift */; };
+    "7A010000000000000000000C" /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7B010000000000000000000C /* Assets.xcassets */; };
+    /* End PBXBuildFile section */
+
+    /* Begin PBXFileReference section */
+    "7B0100000000000000000001" /* KovanicaWalletApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KovanicaWalletApp.swift; sourceTree = "<group>"; };
+    "7B0100000000000000000002" /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+    "7B0100000000000000000003" /* WalletModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletModels.swift; sourceTree = "<group>"; };
+    "7B0100000000000000000004" /* KovAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KovAPIClient.swift; sourceTree = "<group>"; };
+    "7B0100000000000000000005" /* WalletRepository.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletRepository.swift; sourceTree = "<group>"; };
+    "7B0100000000000000000006" /* WalletViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WalletViewModel.swift; sourceTree = "<group>"; };
+    "7B0100000000000000000007" /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+    "7B0100000000000000000008" /* ReceiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiveView.swift; sourceTree = "<group>"; };
+    "7B0100000000000000000009" /* HistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HistoryView.swift; sourceTree = "<group>"; };
+    "7B010000000000000000000A" /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+    "7B010000000000000000000B" /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+    "7B010000000000000000000C" /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+    "7B01000000000000000000FF" /* KovanicaWallet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = KovanicaWallet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+    /* End PBXFileReference section */
+
+    /* Begin PBXFrameworksBuildPhase section */
+    "7F0100000000000000000003" /* Frameworks */ = {
+      isa = PBXFrameworksBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    /* End PBXFrameworksBuildPhase section */
+
+    /* Begin PBXGroup section */
+    "7C0100000000000000000000" = {
+      isa = PBXGroup;
+      children = (
+        7C0100000000000000000001 /* KovanicaWallet */,
+        7C0100000000000000000002 /* Models */,
+        7C0100000000000000000003 /* Networking */,
+        7C0100000000000000000004 /* ViewModels */,
+        7C0100000000000000000005 /* Views */,
+        7C0100000000000000000009 /* KovanicaWallet */,
+        7B01000000000000000000FF /* KovanicaWallet.app */,
+      );
+      sourceTree = "<group>";
+    };
+    "7C0100000000000000000001" /* KovanicaWallet */ = {
+      isa = PBXGroup;
+      children = (
+        7B0100000000000000000001 /* KovanicaWalletApp.swift */,
+        7B0100000000000000000002 /* ContentView.swift */,
+      );
+      path = KovanicaWallet;
+      sourceTree = "<group>";
+    };
+    "7C0100000000000000000002" /* Models */ = {
+      isa = PBXGroup;
+      children = (
+        7B0100000000000000000003 /* WalletModels.swift */,
+      );
+      path = KovanicaWallet/Models;
+      sourceTree = "<group>";
+    };
+    "7C0100000000000000000003" /* Networking */ = {
+      isa = PBXGroup;
+      children = (
+        7B0100000000000000000004 /* KovAPIClient.swift */,
+        7B0100000000000000000005 /* WalletRepository.swift */,
+      );
+      path = KovanicaWallet/Networking;
+      sourceTree = "<group>";
+    };
+    "7C0100000000000000000004" /* ViewModels */ = {
+      isa = PBXGroup;
+      children = (
+        7B0100000000000000000006 /* WalletViewModel.swift */,
+      );
+      path = KovanicaWallet/ViewModels;
+      sourceTree = "<group>";
+    };
+    "7C0100000000000000000005" /* Views */ = {
+      isa = PBXGroup;
+      children = (
+        7B0100000000000000000007 /* HomeView.swift */,
+        7B0100000000000000000008 /* ReceiveView.swift */,
+        7B0100000000000000000009 /* HistoryView.swift */,
+        7B010000000000000000000A /* Theme.swift */,
+      );
+      path = KovanicaWallet/Views;
+      sourceTree = "<group>";
+    };
+    "7C0100000000000000000009" /* KovanicaWallet */ = {
+      isa = PBXGroup;
+      children = (
+        7B010000000000000000000C /* Assets.xcassets */,
+        7B010000000000000000000B /* Info.plist */,
+      );
+      path = KovanicaWallet;
+      sourceTree = "<group>";
+    };
+    /* End PBXGroup section */
+
+    /* Begin PBXNativeTarget section */
+    "7D0100000000000000000000" /* KovanicaWallet */ = {
+      isa = PBXNativeTarget;
+      buildConfigurationList = 7E0100000000000000000002 /* Build configuration list for PBXNativeTarget "KovanicaWallet" */;
+      buildPhases = (
+        7F0100000000000000000001 /* Sources */,
+        7F0100000000000000000002 /* Resources */,
+        7F0100000000000000000003 /* Frameworks */,
+      );
+      buildRules = (
+      );
+      dependencies = (
+      );
+      name = KovanicaWallet;
+      productName = KovanicaWallet;
+      productReference = 7B01000000000000000000FF /* KovanicaWallet.app */;
+      productType = "com.apple.product-type.application";
+    };
+    /* End PBXNativeTarget section */
+
+    /* Begin PBXProject section */
+    "7D0100000000000000000001" /* Project object */ = {
+      isa = PBXProject;
+      attributes = {
+        BuildIndependentTargetsInParallel = 1;
+        LastSwiftUpdateCheck = 1500;
+        LastUpgradeCheck = 1500;
+        TargetAttributes = {
+          7D0100000000000000000000 = {
+            CreatedOnToolsVersion = 15.0;
+          };
+        };
+      };
+      buildConfigurationList = 7E0100000000000000000001 /* Build configuration list for PBXProject "KovanicaWallet" */;
+      compatibilityVersion = "Xcode 14.0";
+      developmentRegion = en;
+      hasScannedForEncodings = 0;
+      knownRegions = (
+        en,
+        Base,
+      );
+      mainGroup = 7C0100000000000000000000;
+      productRefGroup = 7C0100000000000000000009 /* KovanicaWallet */;
+      projectDirPath = "";
+      projectRoot = "";
+      targets = (
+        7D0100000000000000000000 /* KovanicaWallet */,
+      );
+    };
+    /* End PBXProject section */
+
+    /* Begin PBXResourcesBuildPhase section */
+    "7F0100000000000000000002" /* Resources */ = {
+      isa = PBXResourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+        7A010000000000000000000C /* Assets.xcassets in Resources */,
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    /* End PBXResourcesBuildPhase section */
+
+    /* Begin PBXSourcesBuildPhase section */
+    "7F0100000000000000000001" /* Sources */ = {
+      isa = PBXSourcesBuildPhase;
+      buildActionMask = 2147483647;
+      files = (
+        7A0100000000000000000001 /* KovanicaWalletApp.swift in Sources */,
+        7A0100000000000000000002 /* ContentView.swift in Sources */,
+        7A0100000000000000000003 /* WalletModels.swift in Sources */,
+        7A0100000000000000000004 /* KovAPIClient.swift in Sources */,
+        7A0100000000000000000005 /* WalletRepository.swift in Sources */,
+        7A0100000000000000000006 /* WalletViewModel.swift in Sources */,
+        7A0100000000000000000007 /* HomeView.swift in Sources */,
+        7A0100000000000000000008 /* ReceiveView.swift in Sources */,
+        7A0100000000000000000009 /* HistoryView.swift in Sources */,
+        7A010000000000000000000A /* Theme.swift in Sources */,
+      );
+      runOnlyForDeploymentPostprocessing = 0;
+    };
+    /* End PBXSourcesBuildPhase section */
+
+    /* Begin XCBuildConfiguration section */
+    "7E0100000000000000000003" /* Debug */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ALWAYS_SEARCH_USER_PATHS = NO;
+        CLANG_ANALYZER_NONNULL = YES;
+        CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+        CLANG_ENABLE_MODULES = YES;
+        CLANG_ENABLE_OBJC_ARC = YES;
+        COPY_PHASE_STRIP = NO;
+        DEBUG_INFORMATION_FORMAT = dwarf;
+        ENABLE_STRICT_OBJC_MSGSEND = YES;
+        ENABLE_TESTABILITY = YES;
+        GCC_C_LANGUAGE_STANDARD = gnu11;
+        GCC_DYNAMIC_NO_PIC = NO;
+        GCC_NO_COMMON_BLOCKS = YES;
+        GCC_OPTIMIZATION_LEVEL = 0;
+        GCC_PREPROCESSOR_DEFINITIONS = (
+          "DEBUG=1",
+          "$(inherited)",
+        );
+        IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+        MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+        MTL_FAST_MATH = YES;
+        ONLY_ACTIVE_ARCH = YES;
+        SDKROOT = iphoneos;
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+        SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+      };
+      name = Debug;
+    };
+    "7E0100000000000000000004" /* Release */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ALWAYS_SEARCH_USER_PATHS = NO;
+        CLANG_ANALYZER_NONNULL = YES;
+        CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+        CLANG_ENABLE_MODULES = YES;
+        CLANG_ENABLE_OBJC_ARC = YES;
+        COPY_PHASE_STRIP = NO;
+        DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+        ENABLE_NS_ASSERTIONS = NO;
+        ENABLE_STRICT_OBJC_MSGSEND = YES;
+        GCC_C_LANGUAGE_STANDARD = gnu11;
+        GCC_NO_COMMON_BLOCKS = YES;
+        IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+        MTL_ENABLE_DEBUG_INFO = NO;
+        MTL_FAST_MATH = YES;
+        SDKROOT = iphoneos;
+        SWIFT_COMPILATION_MODE = wholemodule;
+        SWIFT_OPTIMIZATION_LEVEL = "-O";
+        VALIDATE_PRODUCT = YES;
+      };
+      name = Release;
+    };
+    "7E0100000000000000000005" /* Debug */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+        CODE_SIGN_STYLE = Automatic;
+        CURRENT_PROJECT_VERSION = 1;
+        DEVELOPMENT_TEAM = "";
+        ENABLE_PREVIEWS = YES;
+        GENERATE_INFOPLIST_FILE = NO;
+        INFOPLIST_FILE = KovanicaWallet/Info.plist;
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+        INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+        IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+        LD_RUNPATH_SEARCH_PATHS = (
+          "$(inherited)",
+          "@executable_path/Frameworks",
+        );
+        MARKETING_VERSION = 1.0;
+        PRODUCT_BUNDLE_IDENTIFIER = "online.kovanica.wallet";
+        PRODUCT_NAME = "$(TARGET_NAME)";
+        SDKROOT = iphoneos;
+        SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+        SUPPORTS_MACCATALYST = NO;
+        SWIFT_EMIT_LOC_STRINGS = YES;
+        SWIFT_VERSION = 5.0;
+        TARGETED_DEVICE_FAMILY = "1,2";
+      };
+      name = Debug;
+    };
+    "7E0100000000000000000006" /* Release */ = {
+      isa = XCBuildConfiguration;
+      buildSettings = {
+        ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+        CODE_SIGN_STYLE = Automatic;
+        CURRENT_PROJECT_VERSION = 1;
+        DEVELOPMENT_TEAM = "";
+        ENABLE_PREVIEWS = YES;
+        GENERATE_INFOPLIST_FILE = NO;
+        INFOPLIST_FILE = KovanicaWallet/Info.plist;
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+        INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+        IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+        LD_RUNPATH_SEARCH_PATHS = (
+          "$(inherited)",
+          "@executable_path/Frameworks",
+        );
+        MARKETING_VERSION = 1.0;
+        PRODUCT_BUNDLE_IDENTIFIER = "online.kovanica.wallet";
+        PRODUCT_NAME = "$(TARGET_NAME)";
+        SDKROOT = iphoneos;
+        SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+        SUPPORTS_MACCATALYST = NO;
+        SWIFT_EMIT_LOC_STRINGS = YES;
+        SWIFT_VERSION = 5.0;
+        TARGETED_DEVICE_FAMILY = "1,2";
+      };
+      name = Release;
+    };
+    /* End XCBuildConfiguration section */
+
+    /* Begin XCConfigurationList section */
+    "7E0100000000000000000001" /* Build configuration list for PBXProject "KovanicaWallet" */ = {
+      isa = XCConfigurationList;
+      buildConfigurations = (
+        7E0100000000000000000003 /* Debug */,
+        7E0100000000000000000004 /* Release */,
+      );
+      defaultConfigurationIsVisible = 0;
+      defaultConfigurationName = Release;
+    };
+    "7E0100000000000000000002" /* Build configuration list for PBXNativeTarget "KovanicaWallet" */ = {
+      isa = XCConfigurationList;
+      buildConfigurations = (
+        7E0100000000000000000005 /* Debug */,
+        7E0100000000000000000006 /* Release */,
+      );
+      defaultConfigurationIsVisible = 0;
+      defaultConfigurationName = Release;
+    };
+    /* End XCConfigurationList section */
+  },
+  "rootObject" : "7D0100000000000000000001 /* Project object */"
+}
