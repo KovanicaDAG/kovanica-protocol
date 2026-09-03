@@ -8,7 +8,9 @@ Design rules baked into this file (do not weaken without a reason):
      container, never on the host, and only against the whitelisted verbs.
   3. Anything that would mutate the real repo (git_diff_suggest -> apply)
      is proposed, never applied, and requires a human confirmation via the
-     /confirm endpoint before it goes further.
+     /confirm endpoint. git_diff_suggest stages the proposal into the SQLite
+     patchstore; on approval, main.py -> apply.py turns it into a throwaway
+     git branch + draft PR (never touching the main checkout directly).
 """
 
 import os
@@ -25,6 +27,12 @@ from langgraph.graph.message import add_messages
 from rag import search_codebase as _rag_search_codebase
 from checkpoint import get as _get_checkpoint
 from sandbox_client import run_cargo as _sidecar_run_cargo
+import patchstore as _patchstore
+
+try:  # langgraph.config via contextvar; absent in some old runtimes
+    from langgraph.config import get_config as _get_config
+except Exception:  # pragma: no cover - defensive fallback
+    _get_config = None
 
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://vllm:8000/v1")
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
@@ -87,11 +95,33 @@ def run_cargo_command(command: str, args: list[str] = []) -> str:
 def git_diff_suggest(path: str, explanation: str, patch: str) -> str:
     """Propose a patch to a file. This NEVER writes to the real repo — it
     only stages a proposal that a human must approve via POST /confirm.
+    On approval, apply.py turns the stored proposals into a throwaway git
+    branch + draft PR.
     """
-    return (
-        "PROPOSED (not applied). This diff is queued for human review.\n"
+    session_id = ""
+    if _get_config is not None:
+        try:
+            cfg = _get_config()
+            session_id = str(cfg.get("configurable", {}).get("thread_id", ""))
+        except Exception:  # pragma: no cover - defensive
+            session_id = ""
+    if not session_id:
+        session_id = os.environ.get("AGENT_SESSION_ID", "default")
+
+    stored = False
+    try:
+        _patchstore.add_proposal(session_id, path, explanation, patch)
+        stored = True
+    except Exception as exc:  # pragma: no cover - a store failure must not break the gate
+        stored = False
+
+    note = (
+        "PROPOSED (not applied). This diff is staged for human review and will "
+        f"be applied to a throwaway branch + draft PR on /confirm.\n"
         f"File: {path}\nWhy: {explanation}\n---\n{patch}"
+        + ("\n[staged=true]" if stored else "\n[staged=false: store write failed]")
     )
+    return note
 
 
 @tool

@@ -46,6 +46,17 @@ services:
       - AUTH_AUDIENCE=${AUTH_AUDIENCE:-}
       - AUTH_DEV_ROLES=${AUTH_DEV_ROLES:-}
       - AUTH_DEV_TOKEN=${AUTH_DEV_TOKEN:-}
+      # Apply -> draft PR path (agent/apply.py). Fail-closed: unless
+      # AGENT_GIT_APPLY_ENABLED=1, /confirm only validates and reports
+      # (dry_run). AGENT_GIT_REPO should point at a read-only clone when the
+      # container cannot see the host checkout; set a git/gh identity + gh
+      # auth before arming.
+      - AGENT_GIT_APPLY_ENABLED=${AGENT_GIT_APPLY_ENABLED:-}
+      - AGENT_GIT_DRY_RUN=${AGENT_GIT_DRY_RUN:-1}
+      - AGENT_GIT_BASE=${AGENT_GIT_BASE:-main}
+      - AGENT_GIT_REPO=${AGENT_GIT_REPO:-/repos/kovanica-protocol}
+      - AGENT_GIT_REMOTE=${AGENT_GIT_REMOTE:-origin}
+      - AGENT_GH_BIN=${AGENT_GH_BIN:-gh}
     volumes:
       - ./repos:/repos:ro
       - agent-data:/data   # persistent SQLite checkpoint + audit state

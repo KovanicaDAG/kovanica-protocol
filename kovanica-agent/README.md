@@ -58,6 +58,17 @@ agent-api ──POST /run──▶ sandbox-runner (owns docker.sock) ──spawn
 - **Persistent sessions** (`agent/checkpoint.py`): SQLite-backed LangGraph
   checkpointer (default `/data/agent.sqlite3` inside the container, on the
   `agent-data` volume) so conversation state survives restarts.
+- **Human-gated apply → draft PR** (`agent/patchstore.py` + `agent/apply.py`):
+  `git_diff_suggest` stages a proposal (path + explanation + unified diff) into
+  the SQLite `patchstore`; on `/confirm` (dev role only), `apply.py` validates
+  every path (rejects absolute, `..`, git metadata) and patch (`git apply
+  --check`), applies them to a **throwaway git worktree** branched off
+  `origin/main`, commits, pushes, and opens a **draft PR** via `gh`. It never
+  mutates the main checkout. **Fail-closed**: unless `AGENT_GIT_APPLY_ENABLED=1`
+  it only validates and reports (`dry_run`); `AGENT_GIT_DRY_RUN=1` forces a
+  validate-only pass even when enabled. Env: `AGENT_GIT_REPO`,
+  `AGENT_GIT_REMOTE` (default `origin`), `AGENT_GIT_BASE` (default `main`),
+  `AGENT_GH_BIN` (default `gh`).
 
 ## Before this touches anything beyond your own machine
 - [ ] Index the repo once the stack is up: `docker compose exec agent-api python -m indexer --repo /repos/kovanica-protocol --recreate` (re-run on merge; wire to a GitHub webhook to automate).
@@ -75,9 +86,10 @@ agent-api ──POST /run──▶ sandbox-runner (owns docker.sock) ──spawn
 - [ ] Set real auth before any non-localhost exposure: `AUTH_JWKS_URL` +
       `AUTH_ISSUER`/`AUTH_AUDIENCE`/`AUTH_DEV_ROLES` (Keycloak) or a strong
       `AUTH_DEV_TOKEN`. Without it everyone is `user` (safe by default).
-- [ ] Finish the mutation path: `git_diff_suggest` + `/confirm` currently stop
-      at a proposal; a dedicated `apply_patch` tool (human-gated) that creates
-      a feature branch + draft PR is the next step.
+- [ ] Arm the apply→PR path for a real repo: give the agent-api container a git
+      identity + `gh` auth, set `AGENT_GIT_REPO` (or a read-only clone) and
+      `AGENT_GIT_APPLY_ENABLED=1`. Until then `/confirm` returns a `dry_run`
+      report only (safe by default).
 
 ## Layout
 ```
