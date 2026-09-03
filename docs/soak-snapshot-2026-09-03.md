@@ -75,8 +75,30 @@ separate ops item to restore before per-seed3 metrics are available.
 
 **No retune on this data.** Chain is linear, params stable, no anomaly visible
 in the public data — consistent with the 2026-08-31 "no retune" call. The
-immediate blocker is **not tuning but observability**: restore/comfirm the
+immediate blocker is **not tuning but observability**: restore/confirm the
 block-rate/blue-score/orphan/production metric series on the live seed (verify
 the metrics recorder actually renders them, and why only 2 families currently
 emerge), and bring the `kovanica-tunnel-seed3` unit back to `active` so seed3
 is scraped. Revisit tuning only after those series are flowing for a full week.
+
+## Post-capture updates (2026-09-03)
+
+- **seed3 tunnel restored.** The `kovanica-tunnel-seed3` unit was stuck in
+  `activating` because its `seed3` SSH alias pointed `IdentityFile` at a broken
+  symlink (`/root/.ssh/id_ed25519` → nonexistent `/root/Antonio/Secrets/…`). The
+  alias now uses the dedicated `/root/.ssh/aws_seed3` key (verified to
+  authenticate to `ec2-user@3.79.148.71`); the unit restarts, port `19090`
+  listens, and both Prometheus targets (`seed.kovanica.online`, `seed3.kovanica.online`)
+  are `up`.
+- **seed3 still renders zero `kovanica_*` series** even with the tunnel up —
+  its deployed binary likely predates the metrics rewrite (commit `c8590a5`);
+  redeploy needed to pick up metrics. Seed's binary renders `peer_count` +
+  http counters only.
+- **Code fix landed (PR #72).** The metric-series gap was traced to the
+  height/blue-score/mempool gauges being gated on the mining path only, so a
+  `KOVANICA_MINE=0` seed never registers them. PR #72 surfaces them from
+  `Node::note_inserted` on every insert (`metrics::record_block_observed`),
+  which closes the block-rate/blue-score soak gap without changing
+  `BLOCKS_PRODUCED_TOTAL` semantics or any consensus value. Follow-up: redeploy
+  seeds (incl. seed3) once merged and observe the series for a week before any
+  retune decision.
