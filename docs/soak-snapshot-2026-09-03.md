@@ -102,3 +102,25 @@ is scraped. Revisit tuning only after those series are flowing for a full week.
   `BLOCKS_PRODUCED_TOTAL` semantics or any consensus value. Follow-up: redeploy
   seeds (incl. seed3) once merged and observe the series for a week before any
   retune decision.
+
+## Incident — chain stalled at height 5239, seed mining re-enabled (2026-09-03 ~02:20 local)
+
+- **Symptom:** `explorer.kovanica.online` height held at **5239** across the
+  09-02 23:42 UTC snapshot and repeated samples for ~2 h — a healthy ~1/min
+  chain would have added ~100+ blocks. The tip stayed pinned to the same block.
+- **Root cause:** seed (`kovanica-explorer`) was running `KOVANICA_MINE=0`
+  (validation-only, `peer_count=1`), and the designated miner seed3 was
+  unreachable (AWS `:22` filtered from both the VPS and this host) / not
+  producing. With no node producing blocks, the chain froze — a live
+  single-point-of-failure on mining.
+- **Fix (on the VPS, seed unit):** `KOVANICA_MINE=0 → 1` in
+  `/etc/systemd/system/kovanica-explorer.service` (unit backed up to
+  `kovanica-explorer.service.bak.*`), `systemctl daemon-reload && systemctl
+  restart kovanica-explorer`. Height resumed: 5239 → 5240 → 5241 (≥1 block/min).
+- **Recovery observed:** the seed is now both miner and validation node, so it
+  keeps producing until seed3 is reachable and its mining confirmed again.
+- **Open follow-ups:** (1) seed3 SSH unreachable from VPS and local — needs
+  network/SG review to restore the independent AWS miner and its metrics;
+  (2) once mining is deterministically covered by ≥2 nodes, consider reverting
+  this to the documented "validation-only seed" split if desired.
+
