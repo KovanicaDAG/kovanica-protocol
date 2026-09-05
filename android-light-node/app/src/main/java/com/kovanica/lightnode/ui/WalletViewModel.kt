@@ -35,11 +35,11 @@ private const val ATOM: Long = 100_000_000L
  */
 class WalletViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val secureStorage = SecureSeedStorage(application)
-    private val prefs = WalletPrefs(application)
-    private val bip39 = Bip39(application)
-    private val lightNode = LightNodeRepository.getInstance(application)
-    private val walletRepository = WalletRepository(application, lightNode)
+    private val secureStorage = SecureSeedStorage(getApplication())
+    private val prefs = WalletPrefs(getApplication())
+    private val bip39 = Bip39(getApplication())
+    private val lightNode = LightNodeRepository.getInstance(getApplication())
+    private val walletRepository = WalletRepository(getApplication(), lightNode)
 
     private val _uiState = MutableStateFlow(WalletUiState())
     val uiState: StateFlow<WalletUiState> = _uiState.asStateFlow()
@@ -158,7 +158,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             prefs.walletAddressHex = address.hex
             lightNode.bootIfNeeded(prefs.nodeUrl)
             lightNode.loadLightSync()
-            SyncWorkScheduler.schedule(application)
+            SyncWorkScheduler.schedule(getApplication())
             refreshBalance()
             refreshStakeInfo(mnemonic)
             refreshHistory()
@@ -468,7 +468,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun resetWallet() {
         secureStorage.clear()
-        SyncWorkScheduler.cancel(application)
+        SyncWorkScheduler.cancel(getApplication())
         _uiState.value = WalletUiState(nodeUrl = prefs.nodeUrl)
     }
 
