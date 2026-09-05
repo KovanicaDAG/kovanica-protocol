@@ -1,16 +1,17 @@
 # Operations runbook — `kovanica-testnet`
 
 > Source of truth for live topology, deploy pipeline, DNS, and incident
-> lessons. Mirrored to `Obsidian-Vault/KovanicaDAG/`. Keep in sync with
-> reality in the same change that alters any of it.
+> lessons. Keep in sync with reality in the same change that alters any of it.
+> (The vault copy was archived to `Obsidian-Vault/KovanicaDAG/_archive/` on
+> 2026-09-05 — this file is the only live copy.)
 
-*Updated: 2026-08-31*
+*Updated: 2026-09-03*
 
 ## 1. Topology (all on VPS `srv1745734`, 145.223.116.178)
 
 | Component | Where | Notes |
 | --- | --- | --- |
-| **seed1** (primary) | systemd `kovanica-explorer`, P2P `:9000`, HTTP loopback `:8080` | auto-mines 1 block/min (`KOVANICA_MINE=1 KOVANICA_MINE_SECS=60`) |
+| **seed1** (primary) | systemd `kovanica-explorer`, P2P `:9000`, HTTP loopback `:8080` | auto-mines 1 block/min (`KOVANICA_MINE=1 KOVANICA_MINE_SECS=60`), set after the 2026-09-03 liveness stall |
 | **seed2** (validation instance) | systemd `kovanica-seed2`, P2P `:9001`, HTTP loopback `:18080` | same host as seed1 — proves deploy-seed.sh, no resilience gain |
 | **web** (kovanica.online + wallet + map + explorer pages) | pm2 `kovanica-web`, `127.0.0.1:3010` | built via `npm run build:vps`, deployed to `/root/kovanica-web/.output` |
 | nginx | `/etc/nginx/sites-enabled/explorer.kovanica.online` | `/api/*`→`:8080`, pages→`:3010`, `/download/*`→`/var/www/kovanica-dist/` |
@@ -141,6 +142,70 @@ verifies genesis match against seed1.
   - `mesh.nodes[0].peers` is the in-process demo mesh (empty) — not the
     P2P overlay. Overlay health is the advertised `peers` list + Prometheus
     `kovanica_peer_count`.
+
+- **Soak snapshot (2026-09-03)** — captured from public API + VPS scrape:
+
+  | Field | Value |
+  | --- | --- |
+  | network | `kovanica-testnet` |
+  | genesis | `596874eac2…d0048f` |
+  | height / chain_len | **5239** |
+  | blue_score / blue_work | 5238 / 5238 (linear, tips=1) |
+  | k / PoW / work | 3 / on / 1 |
+  | min_fee | 40_000 atoms |
+  | subsidy / supply | 200 KVNC/block / 104_780_000_000_000 atoms ✓ |
+  | advertised peers | `seed2.kovanica.online:9001`, `seed3.kovanica.online:9000` |
+
+  - **Delta vs 08-31 (3817→5239):** +1422 blk over ~62.5 h ≈ **2.64 min/block**.
+  - **Delta vs 08-24 baseline (448→5239):** +4791 blk over ~223 h ≈ **2.80 min/block**
+    (9+ day soak). No retune recommended — linear chain, all params stable.
+  - **Monitoring finding (2026-09-03):** seed is `KOVANICA_MINE=0`, so the
+    production-gated gauges (`block_height`, `dag_blue_score`, mempool) never
+    register on `/metrics` — only `peer_count` + http counters render. seed3's
+    deployed binary renders zero `kovanica_*` series (predates the metrics
+    rewrite, commit `c8590a5`). Both are tracked in the repo soak snapshot
+    (`docs/soak-snapshot-2026-09-03.md`) and addressed by protocol PR #72
+    (surface passive chain-head gauges on every insert) + a seed3 redeploy.
+  - **seed3 tunnel restored 2026-09-03:** `kovanica-tunnel-seed3` was stuck
+    `activating` (its `seed3` alias pointed `IdentityFile` at a broken symlink
+    `/root/.ssh/id_ed25519`). Repointed to `/root/.ssh/aws_seed3`; both
+    Prometheus targets are now `up`.
+  - **Incident 2026-09-03 — chain stalled at 5239, seed mining re-enabled:**
+    height held at 5239 for ~2 h (tip pinned) because seed1 was `KOVANICA_MINE=0`
+    and the independent AWS miner seed3 was down, so no node was producing.
+    Fix: `KOVANICA_MINE=0→1` on
+    `/etc/systemd/system/kovanica-explorer.service` (unit backed up), daemon-reload
+    + restart. Height resumed and holds ≥1/min (5259+ at 09-03 ~02:50 local).
+  - **seed3 OOM-crash-loop (2026-09-03) — the independent AWS miner is down:**
+    seed3 SSH works from the VPS (`/root/.ssh/aws_seed3`, key comment
+    `kovanica-seed3-aws`), but port 22 is **intermittent** from the VPS
+    (repeated `Connection timed out during banner exchange` — transient
+    AWS-side throttling). Its `kovanica-node` is killed by the kernel OOM killer
+    at **~790–794 MB anon RSS** (`dmesg`: `Out of memory: Killed process
+    kovanica-node …`) on a **913 MB** EC2 instance — it boots, prints the
+    explorer/metrics lines, then is SIGKILLed ~17 s later, so `kovanica-seed3`
+    flips `active`/`activating` forever.
+    - **Resize status (2026-09-03): NOT yet applied.** Despite a request for
+      2 GB, seed3 is still `t3.micro` / `MemTotal 935068 kB` (~913 MB), same
+      instance `i-084b4ce52d6c63678`, ~9 days uptime (no stop/start/reboot —
+      required for a type change to take effect). A real resize at the AWS
+      level has not landed on this box.
+    - **Stopgap attempted (incomplete):** set `vm.swappiness=100` (did not stop
+      the OOM on its own); began adding a systemd drop-in
+      `/etc/systemd/system/kovanica-seed3.service.d/oom.conf` with
+      `OOMScoreAdjust=-1000` so the node spills to the 2 GB swap instead of
+      being OOM-killed — **write unconfirmed** (SSH dropped mid-operation).
+      Next action once reachable: verify the drop-in exists, then
+      `daemon-reload && restart` and watch RSS/swap.
+    - **Real fix** (needs AWS): resize to ≥ 2 GB (ideally `t3.small` @ 2 GB or
+      the 4 GB Oracle Always-Free tier), then redeploy the current binary
+      (seed3's is 2026-08-24, pre-metrics `c8590a5`) so it also reports the
+      passive gauges (`kovanica_block_height`/`kovanica_dag_blue_score`) and
+      can hold `KOVANICA_MINE=1` mining at current chain size.
+    - **Primary chain unaffected:** the VPS seed (`KOVANICA_MINE=1`) is the
+      reliable producer and is healthy/advancing (5290+); PR #72 post-deploy,
+      its `/metrics` now shows `kovanica_block_height`/`kovanica_dag_blue_score`
+      (e.g. 5277) on both `:9090` and explorer `/metrics` `:8080`.
 
 ## 6. Quick commands
 
