@@ -35,6 +35,14 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        resources {
+            // bcprov-jdk18on and jspecify both ship this OSGi manifest path;
+            // exclude it so :app:mergeDebugJavaResource does not fail.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 
 dependencies {
@@ -46,6 +54,7 @@ dependencies {
     implementation(platform(libs.compose.bom))
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
+    implementation("androidx.compose.material:material-icons-extended")
     implementation(libs.activity.compose)
 
     // Navigation, ViewModel, coroutines, HTTP client

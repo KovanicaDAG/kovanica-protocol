@@ -13,12 +13,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * [Dispatchers.IO], and return a [Result] so the repository layer can stay
  * exception-free.
  */
-class NodeClient(nodeUrl: NodeUrl) {
-
-    /**
-     * Convenience constructor for callers that already have a plain URL string.
-     */
-    constructor(nodeUrl: String) : this(NodeUrl(nodeUrl))
+class NodeClient(private val nodeUrl: NodeUrl) {
 
     private val client: OkHttpClient = OkHttpClient()
 

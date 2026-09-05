@@ -28,3 +28,8 @@ crates/kovanica-node/data/
 .slim/deepwork/
 data/*.miner
 data/*.snap
+
+# Android build artifacts
+.gradle/
+build/
+jniLibs/

@@ -103,7 +103,7 @@ class WalletRepository(
                             if (bytes == null) {
                                 Result.failure(IllegalStateException("Block export returned null"))
                             } else {
-                                NodeClient(nodeUrl).submitBlock(bytes).fold(
+                                NodeClient(NodeUrl(nodeUrl)).submitBlock(bytes).fold(
                                     onSuccess = { Result.success(blockInfo.idHex) },
                                     onFailure = { Result.failure(it) },
                                 )
