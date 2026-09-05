@@ -115,7 +115,7 @@ class LightNodeRepository private constructor(context: Context) {
                 // If the node is cold (no persisted blob), fall back to the
                 // last synced block id stored in preferences.
                 val fromId = node.syncedTipId() ?: prefs.lastSyncedBlockId
-                val client = NodeClient(nodeUrl)
+                val client = NodeClient(NodeUrl(nodeUrl))
                 val incrementalBlob = client.fetchLightSync(fromId).getOrThrow()
                 val newHeaders = parseLightSyncHeaders(incrementalBlob)
 
@@ -167,7 +167,7 @@ class LightNodeRepository private constructor(context: Context) {
     suspend fun utxosOf(address: String): Result<String> =
         withContext(Dispatchers.IO) {
             runCatching {
-                NodeClient(prefs.nodeUrl).fetchUtxos(address, 100, 0).getOrThrow()
+                NodeClient(NodeUrl(prefs.nodeUrl)).fetchUtxos(address, 100, 0).getOrThrow()
             }.mapNodeError()
         }
 

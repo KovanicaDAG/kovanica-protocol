@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kovanica.lightnode.data.LightNodeRepository
 import com.kovanica.lightnode.data.NodeClient
+import com.kovanica.lightnode.data.NodeUrl
 import com.kovanica.lightnode.data.SecureSeedStorage
 import com.kovanica.lightnode.data.WalletRepository
 import com.kovanica.lightnode.data.formatKvnc
@@ -277,7 +278,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            NodeClient(prefs.nodeUrl).requestFaucet(address.hex)
+            NodeClient(NodeUrl(prefs.nodeUrl)).requestFaucet(address.hex)
                 .onSuccess { _ ->
                     _uiState.value = _uiState.value.copy(
                         isLoading = false,

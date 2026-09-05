@@ -15,11 +15,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
  */
 class NodeClient(private val nodeUrl: NodeUrl) {
 
-    /**
-     * Convenience constructor for callers that already have a plain URL string.
-     */
-    constructor(nodeUrl: String) : this(NodeUrl(nodeUrl))
-
     private val client: OkHttpClient = OkHttpClient()
 
     /**
