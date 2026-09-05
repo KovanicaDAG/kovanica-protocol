@@ -35,6 +35,14 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        resources {
+            // bcprov-jdk18on and jspecify both ship this OSGi manifest path;
+            // exclude it so :app:mergeDebugJavaResource does not fail.
+            excludes += "META-INF/versions/9/OSGI-INF/MANIFEST.MF"
+        }
+    }
 }
 
 dependencies {
