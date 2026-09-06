@@ -107,6 +107,7 @@ crates/
       finality.rs              Integration: finality-depth pruning, deep-reorg rejection, implicit re-org
       difficulty.rs            Integration: Ledger::set_difficulty enforces work/timestamp end-to-end
       multisig_consensus.rs     Adversarial consensus suite for RFC-001 multisig (35 tests: M-of-N spends, malformed scripts, activation gating, mixed P2PK/P2SH, snapshot roundtrip)
+      native_token_consensus.rs  Adversarial consensus suite for RFC-002 native tokens (29 tests: single/multi-asset transfers, per-asset conservation, fee-in-native, coinbase minting, activation gating, mixed blocks, parallel-DAG conflicts, checkpoint/snapshot roundtrip)
   kovanica-node/               Runnable node binary, mempool, and block gossip (third slice + multi-node)
     src/
       lib.rs                   Crate docs + re-exports + a doctest of the RPC
@@ -178,6 +179,61 @@ Version 0x00 (P2PK) single-key addresses.
   mismatches, witness anomalies, crypto integrity, duplicate-signature attacks,
   activation boundary, mixed P2PK/P2SH blocks, parallel-DAG double-spend, and
   snapshot roundtrip.
+
+### Native tokens — RFC-002 (multi-asset outputs)
+
+Shipped in `kovanica-state`; full spec in `docs/RFC-002-NativeTokens.md`.
+Native tokens bring Cardano-style **multi-asset** outputs to the UTXO ledger:
+an output locks a `value` of a specific `asset_id`, and the ledger conserves
+each asset independently. The native KVNC asset is `asset_id = None`
+(`AssetId::native()`, all-zero 32 bytes); every other asset carries its
+32-byte definition hash.
+
+- **AssetId** = 32-byte BLAKE3 digest of an asset definition; `AssetId::native()`
+  is all zeros and `is_native()` distinguishes it. Renders as lowercase hex.
+- **TxOutput.asset_id** field (`Option<AssetId>`; `None` = native KVNC) with two
+  constructors: `TxOutput::new(value, asset_id, owner)` (explicit asset) and
+  `TxOutput::native(value, owner)` (native KVNC). `UtxoSet::balance_of_asset`
+  queries per-asset balances; `UtxoSet::balance` is now **native-only** (asset
+  outputs are excluded).
+- **Encoding change**: the canonical transaction encoding gained a **1-byte
+  asset flag** per output (0 = native/None, 1 = present + 32-byte asset id);
+  the minimum output size is now **42 bytes** (8 value + 1 flag + 33 owner).
+  ⚠️ **FORMAT BUMP** — old wire blobs are **undecodable** by the new reader and
+  new blobs by the old reader; the testnet **resets at activation**.
+- **Per-asset conservation**: a non-coinbase transaction must conserve each
+  asset independently (`inputs[asset] >= outputs[asset]`); minting an asset in
+  a regular tx is rejected (`AssetNotConserved`). **Fees are paid in native
+  KVNC only** — the native input/output difference is the fee; burning an asset
+  (output < input) is allowed.
+- **Coinbase may mint any asset** (for initial distribution): the subsidy limit
+  applies only to native KVNC outputs, and native-token activation gating does
+  **not** apply to coinbase outputs.
+- **Activation gating**: native tokens are a consensus upgrade gated on blue
+  score (`NATIVE_TOKEN_ACTIVATION_SCORE = 0` default;
+  `Ledger::set_native_token_activation_score`). Pre-activation
+  (`blue_score <= activation_score`) rejects asset outputs and spends of asset
+  inputs (`PreActivationNativeToken`); post-activation native-only outputs
+  remain valid forever. Enforced identically in the incremental `Ledger` and
+  batch `apply_dag`/`apply_block` paths.
+- **Checkpoint v4**: the UTXO checkpoint encoding gained the optional asset_id
+  (32 bytes after owner); `read_checkpoint` accepts v3 (stake registry) and v4.
+- **Node methods**: `send_asset(from_seed, amount, to_seed, asset_id)`,
+  `send_to_asset(from_seed, amount, to, asset_id)`,
+  `send_with_asset(kp, amount, to, asset_id)`,
+  `build_transfer_with_asset(kp, amount, to, asset_id)`,
+  `prepare_transfer_asset(from, amount, to, asset_id)`, and
+  `balance_of_asset(owner, asset_id)` — the native-only `send`/`send_to`/
+  `send_with`/`prepare_transfer`/`balance` delegate with `asset_id = None`.
+- **FFI methods**: `send_asset` / `send_from_asset` / `balance_of_asset`
+  (asset id as lowercase hex; `None` = native KVNC), plus `asset_id_hex` on
+  `HistoryEntry` and `MultisigSpendOutput`.
+- **Tests**: `crates/kovanica-state/tests/native_token_consensus.rs` (29 tests) —
+  single/multi-asset transfers, mixed native/asset transfers, unknown/mismatched
+  asset ids, per-asset conservation, fee-in-native, coinbase minting, activation
+  boundary (pre/post/exact), mixed blocks, parallel-DAG asset conflicts,
+  checkpoint/snapshot roundtrip, zero-value outputs, and AssetId/TxOutput
+  constructors.
 
 ### Web app — Grok preview bridge (dev-only)
 
@@ -602,6 +658,26 @@ deterministic + adversarial tests per the conventions above.
     checkpoint roundtrips) and `crates/kovanica-node/tests/hybrid_node.rs`
     (3: produce→gossip→readmit convergence incl. wire VRF bytes, PoW fallback,
     RPC reporting).
+- [x] Native tokens (Slice 4A / RFC-002): Cardano-style multi-asset outputs.
+  - `AssetId` (32-byte definition hash; `AssetId::native()` = all zeros) and
+    `TxOutput.asset_id` (`Option<AssetId>`; `None` = native KVNC) with
+    `TxOutput::new(value, asset_id, owner)` / `TxOutput::native(value, owner)`.
+  - Per-asset conservation (each asset conserved independently; fees paid in
+    native KVNC only; asset burning allowed); coinbase may mint any asset for
+    initial distribution.
+  - Activation gate on blue score (`NATIVE_TOKEN_ACTIVATION_SCORE`,
+    `Ledger::set_native_token_activation_score`, `PreActivationNativeToken`);
+    checkpoint format bumped to v4 (optional asset_id in UTXO encoding).
+  - Node surface: `send_asset`/`send_to_asset`/`send_with_asset`/
+    `build_transfer_with_asset`/`prepare_transfer_asset`/`balance_of_asset`;
+    FFI surface: `send_asset`/`send_from_asset`/`balance_of_asset` plus
+    `asset_id_hex` on `HistoryEntry` and `MultisigSpendOutput`.
+  - 29-test adversarial suite (`native_token_consensus.rs`): transfers,
+    conservation, fee-in-native, coinbase minting, activation boundary, mixed
+    blocks, parallel-DAG conflicts, checkpoint/snapshot roundtrip.
+  - ⚠️ **FORMAT BUMP**: the 1-byte asset flag makes old wire blobs undecodable
+    and new blobs undecodable by old readers — the testnet **resets at
+    activation**.
 - **Slice 3 — `kovanica-ffi` (UniFFI bindings for mobile light nodes)**:
   - New workspace crate wrapping `Node` behind one exported object,
     `LightNode` (`Mutex<Node>` inside; poison-tolerant lock). Full surface:
