@@ -29,6 +29,32 @@ Signing requires ed25519 key generation and sighash computation — this is a fo
 
 No CocoaPods, SPM, or Carthage — zero external dependencies.
 
+## Install on a real iPhone — no Mac needed
+
+iOS apps can only be *built* on macOS, but you do **not** need a Mac to *get the
+app onto your phone*: our CI builds the app for a physical device on GitHub's
+macOS runners and exports an **unsigned `.ipa`**. A sideload tool on any PC
+(Windows/Linux) re-signs it with your **free Apple ID** at install time.
+
+**Prereqs:** an iPhone on iOS 16+, a PC (Windows/Linux), and a free Apple ID.
+
+1. **Get the `.ipa`.** In GitHub Actions, run the **"kovanica wallet"** workflow
+   (on `main`), then open the **"Export iOS wallet .ipa (unsigned, sideloadable)"**
+   job and download the `kovanica-wallet-ios-ipa` artifact (a
+   `KovanicaWallet-ios-unsigned.ipa`, ~3.6 MB). The job is defined in
+   `.github/workflows/wallet.yml`.
+2. **Install a sideload tool on your PC** — **AltStore** (altstore.io) or
+   **Sideloadly** (sideloadly.io).
+3. **Sign in** with your Apple ID, connect the iPhone via USB, and **trust** the
+   device when prompted.
+4. **Drag the `.ipa`** onto the tool. It installs and re-signs with your Apple ID.
+5. **On the phone:** **Settings → General → VPN & Device Management** → tap your
+   Apple ID profile → **Trust**, then open the Kovanica Wallet.
+
+**Limits of the free-Apple-ID route:** sideloads **expire after 7 days**
+(re-trust / reinstall weekly) and a free account covers only ~3 devices. A paid
+Apple Developer account removes the expiry and device-cap limits.
+
 ## Project Structure
 
 ```
