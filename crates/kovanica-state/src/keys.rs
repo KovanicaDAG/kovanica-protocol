@@ -3,6 +3,8 @@
 //! An [`Address`] is a 33-byte versioned account address:
 //! - Version 0x00: Pay-to-Public-Key (P2PK, 32-byte Ed25519 public key payload).
 //! - Version 0x01: Pay-to-Witness-Script-Hash (P2SH, 32-byte BLAKE3 redeem script digest).
+//! - Version 0x02: Pay-to-Script-V2 (P2SV2, 32-byte BLAKE3 script v2 digest).
+//! - Version 0x03: Stealth address (scan_pk || spend_pk, two 32-byte Ed25519/Ristretto255 keys).
 //!
 //! A [`TxOutput`] records the address that owns it (see [`crate::tx`]). To spend an output, a
 //! transaction input must carry a witness that verifies against that address.
@@ -37,6 +39,12 @@ impl Address {
     pub const VERSION_P2PK: u8 = 0x00;
     /// Version 0x01: Pay-to-Witness-Script-Hash (BLAKE3 digest of threshold redeem script).
     pub const VERSION_P2SH: u8 = 0x01;
+    /// Version 0x02: Pay-to-Script-V2 (BLAKE3 digest of a script v2 program).
+    pub const VERSION_SCRIPT_V2: u8 = 0x02;
+    /// Version 0x03: Stealth address (scan key || spend key, two Ed25519/Ristretto255 keys).
+    pub const VERSION_STEALTH: u8 = 0x03;
+    /// Maximum supported address version.
+    pub const VERSION_MAX: u8 = Self::VERSION_STEALTH;
 
     /// Construct a Version 0x00 (P2PK) address from raw 32-byte Ed25519 public key bytes.
     pub const fn p2pk(pubkey: [u8; 32]) -> Self {
@@ -68,6 +76,55 @@ impl Address {
         Self::p2sh(*hash.as_bytes())
     }
 
+    /// Construct a Version 0x02 (Script v2) address from a 32-byte BLAKE3 script digest.
+    pub const fn script_v2(script_hash: [u8; 32]) -> Self {
+        let mut bytes = [0u8; 33];
+        bytes[0] = Self::VERSION_SCRIPT_V2;
+        let mut i = 0;
+        while i < 32 {
+            bytes[i + 1] = script_hash[i];
+            i += 1;
+        }
+        Self(bytes)
+    }
+
+    /// Construct a Version 0x02 (Script v2) address by computing the BLAKE3 digest of a script v2 program.
+    pub fn from_script_v2(script: &[u8]) -> Self {
+        let hash = blake3::hash(script);
+        Self::script_v2(*hash.as_bytes())
+    }
+
+    /// Construct a Version 0x03 (Stealth) address from a scan key and spend key.
+    ///
+    /// The address is `0x03 || BLAKE3(scan_pk || spend_pk)` — a 33-byte hashed address
+    /// following the same pattern as P2SH (version byte + hash of the full data).
+    /// The recipient shares this address; senders use it to derive one-time output keys.
+    /// The full scan/spend key material is never stored on-chain — only the hash is.
+    /// To spend outputs locked to this address, the recipient derives the one-time signing key
+    /// from their spend secret key and the output's `R` value (ECDH over Ristretto255).
+    pub fn stealth(scan_pk: [u8; 32], spend_pk: [u8; 32]) -> Self {
+        let mut key_material = [0u8; 64];
+        key_material[..32].copy_from_slice(&scan_pk);
+        key_material[32..].copy_from_slice(&spend_pk);
+        let hash = blake3::hash(&key_material);
+        Self::stealth_from_hash(*hash.as_bytes())
+    }
+
+    /// Construct a Version 0x03 (Stealth) address directly from a precomputed 32-byte hash.
+    ///
+    /// Used when the hash is already known (e.g. decoding, or when the recipient
+    /// computes their own address from their keys). The hash is `BLAKE3(scan_pk || spend_pk)`.
+    pub const fn stealth_from_hash(hash: [u8; 32]) -> Self {
+        let mut bytes = [0u8; 33];
+        bytes[0] = Self::VERSION_STEALTH;
+        let mut i = 0;
+        while i < 32 {
+            bytes[i + 1] = hash[i];
+            i += 1;
+        }
+        Self(bytes)
+    }
+
     /// Construct an address from canonical 33-byte versioned wire bytes.
     pub const fn from_versioned_bytes(bytes: [u8; 33]) -> Self {
         Self(bytes)
@@ -82,7 +139,7 @@ impl Address {
     /// or 32 legacy public-key bytes (mapped to Version 0x00).
     pub fn from_slice(slice: &[u8]) -> Result<Self, &'static str> {
         if slice.len() == 33 {
-            if slice[0] > Self::VERSION_P2SH {
+            if slice[0] > Self::VERSION_MAX {
                 return Err("unsupported address version");
             }
             let mut arr = [0u8; 33];
@@ -110,6 +167,14 @@ impl Address {
     /// Whether this is a Version 0x01 (P2SH) address.
     pub const fn is_p2sh(&self) -> bool {
         self.0[0] == Self::VERSION_P2SH
+    }
+    /// Whether this is a Version 0x02 (Script v2) address.
+    pub const fn is_script_v2(&self) -> bool {
+        self.0[0] == Self::VERSION_SCRIPT_V2
+    }
+    /// Whether this is a Version 0x03 (Stealth) address.
+    pub const fn is_stealth(&self) -> bool {
+        self.0[0] == Self::VERSION_STEALTH
     }
 
     /// The canonical 33-byte versioned byte slice.
@@ -148,7 +213,7 @@ impl Address {
             if raw.len() != 33 {
                 return Err("address must be 33 bytes");
             }
-            if raw[0] > Self::VERSION_P2SH {
+            if raw[0] > Self::VERSION_MAX {
                 return Err("unsupported address version");
             }
             let mut out = [0u8; 33];
@@ -177,7 +242,7 @@ impl Address {
         let mid = &t[4..t.len() - 3];
         let bytes = b58_decode(mid)?;
         if bytes.len() == 33 {
-            if bytes[0] > Self::VERSION_P2SH {
+            if bytes[0] > Self::VERSION_MAX {
                 return Err("unsupported address version");
             }
             let arr: [u8; 33] = bytes
@@ -416,9 +481,61 @@ mod tests {
     #[test]
     fn unsupported_version_rejected() {
         let mut bytes = [0u8; 33];
-        bytes[0] = 0x02; // unsupported version
+        bytes[0] = 0x04; // unsupported version (above VERSION_MAX)
         let hex_str = hex::encode(bytes);
         assert!(Address::parse(&hex_str).is_err());
+    }
+
+    #[test]
+    fn script_v2_address_properties() {
+        let script_hash = [0xAAu8; 32];
+        let addr = Address::script_v2(script_hash);
+        assert_eq!(addr.version(), Address::VERSION_SCRIPT_V2);
+        assert!(addr.is_script_v2());
+        assert!(!addr.is_p2pk());
+        assert!(!addr.is_p2sh());
+        assert!(!addr.is_stealth());
+        assert_eq!(addr.payload(), &script_hash);
+        assert_eq!(addr.as_bytes()[0], Address::VERSION_SCRIPT_V2);
+        assert_eq!(&addr.as_bytes()[1..], &script_hash[..]);
+        // kvnc roundtrip
+        let shown = addr.to_kvnc();
+        assert_eq!(Address::parse(&shown).unwrap(), addr);
+        assert_eq!(Address::parse(&addr.to_hex()).unwrap(), addr);
+    }
+
+    #[test]
+    fn stealth_address_properties() {
+        let scan_pk = [0x11u8; 32];
+        let spend_pk = [0x22u8; 32];
+        let addr = Address::stealth(scan_pk, spend_pk);
+        assert_eq!(addr.version(), Address::VERSION_STEALTH);
+        assert!(addr.is_stealth());
+        assert!(!addr.is_p2pk());
+        assert!(!addr.is_p2sh());
+        assert!(!addr.is_script_v2());
+        // The payload is BLAKE3(scan_pk || spend_pk) — deterministic.
+        let mut key_material = [0u8; 64];
+        key_material[..32].copy_from_slice(&[0x11u8; 32]);
+        key_material[32..].copy_from_slice(&[0x22u8; 32]);
+        let expected_hash = blake3::hash(&key_material);
+        assert_eq!(addr.payload(), expected_hash.as_bytes());
+        assert_eq!(addr.as_bytes()[0], Address::VERSION_STEALTH);
+        // kvnc roundtrip
+        let shown = addr.to_kvnc();
+        assert_eq!(Address::parse(&shown).unwrap(), addr);
+        assert_eq!(Address::parse(&addr.to_hex()).unwrap(), addr);
+        // constructing from the same keys yields the same address
+        assert_eq!(
+            Address::stealth(scan_pk, spend_pk),
+            Address::stealth(scan_pk, spend_pk)
+        );
+    }
+
+    #[test]
+    fn version_max_is_stealth() {
+        assert_eq!(Address::VERSION_MAX, Address::VERSION_STEALTH);
+        assert_eq!(Address::VERSION_MAX, 0x03);
     }
 
     #[test]
