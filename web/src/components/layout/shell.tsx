@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Compass, Map, Wallet, Coins, Users, FileText, Pickaxe } from "lucide-react";
+import { Compass, Map, Wallet, Coins, Users, FileText, Pickaxe, Activity } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SourceSwitch } from "@/components/layout/source-switch";
 
@@ -8,6 +8,7 @@ const NAV = [
   { to: "/explorer", label: "Explorer", icon: Compass },
   { to: "/wallet", label: "Wallet", icon: Wallet },
   { to: "/multisig", label: "Multisig", icon: Users },
+  { to: "/network", label: "Network", icon: Activity },
   { to: "/map", label: "Map", icon: Map },
   { to: "/pool", label: "Pool", icon: Pickaxe },
 ] as const;
@@ -81,7 +82,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         aria-label="Mobile"
         className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-bg/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm md:hidden"
       >
-        <ul className="grid grid-cols-6">
+        <ul className="grid grid-cols-4 sm:grid-cols-7">
           {NAV.map((item) => {
             const Icon = item.icon;
             const on =
