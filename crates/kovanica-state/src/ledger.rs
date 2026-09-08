@@ -896,9 +896,7 @@ fn apply_regular(
             let creation_height = prev_entry.creation_height;
             // Overflow can never legitimately pass, and must not be treated as
             // "reached" — pin it to u64::MAX so the spend stays locked.
-            let required = creation_height
-                .checked_add(u64::from(seq))
-                .unwrap_or(u64::MAX);
+            let required = creation_height.saturating_add(u64::from(seq));
             if height < required {
                 return Err(LedgerError::NonFinalRelativeSequence {
                     tx: tx.id(),
@@ -1178,8 +1176,7 @@ fn apply_regular(
             // Overflow must not be treated as "reached" — pin to u64::MAX.
             let required = prev_entry
                 .creation_height
-                .checked_add(u64::from(script.csv()))
-                .unwrap_or(u64::MAX);
+                .saturating_add(u64::from(script.csv()));
             if height < required {
                 return Err(LedgerError::VaultRelativeNotReached {
                     tx: tx.id(),

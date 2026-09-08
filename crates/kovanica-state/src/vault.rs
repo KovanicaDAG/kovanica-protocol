@@ -83,11 +83,7 @@ impl VaultScript {
     /// Rejects a template with both locks zero ([`VaultScriptError::NoLock`])
     /// and an invalid Ed25519 owner point. `unlock_height`/`csv` are plain
     /// `u32` counts; no BIP-68 disable-flag bits are allowed in the template.
-    pub fn new(
-        unlock_height: u32,
-        csv: u32,
-        owner_pk: [u8; 32],
-    ) -> Result<Self, VaultScriptError> {
+    pub fn new(unlock_height: u32, csv: u32, owner_pk: [u8; 32]) -> Result<Self, VaultScriptError> {
         if unlock_height == 0 && csv == 0 {
             return Err(VaultScriptError::NoLock);
         }
@@ -202,10 +198,7 @@ mod tests {
     #[test]
     fn reject_no_lock() {
         let owner = valid_pk(1);
-        assert_eq!(
-            VaultScript::new(0, 0, owner),
-            Err(VaultScriptError::NoLock)
-        );
+        assert_eq!(VaultScript::new(0, 0, owner), Err(VaultScriptError::NoLock));
         assert_eq!(
             VaultScript::parse(&[0u8; VAULT_TEMPLATE_LEN]),
             Err(VaultScriptError::NoLock)

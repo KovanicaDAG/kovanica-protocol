@@ -1,10 +1,14 @@
 # RFC-005 — Time-Lock Vault / Escrow (5.2)
 
-- **Status:** **Draft** — RFC gate for slice 5.2; implementation not started
-- **Reference implementation:** (planned) `crates/kovanica-state/src/vault.rs`,
-  `crates/kovanica-state/src/utxo.rs` (creation-height), `crates/kovanica-state/src/ledger.rs`,
-  `crates/kovanica-state/src/script_v2.rs` (CSV real enforcement)
-- **Consensus test suite:** (planned) `crates/kovanica-state/tests/vault.rs`
+- **Status:** **Shipped** — implemented on `consensus/vault-rfc-005-csv`
+  (checkpoint commit `a470268`); state/node/test suites green, draft PR open
+- **Reference implementation:** `crates/kovanica-state/src/vault.rs`,
+  `crates/kovanica-state/src/utxo.rs` (creation-height, UTXO v6),
+  `crates/kovanica-state/src/ledger.rs` (CSV rule + vault gates, checkpoint v6),
+  `crates/kovanica-state/src/script_v2.rs` (CSV doc points at the ledger rule),
+  `crates/kovanica-node/src/node.rs` + `rpc.rs` (vault helpers + RPC commands)
+- **Consensus test suite:** `crates/kovanica-state/tests/vault.rs` (26 tests),
+  `crates/kovanica-node/tests/vault_node.rs` (5 tests)
 - **Activation:** gated on blue score (mirrors RFC-001/002/003/004 `*_ACTIVATION_SCORE`)
 - **Format bump:** **checkpoint v6** (UTXO entries gain a creation-height field);
   snapshot format and wire tx encoding are **unchanged**
@@ -256,26 +260,27 @@ locking. This keeps the wire/checkpoint upgrade neutral for existing spends.
 
 ---
 
-## 5. Implementation lanes (dispatched after RFC approval)
+## 5. Implementation lanes (all landed except FFI; works in one feature branch)
 
-| Lane | Files | Notes |
-|---|---|---|
-| L1 State: creation-height | `utxo.rs` | `UtxoEntry { output, creation_height }`; `UtxoSet` API returns the entry; `encode`/`decode` → v6; `encoded_len`. |
-| L2 Ledger: CSV + vault | `ledger.rs` | insert outputs with applying block's height; resolve `sequence` per input against entry creation height; `0x05` branch in the owner-version match with validation §4.2. |
-| L3 Template | `vault.rs` (new) | `VaultScript`, parse, address, `VAULT_ACTIVATION_SCORE`. |
-| L4 Script doc fix | `script_v2.rs` | CSV opcode doc now points at RFC-005 (ledger-enforced relative lock). |
-| L5 Node/RPC/FFI | `node.rs`, `rpc.rs`, `light_node.rs` | `ledger::create_vault`, redemption/query helpers, 1–2 RPC commands, FFI passthrough + regenerated bindings + drift-guard CI. |
-| L6 Tests | `tests/vault.rs` (new), extend `tests/difficulty.rs` not needed | §6 suite. |
-| L7 Docs | `AGENTS.md`, `KVP.md` (KVP-105), this RFC, plan file | same change as L1–L6. |
+| Lane | Files | Notes | Status |
+|---|---|---|---|
+| L1 State: creation-height | `utxo.rs` | `UtxoEntry { output, creation_height }`; `UtxoSet` API returns the entry; `encode`/`decode` → v6; `encoded_len`. | ✅ |
+| L2 Ledger: CSV + vault | `ledger.rs` | insert outputs with applying block's height; resolve `sequence` per input against entry creation height; `0x05` branch in the owner-version match with validation §4.2. | ✅ |
+| L3 Template | `vault.rs` (new) | `VaultScript`, parse, address, `VAULT_ACTIVATION_SCORE`. | ✅ |
+| L4 Script doc fix | `script_v2.rs` | CSV opcode doc now points at RFC-005 (ledger-enforced relative lock). | ✅ |
+| L5 Node/RPC/FFI | `node.rs`, `rpc.rs`, `light_node.rs` | `create_vault`/`release_vault`/`balance_of_vault`, `vault_create`/`vault_release`/`vault_balance` RPC commands. **FFI passthrough deferred** (HTLC slice is the model). | ✅ node/RPC; ⏳ FFI |
+| L6 Tests | `tests/vault.rs` (26), `tests/vault_node.rs` (5) | §6 suite. | ✅ |
+| L7 Docs | `AGENTS.md`, `KVP.md` (KVP-105), this RFC, plan file | same change as L1–L6. | ✅ |
 
 `cargo fmt --check`, `cargo clippy --all-targets`, `cargo test` (full workspace),
 then a draft PR gated green. Feature branch: `consensus/vault-rfc-005-csv`.
 
 ---
 
-## 6. Test suite (planned; must be deterministic + adversarial)
+## 6. Test suite (landed; deterministic + adversarial)
 
-`crates/kovanica-state/tests/vault.rs` (~25 tests), all through the incremental
+`crates/kovanica-state/tests/vault.rs` (26 tests) plus
+`crates/kovanica-node/tests/vault_node.rs` (5), all through the incremental
 `Ledger` and the batch `apply_dag` path:
 
 - **CSV ledger rule**
@@ -332,6 +337,26 @@ then a draft PR gated green. Feature branch: `consensus/vault-rfc-005-csv`.
 - Whether the vault slice also wants a **node-level escrow helper**
   (`create_vault`/`release_vault` orchestration) or purely the ledger template —
   the plan lists `tests/vault.rs` only; RFC-004 shipped both.
+
+Resolved during implementation:
+
+- **Disable flag** → kept as "final" (BIP-68's `0x00400000`-style disable, here
+  the top bit): a final-declared input is trivially `>= v` for the script CSV
+  opcode and skips the ledger relative gate.
+- **Both-locks-required** → locked as specified (§4): both gates must elapse;
+  equality (`>=`) is inclusive, so a release block exactly at
+  `unlock_height`/`creation_height + csv` is valid.
+- **Node escrow helper** → shipped: `create_vault`/`release_vault`/
+  `balance_of_vault` + `vault_create`/`vault_release`/`vault_balance` RPC
+  commands (RFC-004 parity).
+- **Error variants** → `LedgerError::VaultAbsoluteNotReached` /
+  `VaultRelativeNotReached` (struct variants: tx, outpoint, required, block
+  height, and for relative the creation height) plus `NonFinalRelativeSequence`
+  and `PreActivationVault`.
+- **Chain-height clock** → the vault/CSV rules compare against the
+  **selected-parent chain height**, not blue score (blue score counts merged
+  blue blocks). `apply_dag` computes chain heights matching the incremental
+  `Ledger`; guarded by `csv_grind_creation`.
 
 ---
 

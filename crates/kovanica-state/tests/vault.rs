@@ -196,7 +196,13 @@ fn csv_aged_unlocks() {
 
     // Spend block height 1: 1 < 0+3 → non-final.
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,
@@ -249,7 +255,13 @@ fn csv_creation_height_from_later_block() {
     // Spend at height 8: 8 < 6+3 → non-final.
     extend_chain(&mut ledger, 1); // tip height 7
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,
@@ -299,7 +311,13 @@ fn csv_parallel_utxo_lookup() {
     // Tip height 10 (spend height 11): coin_b is final (11 >= 10+5? NO — 11 < 15).
     // …so the tx is rejected because coin_b has not aged 5 blocks since height 10.
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,
@@ -339,14 +357,17 @@ fn csv_cltv_compose() {
 
     extend_chain(&mut ledger, 2); // tip height 2
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,
-        LedgerInsertError::State(LedgerError::NonFinalRelativeSequence {
-            sequence: 5,
-            ..
-        })
+        LedgerInsertError::State(LedgerError::NonFinalRelativeSequence { sequence: 5, .. })
     ));
 
     // And the absolute clock alone rejects when it is the unmet one:
@@ -396,7 +417,7 @@ fn utxo_entry_roundtrip() {
     // Strip the per-entry creation-height field → a v5-format payload; decoding
     // it (as legacy checkpoints are) must default creation_height to 0.
     let v5 = &enc[..enc.len() - 8];
-    let mut slice5 = &v5[..];
+    let mut slice5 = v5;
     let legacy = UtxoSet::decode_v5(&mut slice5).unwrap();
     assert_eq!(legacy.creation_height(&op), Some(0));
     assert_eq!(legacy.get(&op), Some(&output));
@@ -412,8 +433,7 @@ fn csv_roundtrip_checkpoint_v6() {
         b"genesis".to_vec(),
     );
     let coin_a = OutPoint::new(genesis_cb.id(), 0);
-    let mut ledger =
-        Ledger::with_finality(K, SCHEDULE, &[genesis_cb], 3).expect("valid genesis");
+    let mut ledger = Ledger::with_finality(K, SCHEDULE, &[genesis_cb], 3).expect("valid genesis");
 
     // Mint a second output at height 4 (block heights 1..=4).
     extend_chain(&mut ledger, 3); // tip height 3
@@ -489,7 +509,13 @@ fn vault_absolute_unlock() {
 
     extend_chain(&mut ledger, 3); // tip height 3
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,
@@ -528,7 +554,13 @@ fn vault_relative_unlock() {
 
     extend_chain(&mut ledger, 3); // tip height 3
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,
@@ -570,14 +602,17 @@ fn vault_both_locks_required() {
     // Tip height 7 → spend height 8: absolute 8>=5 ✓, relative 8 < 0+10 ✗.
     extend_chain(&mut ledger, 7);
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,
-        LedgerInsertError::State(LedgerError::VaultRelativeNotReached {
-            required: 10,
-            ..
-        })
+        LedgerInsertError::State(LedgerError::VaultRelativeNotReached { required: 10, .. })
     ));
 
     // Tip height 9 → spend height 10: both clocks pass.
@@ -677,7 +712,10 @@ fn vault_tampered_template() {
 
     let mut tpl = script.bytes();
     tpl[0] ^= 0x01; // unlock_height 100 -> 101
-    assert_ne!(VaultScript::parse(&tpl).unwrap().address(), script.address());
+    assert_ne!(
+        VaultScript::parse(&tpl).unwrap().address(),
+        script.address()
+    );
 
     let mut spend = build_vault_spend(
         coin,
@@ -955,9 +993,20 @@ fn csv_grind_creation() {
 
     // Build the raw DAG: genesis -> b1 (funds owner); two parallel blocks b2/b3
     // (no txs) both reference b1; merger m references both.
-    let genesis = Block::genesis(1, 0, 0, encode_block_payload(&[genesis_cb.clone()]));
+    let genesis = Block::genesis(
+        1,
+        0,
+        0,
+        encode_block_payload(std::slice::from_ref(&genesis_cb)),
+    );
     let gid = genesis.id();
-    let b1 = Block::new(vec![gid], 1, 1, 0, encode_block_payload(&[fund.clone()]));
+    let b1 = Block::new(
+        vec![gid],
+        1,
+        1,
+        0,
+        encode_block_payload(std::slice::from_ref(&fund)),
+    );
     let b1_id = b1.id();
     let b2 = Block::new(vec![b1_id], 1, 2, 0, encode_block_payload(&[]));
     let b2_id = b2.id();
@@ -968,7 +1017,7 @@ fn csv_grind_creation() {
         1,
         3,
         0,
-        encode_block_payload(&[merger_tx.clone()]),
+        encode_block_payload(std::slice::from_ref(&merger_tx)),
     );
     let mut dag = Dag::new(3, genesis);
     dag.insert(b1).unwrap();
@@ -980,12 +1029,21 @@ fn csv_grind_creation() {
     let run = apply_dag(&dag, SUBSIDY);
 
     // Incremental path: identical structure through Ledger.
-    let mut ledger = Ledger::new(K, SCHEDULE, &[genesis_cb.clone()]).expect("valid genesis");
-    let _ = ledger.insert(vec![gid], 1, 1, 0, &[fund.clone()]).unwrap();
+    let mut ledger =
+        Ledger::new(K, SCHEDULE, std::slice::from_ref(&genesis_cb)).expect("valid genesis");
+    let _ = ledger
+        .insert(vec![gid], 1, 1, 0, std::slice::from_ref(&fund))
+        .unwrap();
     let b2_id_inc = ledger.insert(vec![b1_id], 1, 2, 0, &[]).unwrap();
     let b3_id_inc = ledger.insert(vec![b1_id], 1, 2, 1, &[]).unwrap();
     let _ = ledger
-        .insert(vec![b2_id_inc, b3_id_inc], 1, 3, 0, &[merger_tx.clone()])
+        .insert(
+            vec![b2_id_inc, b3_id_inc],
+            1,
+            3,
+            0,
+            std::slice::from_ref(&merger_tx),
+        )
         .unwrap();
 
     // The merged-block's own creations and the merger's outputs must carry the
@@ -1026,7 +1084,13 @@ fn vault_relay_replay() {
         0,
     );
     ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .expect("first spend");
 
     // Same exact transaction bytes (and thus same id) replayed:
@@ -1059,7 +1123,13 @@ fn pipeline_csv_after_relay_replay() {
         2,
     );
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,

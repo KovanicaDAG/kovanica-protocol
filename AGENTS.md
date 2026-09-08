@@ -100,6 +100,7 @@ crates/
       multisig.rs               M-of-N multisignature (RFC-001 P2SH): MultisigScript, script hash, threshold signature verification (see docs/RFC-001-Multisig.md)
       script_v2.rs              RFC-003 script v2: bounded stack machine (ED25519_VERIFY/CLTV/CSV/HASH_BLAKE3/EQUAL/AND/OR/THRESHOLD), step budget, ScriptV2::new/execute (see docs/RFC-003-ScriptV2-and-Stealth.md)
       htlc.rs                  RFC-004 HTLC template: 100-byte HtlcScript (preimage_hash/recipient_pk/sender_pk/timeout), parse-time validation, witness-shape helpers (see docs/RFC-004-Htlc.md)
+      vault.rs                 RFC-005 time-lock vault template: 40-byte VaultScript (unlock_height/csv/owner_pk), parse-time validation, spend_witness (see docs/RFC-005-Vault.md)
     tests/
       ledger.rs                Integration + adversarial (double-spend across parallel blocks, order-independence)
       validation.rs            Integration: structural rejection at insert vs stateful rejection at apply
@@ -112,10 +113,11 @@ crates/
       native_token_consensus.rs  Adversarial consensus suite for RFC-002 native tokens (29 tests: single/multi-asset transfers, per-asset conservation, fee-in-native, coinbase minting, activation gating, mixed blocks, parallel-DAG conflicts, checkpoint/snapshot roundtrip)
       stealth_script_v2_consensus.rs  Adversarial consensus suite for RFC-003 stealth + script v2 (25 tests: 12 stealth + 13 script v2 — one-time-key ECDH spends, view tags, CLTV/CSV/hash-lock/threshold scripts, activation gating, parallel-DAG conflicts, checkpoint roundtrip)
       htlc.rs                  Adversarial consensus suite for RFC-004 HTLC (23 tests: redeem/refund paths, timeout boundary, preimage mismatch, activation gating, parallel-DAG double-spend, checkpoint/snapshot roundtrip, CLTV non-final fix)
+      vault.rs                 Adversarial consensus suite for RFC-005 vault + real CSV (26 tests: csv final/aged/composed gates, checkpoint v6 roundtrip, vault absolute/relative/both locks, no-lock parse reject, bad script-hash/signature/template, activation gating, parallel-DAG double-spend, snapshot roundtrip, sequence-understatement, creation-height grinding, relay replay)
   kovanica-node/               Runnable node binary, mempool, and block gossip (third slice + multi-node)
     src/
       lib.rs                   Crate docs + re-exports + a doctest of the RPC
-      node.rs                  Node: Ledger + Mempool; genesis/send/pool/produce/balance/tips/save/load + gossip; multi-input prepare_transfer/submit_signed (UTXOs accumulated largest-first, one signature attached to every input)
+      node.rs                  Node: Ledger + Mempool; genesis/send/pool/produce/balance/tips/save/load + gossip; multi-input prepare_transfer/submit_signed (UTXOs accumulated largest-first, one signature attached to every input); vault helpers create_vault/release_vault/balance_of_vault (RFC-005)
       atomic_swap.rs           RFC-004 Tier Nolan atomic swap: SwapParams/SwapSession/SwapError, timeout ordering T_B < T_A, generate_preimage/extract_preimage (see docs/RFC-004-Htlc.md)
       mempool.rs               Mempool: pending txs, deterministic (id) ordering for block assembly
       mempool_v2.rs            Mempool upgrades: orphan pool (missing-input txs held and re-tried), fee-based eviction, capacity limits
@@ -145,6 +147,7 @@ crates/
       challenger_e2e_mining_lifecycle.rs   Challenger 2 e2e external-mining lifecycle + consensus integration harness (1 test: template → PoW → submit → DAG/mempool/coinbase verification)
       challenger_consensus_sync.rs         Empirical consensus-invariant suite (10 tests: difficulty retarget clamps, SPV difficulty bounds, wall-clock drift, reorg locator sync, deep-reorg/fork convergence)
       htlc_node.rs             Integration: RFC-004 swap e2e (create/verify/redeem/extract/refund), timeout-ordering enforcement, htlc_* RPC commands
+      vault_node.rs            Integration: RFC-005 vault node surface — create/release/balance, absolute + relative + combined gates, owner-signature requirement, vault_* RPC commands
 ```
 
 android-light-node/            Jetpack Compose light-node wallet app (slices 9a–9e)
@@ -154,7 +157,7 @@ android-light-node/            Jetpack Compose light-node wallet app (slices 9a�
     work/                      WorkManager periodic sync + local notifications (Slice 9e)
   gradle/libs.versions.toml    AGP / Kotlin / Compose / WorkManager / biometric dependency pins
 
-docs/                          Protocol RFCs + plans: RFC-001-Multisig.md, RFC-002-NativeTokens.md, RFC-003-ScriptV2-and-Stealth.md, RFC-004-Htlc.md, plans/ (mobile-light-node, htlc-atomic-swap, …)
+docs/                          Protocol RFCs + plans: RFC-001-Multisig.md, RFC-002-NativeTokens.md, RFC-003-ScriptV2-and-Stealth.md, RFC-004-Htlc.md, RFC-005-Vault.md, plans/ (mobile-light-node, htlc-atomic-swap, vault-time-lock, …)
 
 VRF is shipped (Stage 3) — see `crates/kovanica-dag/src/vrf.rs` above and the Stage 3 checklist.
 
@@ -358,6 +361,72 @@ orchestration layer. Consensus upgrade gated on blue score.
 - **Format bump: none** — HTLC is an address version in the existing 33-byte
   `owner` field; tx encoding, checkpoint (v5), snapshot, and `kvnc…dag`
   rendering are unchanged. **No testnet reset.**
+
+### Vault / CSV — RFC-005
+
+Shipped in `kovanica-state` + `kovanica-node`; full spec in
+`docs/RFC-005-Vault.md`. RFC-005 does two things in one consensus change: makes
+**CSV (relative locktime) real** (the half of RFC-004 §5.2 that was deferred)
+and layers a dedicated **Version 0x05 (Vault)** template on top. Consensus
+upgrade gated on blue score (`VAULT_ACTIVATION_SCORE = 0` default).
+
+- **Per-UTXO creation height** (`utxo.rs`): every unspent output now carries
+  `creation_height` — the linearized block height at which it entered the set.
+  `UtxoSet` entries are v6 (each gains an 8-byte creation height after the
+  output payload); old checkpoints decode with `creation_height = 0`
+  (immediate-unlock default — safe because CSV only delays, never
+  fast-forwards). **Checkpoint format bumps to v6** (`CHECKPOINT_VERSION`);
+  snapshot and wire tx encoding are unchanged.
+- **Real CSV ledger rule** (`ledger.rs`, NOT gated behind activation — it is a
+  transaction-finality rule like RFC-004's CLTV fix, active from genesis): an
+  input with `sequence != 0` is a relative block lock measured per input from
+  that input's UTXO creation height. A tx is rejected
+  (`NonFinalRelativeSequence`) unless `sequence == 0`, `sequence == u32::MAX`,
+  or the BIP-68 disable-flag bit (`0x80000000`) is set (final), or
+  `block_height >= creation_height + sequence` (overflow pinned to `u64::MAX`).
+- **Vault template** (`vault.rs`): `VaultScript` = `unlock_height u32 LE ||
+  csv u32 LE || owner_pk (32B)` (40 bytes, no version byte inside). Parse
+  rejects wrong length, an invalid Ed25519 owner point, and **both locks zero**
+  (`NoLock` — a lockless vault would be a P2PK output). `Address::VERSION_VAULT
+  = 0x05`; address = `0x05 || BLAKE3(template)`. Spend witness:
+  `[template, owner_sig over the tx sighash]`.
+- **Both locks required** (ledger branch on `is_vault()`): a vault spend is
+  accepted only when `block_height >= unlock_height` **and**
+  `block_height >= creation_height + csv`; each lock is optional (0 = off) but
+  at least one must be set. Failures surface as `VaultAbsoluteNotReached` /
+  `VaultRelativeNotReached` (with the required/actual heights in the error).
+- **Activation gating**: `VAULT_ACTIVATION_SCORE = 0` default;
+  `Ledger::set_vault_activation_score(score)` with getter. Pre-activation
+  (`blue_score <= activation_score`) rejects `0x05` **outputs** and P2SH-less
+  vault spends (`PreActivationVault`) — note this gates the vault branch only,
+  not the finality/CSV ledger rule. Coinbase outputs are exempt. Enforced
+  identically in the incremental `Ledger` and batch `apply_dag`/`apply_block`
+  paths.
+- **Chain-height discipline** (consensus parity): the CSV/vault clocks use the
+  **selected-parent chain height**, not blue score (`blue_score` counts merged
+  blue blocks and exceeds chain height for mergeset blocks). The incremental
+  `Ledger` tracks chain heights per block; the batch `apply_dag` path computes
+  the same heights via `GhostdagData.selected_parent` + `Dag::linearize()`
+  (ancestors precede descendants), so CSV creation heights agree across paths
+  (regression-guarded by `csv_grind_creation`).
+- **Node methods**: `create_vault(kp, amount, unlock_height, csv, owner_pk)`
+  → `VaultInfo` (template, address, funding tx id, outpoint),
+  `release_vault(kp, outpoint, script, to)` (owner signature; pays fee out of
+  the vault value), `balance_of_vault(script)`.
+- **RPC commands**: `vault_create <from-seed> <amount> <unlock-height> <csv>
+  <owner-pk-hex>`, `vault_release <from-seed> <outpoint-tx-hex>
+  <outpoint-index> <script-hex> <to-addr>`, `vault_balance <script-hex>`.
+- **FFI**: not yet surfaced (the RFC-004 HTLC FFI slice is the model; deferred
+  to a follow-up).
+- **Tests**: `crates/kovanica-state/tests/vault.rs` (26 tests — csv
+  final/aged/composed gates, checkpoint v6 roundtrip, vault
+  absolute/relative/both locks, no-lock parse reject, bad
+  script-hash/signature/tampered template, activation boundary, parallel-DAG
+  double-spend, snapshot roundtrip, sequence-understatement, creation-height
+  grinding, relay replay), `crates/kovanica-node/tests/vault_node.rs` (5 tests
+  — absolute/relative/combined gates, owner-signature requirement, RPC).
+- **Format bump: checkpoint v6 only** — tx encoding, snapshot, and `kvnc…dag`
+  rendering unchanged. **No testnet reset.**
 
 ### Web app — Grok preview bridge (dev-only)
 

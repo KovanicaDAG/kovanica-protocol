@@ -707,7 +707,13 @@ fn test_script_v2_csv_rejected() {
     );
 
     let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend.clone()])
+        .insert(
+            vec![ledger.dag().selected_tip()],
+            1,
+            0,
+            0,
+            std::slice::from_ref(&spend),
+        )
         .unwrap_err();
     assert!(matches!(
         err,

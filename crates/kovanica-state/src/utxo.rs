@@ -131,10 +131,7 @@ impl UtxoSet {
     /// Total value of every unspent output. Widened to `u128` so summing many
     /// `u64` outputs cannot overflow.
     pub fn total_value(&self) -> u128 {
-        self.map
-            .values()
-            .map(|e| u128::from(e.output.value))
-            .sum()
+        self.map.values().map(|e| u128::from(e.output.value)).sum()
     }
 
     /// Spendable balance owned by `owner`: the sum of the unspent **native KVNC**
@@ -235,10 +232,7 @@ impl UtxoSet {
         Self::decode_impl(bytes, false)
     }
 
-    fn decode_impl(
-        bytes: &mut &[u8],
-        with_creation_height: bool,
-    ) -> Result<Self, UtxoDecodeError> {
+    fn decode_impl(bytes: &mut &[u8], with_creation_height: bool) -> Result<Self, UtxoDecodeError> {
         let mut reader = CheckpointReader::new(bytes);
         let count = reader.read_u64()? as usize;
         let mut map = HashMap::with_capacity(count);
