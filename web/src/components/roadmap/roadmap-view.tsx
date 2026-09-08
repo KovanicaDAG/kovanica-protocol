@@ -14,28 +14,29 @@ type Item = {
 
 const PROTOCOL: Item[] = [
   {
-    id: "rfc-001",
-    title: "RFC-001 · Multisig (M-of-N P2SH)",
+    id: "kvp-101",
+    title: "KVP-101 · Multisig (M-of-N P2SH)",
     status: "done",
-    blurb: "Threshold redeem scripts, activation gating, node + FFI + web multisig UI.",
+    blurb: "RFC-001 — threshold redeem scripts, activation gating, node + FFI + web multisig UI.",
   },
   {
-    id: "rfc-002",
-    title: "RFC-002 · Native tokens",
+    id: "kvp-102",
+    title: "KVP-102 · Native multi-asset tokens",
     status: "done",
-    blurb: "Multi-asset UTXOs, per-asset conservation, coinbase mint path, checkpoint v4.",
+    blurb: "RFC-002 — multi-asset UTXOs, per-asset conservation, coinbase mint, checkpoint v4.",
+    note: "Public token standard name for KVNC-ledger assets (not an ERC-20).",
   },
   {
-    id: "rfc-003",
-    title: "RFC-003 · Stealth + script v2",
+    id: "kvp-103",
+    title: "KVP-103 · Stealth + script v2",
     status: "done",
-    blurb: "One-time keys (ECDH), view tags, bounded script machine (CLTV/CSV/hash-lock).",
+    blurb: "RFC-003 — one-time keys (ECDH), view tags, bounded script machine (CLTV/CSV/hash-lock).",
   },
   {
-    id: "rfc-004",
-    title: "RFC-004 · HTLC atomic swaps",
+    id: "kvp-104",
+    title: "KVP-104 · HTLC atomic swaps",
     status: "active",
-    blurb: "Hashed time-locked contracts, redeem/refund paths, swap session helpers.",
+    blurb: "RFC-004 — hashed time-locked contracts, redeem/refund paths, swap session helpers.",
     note: "Implementation on branch; needs rebase onto main after RFC-003 squash.",
   },
 ];
@@ -49,7 +50,7 @@ const SURFACE: Item[] = [
   },
   {
     id: "web-assets",
-    title: "Web multi-asset UX",
+    title: "Web KVP-102 UX",
     status: "active",
     blurb: "AssetPicker + explorer badges ready; full picker needs node asset_id in HTTP API.",
   },
@@ -70,15 +71,15 @@ const SURFACE: Item[] = [
 const NEXT: Item[] = [
   {
     id: "htlc-land",
-    title: "Land RFC-004 on main",
+    title: "Land KVP-104 on main",
     status: "next",
     blurb: "Rebase HTLC branch, green tests, merge; then optional web swap UI.",
   },
   {
     id: "asset-http",
-    title: "Node HTTP asset_id",
+    title: "Node HTTP asset_id (KVP-102)",
     status: "next",
-    blurb: "Expose asset_id on utxos/history/prepare so the web picker shows real assets.",
+    blurb: "Expose asset_id on utxos/history/prepare so the web picker shows real KVP-102 assets.",
   },
   {
     id: "mainnet",
@@ -163,22 +164,25 @@ export function RoadmapView() {
         <p className="font-mono text-[10px] tracking-brand text-subtle uppercase">Protocol</p>
         <h1 className="mt-1 font-display text-3xl tracking-tight text-fg md:text-4xl">Roadmap</h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
-          Public view of where Kovanica is: consensus RFCs, client surfaces, and what lands next.
-          Status mirrors the monorepo plan in AGENTS.md and the RFC docs.
+          Public view of Kovanica Protocol standards (**KVP-101…104**), client surfaces, and what
+          lands next. Specs live under <code className="text-fg/80">docs/KVP*.md</code> and{" "}
+          <code className="text-fg/80">docs/RFC-*.md</code>.
         </p>
         <p className="mt-3 font-mono text-xs text-subtle">
-          {done} shipped · {PROTOCOL.filter((i) => i.status === "active").length +
+          {done} shipped ·{" "}
+          {PROTOCOL.filter((i) => i.status === "active").length +
             SURFACE.filter((i) => i.status === "active").length}{" "}
           in progress · {NEXT.length} queued · {total} tracked
         </p>
       </header>
 
-      <Section title="Consensus upgrades" items={PROTOCOL} />
+      <Section title="KVP consensus standards" items={PROTOCOL} />
       <Section title="Clients & surface" items={SURFACE} />
       <Section title="Next up" items={NEXT} />
 
       <p className="border-t border-border pt-6 text-xs leading-relaxed text-subtle">
-        Specs live under <code className="text-muted">docs/RFC-*.md</code> in the protocol repo.{" "}
+        Token standard: <strong className="text-muted">KVP-102</strong> (native multi-asset; not
+        ERC-20).{" "}
         <Link to="/docs" className="text-blue underline-offset-2 hover:underline">
           Technical details
         </Link>{" "}
