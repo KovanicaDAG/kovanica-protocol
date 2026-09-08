@@ -1,17 +1,19 @@
 # RFC-002 — Native Tokens (Cardano Multi-Asset Model)
 
 - **Status:** Shipped (implemented in `kovanica-state`)
+- **Public standard name:** **[KVP-102](./KVP-102-NativeTokens.md)** (see [KVP registry](./KVP.md))
 - **Reference implementation:** `crates/kovanica-state/src/tx.rs`,
   `crates/kovanica-state/src/utxo.rs`, `crates/kovanica-state/src/ledger.rs`,
   `crates/kovanica-node/src/node.rs`, `crates/kovanica-ffi/src/light_node.rs`
 - **Consensus test suite:** `crates/kovanica-state/tests/native_token_consensus.rs` (29 tests)
 - **Activation:** gated on blue score (see [Activation gating](#activation-gating))
 
-This document is the specification that the native-token code in `kovanica-state`
-references as "RFC-002". It describes the asset identifier format, the output
-encoding, per-asset conservation, coinbase minting, and the consensus activation
-gate. It is grounded in the shipped implementation — do not change the formats
-here without changing the code, and vice versa.
+This document is the **normative** specification that the native-token code in
+`kovanica-state` references as "RFC-002". The public-facing standard name is
+**KVP-102**. It describes the asset identifier format, the output encoding,
+per-asset conservation, coinbase minting, and the consensus activation gate. It
+is grounded in the shipped implementation — do not change the formats here
+without changing the code, and vice versa.
 
 ---
 
