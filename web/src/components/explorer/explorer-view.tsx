@@ -8,7 +8,7 @@ import { fmtKvnc } from "@/lib/ledger/format";
 import { shortId } from "@/lib/ledger/hash";
 import { cn } from "@/lib/utils";
 import type { Block } from "@/lib/ledger/types";
-import type { ApiNode } from "@/lib/api/contract";
+import { assetLabel, isNativeAsset, type ApiNode, type ApiDagBlock } from "@/lib/api/contract";
 
 const TABS = ["Graph", "Mempool", "Order", "Blocks", "Analytics"] as const;
 type Tab = (typeof TABS)[number];
@@ -39,6 +39,7 @@ export function ExplorerView() {
   }, [state?.mining, act]);
 
   const selected = blocks.find((b) => b.id === selectedBlock) ?? null;
+  const selectedApi = state?.node.dag.find((b) => b.id === selectedBlock) ?? null;
   const n = state?.node;
 
   return (
@@ -56,38 +57,15 @@ export function ExplorerView() {
           <span className="font-mono text-[11px] tracking-wide text-subtle uppercase">
             {state?.mining ? "mining" : "paused"} · {source}
           </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-10"
-            disabled={!state?.operator}
-            onClick={() => void act("/api/mine")}
-          >
-            <Hammer className="size-3.5" />
-            Mine
+          <Button type="button" variant="outline" size="sm" className="h-10" disabled={!state?.operator} onClick={() => void act("/api/mine")}>
+            <Hammer className="size-3.5" /> Mine
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-10"
-            disabled={!state?.operator}
-            onClick={() => void act(`/api/mining?on=${state?.mining ? 0 : 1}`)}
-          >
+          <Button type="button" variant="ghost" size="sm" className="h-10" disabled={!state?.operator} onClick={() => void act(`/api/mining?on=${state?.mining ? 0 : 1}`)}>
             {state?.mining ? <Pause className="size-3.5" /> : <Play className="size-3.5" />}
             {state?.mining ? "Pause" : "Resume"}
           </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-10"
-            disabled={!state?.allow_reset}
-            onClick={() => void act("/api/reset")}
-          >
-            <RotateCcw className="size-3.5" />
-            Reset
+          <Button type="button" variant="ghost" size="sm" className="h-10" disabled={!state?.allow_reset} onClick={() => void act("/api/reset")}>
+            <RotateCcw className="size-3.5" /> Reset
           </Button>
         </div>
       </div>
@@ -138,7 +116,7 @@ export function ExplorerView() {
       </div>
 
       <section className="px-4 py-5 md:px-6">
-        {tab === "Graph" ? <GraphPanel selected={selected} node={n} /> : null}
+        {tab === "Graph" ? <GraphPanel selected={selected} apiBlock={selectedApi} /> : null}
         {tab === "Blocks" ? (
           <BlocksTable
             blocks={[...blocks].reverse()}
@@ -166,12 +144,18 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function GraphPanel({ selected, node: _node }: { selected: Block | null; node: ApiNode | undefined }) {
+function GraphPanel({
+  selected,
+  apiBlock,
+}: {
+  selected: Block | null;
+  apiBlock: ApiDagBlock | null;
+}) {
   if (!selected) {
     return <p className="text-sm text-muted">Select a block on the graph.</p>;
   }
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
       <article className="rounded-lg border border-border bg-surface p-4">
         <p className="text-[10px] tracking-wide text-subtle uppercase">Block</p>
         <p className="mt-1 font-mono text-sm break-all text-fg">{selected.id}</p>
@@ -196,12 +180,42 @@ function GraphPanel({ selected, node: _node }: { selected: Block | null; node: A
       </article>
       <aside className="rounded-lg border border-border bg-surface p-4">
         <p className="text-[10px] tracking-wide text-subtle uppercase">Transactions</p>
-        <ul className="mt-2 space-y-2 font-mono text-xs text-muted">
-          {selected.txs.map((tx) => (
-            <li key={tx.id}>
-              {tx.coinbase ? "coinbase" : "transfer"} · {fmtKvnc(tx.amount)}
+        <ul className="mt-2 space-y-3 font-mono text-xs text-muted">
+          {(apiBlock?.txs ?? []).map((tx) => (
+            <li key={tx.id} className="border-b border-border/60 pb-2 last:border-0">
+              <div className="text-fg">
+                {tx.coinbase ? "coinbase" : "transfer"} · {shortId(tx.id)}
+              </div>
+              {tx.outputs.length === 0 ? (
+                <div className="mt-1 text-subtle">(no outputs)</div>
+              ) : (
+                <ul className="mt-1 space-y-1">
+                  {tx.outputs.map((o, i) => (
+                    <li key={`${tx.id}-${i}`} className="flex flex-wrap items-baseline gap-x-2">
+                      <span className="text-fg">{fmtKvnc(o.value)}</span>
+                      <span
+                        className={cn(
+                          "rounded px-1 text-[10px]",
+                          isNativeAsset(o.asset_id)
+                            ? "bg-surface-2 text-subtle"
+                            : "bg-gold/10 text-gold",
+                        )}
+                      >
+                        {assetLabel(o.asset_id)}
+                      </span>
+                      <span className="text-subtle">{shortId(o.owner)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </li>
           ))}
+          {!apiBlock &&
+            selected.txs.map((tx) => (
+              <li key={tx.id}>
+                {tx.coinbase ? "coinbase" : "transfer"} · {fmtKvnc(tx.amount)}
+              </li>
+            ))}
         </ul>
       </aside>
     </div>
