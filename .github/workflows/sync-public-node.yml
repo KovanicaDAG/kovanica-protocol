@@ -139,7 +139,7 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             asset: x86_64-linux
-            zigbuild: false
+            zigbuild: true   # zig provides the C toolchain ring needs for musl
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
             asset: aarch64-linux
@@ -162,7 +162,7 @@ jobs:
       - name: Install toolchain
         run: rustup target add ${{ matrix.target }}
 
-      - name: Install cargo-zigbuild (aarch64 musl cross)
+      - name: Install cargo-zigbuild (x86_64/aarch64 musl cross)
         if: matrix.zigbuild
         uses: taiki-e/install-action@v2
         with:
@@ -192,13 +192,16 @@ jobs:
           TARGET: ${{ matrix.target }}
         run: |
           mkdir -p dist
+          # The kovanica-cli package's binary is named `kovanica`
+          # (crates/kovanica-cli/Cargo.toml [[bin]]); copy it as kovanica-cli
+          # so the artifact keeps its documented name.
           if [ "${{ runner.os }}" = "Windows" ]; then
             cp "target/$TARGET/release/kovanica-node.exe" dist/
-            cp "target/$TARGET/release/kovanica-cli.exe" dist/
+            cp "target/$TARGET/release/kovanica.exe" dist/kovanica-cli.exe
             tar -czf "$ASSET.tar.gz" -C dist kovanica-node.exe kovanica-cli.exe
           else
             cp "target/$TARGET/release/kovanica-node" dist/
-            cp "target/$TARGET/release/kovanica-cli" dist/
+            cp "target/$TARGET/release/kovanica" dist/kovanica-cli
             tar -czf "$ASSET.tar.gz" -C dist kovanica-node kovanica-cli
           fi
           sha256sum "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
