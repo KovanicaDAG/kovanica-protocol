@@ -8,6 +8,10 @@ type Size = "sm" | "md";
 
 type Props = {
   assetId?: string | null;
+  /** Override displayed text (e.g. legend "token") */
+  label?: string;
+  /** Force non-native styling even without a real id */
+  variant?: "native" | "token" | "auto";
   /** Show full hex under the chip on non-native */
   showFullId?: boolean;
   /** Allow click-to-copy of asset id */
@@ -22,14 +26,17 @@ type Props = {
  */
 export function AssetBadge({
   assetId,
+  label: labelOverride,
+  variant = "auto",
   showFullId = false,
   copyable = true,
   size = "sm",
   className,
 }: Props) {
-  const native = isNativeAsset(assetId);
-  const label = native ? TOKEN : assetLabel(assetId);
-  const full = native ? null : (assetId ?? null);
+  const native =
+    variant === "native" ? true : variant === "token" ? false : isNativeAsset(assetId);
+  const label = labelOverride ?? (native ? TOKEN : assetLabel(assetId));
+  const full = native ? null : (assetId && !isNativeAsset(assetId) ? assetId : null);
   const [copied, setCopied] = useState(false);
 
   async function onCopy(e: React.MouseEvent) {
@@ -49,7 +56,7 @@ export function AssetBadge({
     <span className={cn("inline-flex max-w-full flex-col gap-0.5", className)}>
       <button
         type="button"
-        disabled={native || !copyable}
+        disabled={native || !copyable || !full}
         onClick={onCopy}
         title={full ?? `${TOKEN} · native`}
         className={cn(
@@ -59,8 +66,8 @@ export function AssetBadge({
           native
             ? "border-gold/30 bg-gold/10 text-gold"
             : "border-teal/35 bg-teal/10 text-teal hover:bg-teal/15",
-          !native && copyable && "cursor-pointer",
-          (native || !copyable) && "cursor-default",
+          !native && copyable && full && "cursor-pointer",
+          (native || !copyable || !full) && "cursor-default",
         )}
       >
         {native ? (
@@ -69,13 +76,9 @@ export function AssetBadge({
           <Hash className={cn(size === "sm" ? "size-2.5" : "size-3")} strokeWidth={2.2} />
         )}
         <span className="truncate">{label}</span>
-        {!native && copyable && (
+        {!native && copyable && full && (
           <span className="ml-0.5 opacity-70">
-            {copied ? (
-              <Check className="size-2.5" />
-            ) : (
-              <Copy className="size-2.5" />
-            )}
+            {copied ? <Check className="size-2.5" /> : <Copy className="size-2.5" />}
           </span>
         )}
       </button>
