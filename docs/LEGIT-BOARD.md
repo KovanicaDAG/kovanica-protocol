@@ -73,11 +73,13 @@ Without these, the project still looks closed.
 Others can run peers and build on the API.
 
 ### P1.1 Land KVP-104 (HTLC)
-- [ ] Rebase RFC-004 / PR branch onto current `main`
-- [ ] Green consensus tests; merge
-- [ ] Note on roadmap flips to **Shipped**
+- [x] Rebase RFC-004 / PR branch onto current `main`
+- [x] Green consensus tests; merge
+- [x] Note on roadmap flips to **Shipped**
 
 **Done when:** HTLC is on `main` with tests; [KVP.md](./KVP.md) status updated.
+> ✅ **Done 2026-09-08** — RFC-004 rebased onto `main` (PR #88, merged `fb13741`) after
+> main's web typecheck was restored (PR #95). KVP-104 → **Shipped**.
 
 ### P1.2 Node HTTP `asset_id` (KVP-102)
 - [ ] `/api/utxos` includes `asset_id` per UTXO
