@@ -86,7 +86,7 @@ const NEXT: Item[] = [
     id: "mainnet",
     title: "Mainnet readiness",
     status: "next",
-    blurb: "Ops hardening, seed topology, fee market soak, release docs.",
+    blurb: "Ops hardening, seed topology, fee market soak, release docs — see docs/LEGIT-BOARD.md.",
   },
 ];
 
@@ -166,8 +166,8 @@ export function RoadmapView() {
         <h1 className="mt-1 font-display text-3xl tracking-tight text-fg md:text-4xl">Roadmap</h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
           Public view of Kovanica Protocol standards (**KVP-101…104**), client surfaces, and what
-          lands next. Specs live under <code className="text-fg/80">docs/KVP*.md</code> and{" "}
-          <code className="text-fg/80">docs/RFC-*.md</code>.
+          lands next. Full legitimacy checklist:{" "}
+          <code className="text-fg/80">docs/LEGIT-BOARD.md</code> (P0–P2).
         </p>
         <p className="mt-3 font-mono text-xs text-subtle">
           {done} shipped ·{" "}
@@ -183,7 +183,9 @@ export function RoadmapView() {
 
       <p className="border-t border-border pt-6 text-xs leading-relaxed text-subtle">
         Token standard: <strong className="text-muted">KVP-102</strong> (native multi-asset; not
-        ERC-20).{" "}
+        ERC-20). Specs: <code className="text-muted">docs/KVP*.md</code>,{" "}
+        <code className="text-muted">docs/WHAT-IS-KOVANICA.md</code>,{" "}
+        <code className="text-muted">docs/TOKENOMICS.md</code>.{" "}
         <Link to="/docs" className="text-blue underline-offset-2 hover:underline">
           Technical details
         </Link>{" "}
