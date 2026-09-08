@@ -104,15 +104,14 @@ export function ExplorerView() {
         <Stat label="Txs" value={String(n?.tx_count ?? "—")} />
       </dl>
 
-      {/* Asset legend strip */}
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-surface/60 px-4 py-2 md:px-6">
         <span className="text-[10px] tracking-wide text-subtle uppercase">Assets</span>
         <div className="flex items-center gap-2">
-          <AssetBadge assetId={null} copyable={false} size="sm" />
+          <AssetBadge variant="native" copyable={false} size="sm" />
           <span className="font-mono text-[11px] text-muted">{assetStats.native} outs</span>
         </div>
         <div className="flex items-center gap-2">
-          <AssetBadge assetId={"a".repeat(64)} copyable={false} size="sm" />
+          <AssetBadge variant="token" label="token" copyable={false} size="sm" />
           <span className="font-mono text-[11px] text-muted">
             {assetStats.other > 0 ? `${assetStats.other} multi-asset outs` : "no multi-asset yet"}
           </span>
@@ -189,7 +188,7 @@ function GraphPanel({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
       <article className="rounded-lg border border-border bg-surface p-4">
         <p className="text-[10px] tracking-wide text-subtle uppercase">Block</p>
-        <p className="mt-1 font-mono text-sm break-all text-fg">{selected.id}</p>
+        <p className="mt-1 break-all font-mono text-sm text-fg">{selected.id}</p>
         <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
           <div className="flex justify-between">
             <dt className="text-xs text-subtle">Colour</dt>
@@ -213,7 +212,7 @@ function GraphPanel({
         <div className="flex items-center justify-between gap-2">
           <p className="text-[10px] tracking-wide text-subtle uppercase">Transactions</p>
           <div className="flex items-center gap-1.5">
-            <AssetBadge assetId={null} copyable={false} size="sm" />
+            <AssetBadge variant="native" copyable={false} size="sm" />
             <span className="text-[10px] text-subtle">native</span>
           </div>
         </div>
