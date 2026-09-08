@@ -98,6 +98,7 @@ crates/
       store.rs                 LedgerStore: incremental append-only on-disk replay log
       validation.rs            TxStructureValidator: context-free structural checks (a BlockValidator)
       multisig.rs               M-of-N multisignature (RFC-001 P2SH): MultisigScript, script hash, threshold signature verification (see docs/RFC-001-Multisig.md)
+      script_v2.rs              RFC-003 script v2: bounded stack machine (ED25519_VERIFY/CLTV/CSV/HASH_BLAKE3/EQUAL/AND/OR/THRESHOLD), step budget, ScriptV2::new/execute (see docs/RFC-003-ScriptV2-and-Stealth.md)
     tests/
       ledger.rs                Integration + adversarial (double-spend across parallel blocks, order-independence)
       validation.rs            Integration: structural rejection at insert vs stateful rejection at apply
@@ -108,6 +109,7 @@ crates/
       difficulty.rs            Integration: Ledger::set_difficulty enforces work/timestamp end-to-end
       multisig_consensus.rs     Adversarial consensus suite for RFC-001 multisig (35 tests: M-of-N spends, malformed scripts, activation gating, mixed P2PK/P2SH, snapshot roundtrip)
       native_token_consensus.rs  Adversarial consensus suite for RFC-002 native tokens (29 tests: single/multi-asset transfers, per-asset conservation, fee-in-native, coinbase minting, activation gating, mixed blocks, parallel-DAG conflicts, checkpoint/snapshot roundtrip)
+      stealth_script_v2_consensus.rs  Adversarial consensus suite for RFC-003 stealth + script v2 (25 tests: 12 stealth + 13 script v2 — one-time-key ECDH spends, view tags, CLTV/CSV/hash-lock/threshold scripts, activation gating, parallel-DAG conflicts, checkpoint roundtrip)
   kovanica-node/               Runnable node binary, mempool, and block gossip (third slice + multi-node)
     src/
       lib.rs                   Crate docs + re-exports + a doctest of the RPC
@@ -234,6 +236,71 @@ each asset independently. The native KVNC asset is `asset_id = None`
   boundary (pre/post/exact), mixed blocks, parallel-DAG asset conflicts,
   checkpoint/snapshot roundtrip, zero-value outputs, and AssetId/TxOutput
   constructors.
+
+### Stealth addresses & script v2 — RFC-003
+
+Shipped in `kovanica-state`; full spec in `docs/RFC-003-ScriptV2-and-Stealth.md`.
+RFC-003 adds two address versions on top of P2PK (`0x00`) and P2SH (`0x01`):
+**Version 0x02 (script v2)** locks value behind a small deterministic program;
+**Version 0x03 (stealth)** delivers CryptoNote-style one-time output keys via
+ECDH. Both are consensus upgrades gated on blue score.
+
+- **Address versions**: `0x02` = `0x02 || BLAKE3(script_bytes)` (33 bytes, same
+  shape as P2SH); `0x03` has **two** forms — the **published** 65-byte
+  `StealthAddress` (`0x03 || scan_pk || spend_pk`, what senders derive from) and
+  the **on-chain owner** `0x03 || BLAKE3(scan_pk || spend_pk)` (33 bytes, what
+  the ledger stores). The raw keys are never stored on-chain — the ledger only
+  needs the hash to identify the owner and the per-output one-time key `P` to
+  verify spends.
+- **StealthExt** (`tx.rs`): stealth outputs carry `Option<StealthExt>`
+  (`r` = ephemeral point `R = r·G`, `view_tag` = first byte of
+  `BLAKE3(r·scan_pk)`, `p` = one-time pubkey `P = H(r·spend_pk)·G`). The
+  canonical transaction encoding gained a `stealth_flag` byte + 65-byte
+  extension per output; `Transaction` gained `n_lock_time`/`sequence` (u32,
+  BIP-65/BIP-112) after the outputs, covered by the sighash.
+- **One-time-key ECDH** (Edwards25519, curve25519-dalek): sender
+  `StealthAddress::derive_output(r_secret)` produces `(R, view_tag, P)`;
+  recipient `derive_one_time_key(spend_sk_seed, R)` recovers the signing key
+  and `view_tag_for(scan_sk_seed, R)` recomputes the view tag for SPV
+  filtering. A stealth spend is a single 64-byte signature over the sighash
+  verified against `P` (`verify_pk`).
+- **Script v2** (`script_v2.rs`): a bounded, non-Turing-complete stack machine —
+  opcodes `0x01` ED25519_VERIFY, `0x02` CLTV (BIP-65), `0x03` CSV (BIP-112),
+  `0x04` HASH_BLAKE3, `0x05` EQUAL, `0x06` AND, `0x07` OR, `0x08` THRESHOLD
+  (inline M-of-N). `SCRIPT_V2_MAX_LENGTH = 1024`, `SCRIPT_V2_STEP_BUDGET =
+  1000`. `ScriptV2::new` validates at parse time; `ScriptV2::execute(sighash,
+  witness, n_lock_time, sequence)` runs with the **witness elements only** as
+  the initial stack — the sighash is **not** pre-loaded, it is an environment
+  value available to ED25519_VERIFY/THRESHOLD (deliberate divergence from the
+  RFC's original §5.3 wording). A script-v2 spend reveals the script in
+  `witness[0]` (BLAKE3 must match the owner payload → `ScriptHashMismatch`).
+- **Activation gating**: `STEALTH_ACTIVATION_SCORE = 0` /
+  `SCRIPT_V2_ACTIVATION_SCORE = 0` (defaults; `Ledger::set_stealth_activation_score`
+  / `set_script_v2_activation_score` with getters). Pre-activation
+  (`blue_score <= activation_score`) rejects the version's outputs and spends
+  (`PreActivationStealth` / `PreActivationScriptV2`); post-activation P2PK/P2SH
+  remain valid forever. Enforced identically in the incremental `Ledger` and
+  batch `apply_dag`/`apply_block` paths.
+- **Checkpoint v5**: the UTXO checkpoint encoding gained the stealth flag +
+  65-byte `StealthExt` per output (`CHECKPOINT_VERSION = 5`); `read_checkpoint`
+  accepts v3 (stake registry), v4 (asset_id), and v5.
+- **Node methods**: `send_to_script_v2(kp, amount, script)`,
+  `send_to_stealth(kp, amount, &StealthAddress)`, `balance_of_script(script)`,
+  `balance_of_stealth(&StealthAddress)`. ⚠️ The node derives `r_secret`
+  deterministically (`BLAKE3(kp.seed() || amount_le || counter_le)` with a
+  node-local `AtomicU64` counter) — production should use a random `r` for
+  unlinkability.
+- **FFI methods**: `send_to_script_v2(signing_secret_hex, amount, script_hex)`,
+  `send_to_stealth(signing_secret_hex, amount, stealth_address_hex)`,
+  `balance_of_script(script_hex)`, `balance_of_stealth(stealth_address_hex)`.
+- **Tests**: `crates/kovanica-state/tests/stealth_script_v2_consensus.rs`
+  (25 tests: 12 stealth — coinbase mint, derived-key spend, wrong-key/witness/
+  size/tampered-R rejection, view-tag match, activation boundary, parallel-DAG
+  double-spend, checkpoint roundtrip; 13 script v2 — single-sig, CLTV/CSV
+  pass+reject, hash-lock, AND/OR, threshold 2-of-3 + not-met, hash mismatch,
+  invalid script, activation boundary), plus
+  `crates/kovanica-node/tests/stealth_script_v2_node.rs` (4 tests) and
+  `crates/kovanica-ffi/tests/ffi.rs` (`send_to_script_v2_and_stealth_over_ffi`).
 
 ### Web app — Grok preview bridge (dev-only)
 
@@ -946,6 +1013,7 @@ Cross-repo execution plan from `Obsidian-Vault/Poslovno/KovanicaDAG/UPGRADE-PHAS
 | 5 — Wallet & security | ✅ completed | multisig node layer + FFI bindings: `8a3bec6` (#41) |
 | 6 — Operations & reliability | ✅ completed | operations automation: `840e8f1` (#40) |
 | 7 — P2 polish | ✅ completed | see breakdown below |
+| 8 — Stealth + script v2 (RFC-003) | ✅ completed | `consensus/stealth-script-v2-rfc-003` |
 
 ### Phase 7 breakdown
 
