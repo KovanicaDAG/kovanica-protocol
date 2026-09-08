@@ -22,6 +22,7 @@ Status key: ✅ done · 🟡 partial · ❌ missing · 🔒 node API not exposed
 | Multisig M-of-N create / spend / combine | ✅ | `/multisig` — full UI shipped |
 | Mining pool page | ✅ | `/pool` |
 | Docs / HTTP contract | ✅ | `/docs` |
+| Network status | ✅ | `/network` |
 
 ---
 
@@ -32,27 +33,30 @@ Status key: ✅ done · 🟡 partial · ❌ missing · 🔒 node API not exposed
 | Task | Status | Owner |
 | --- | --- | --- |
 | Node HTTP: `asset_id` on prepare / submit / utxos / history | 🔒 | node (`kovanica-node` explorer API) |
-| Contract types: `ApiUtxo.asset_id`, `ApiHistoryTx.asset_id` | ❌ | web |
-| Wallet: asset selector on send | ❌ | web |
-| Wallet: per-asset balance list | ❌ | web |
+| Contract types: `ApiUtxo.asset_id`, `ApiHistoryTx.asset_id`, balances[] | ✅ | web — `contract.ts` |
+| URL helpers: prepareUrl / submitUrl / assetOptionsFromUtxos | ✅ | web — `lib/api/assets.ts` |
+| AssetPicker component | ✅ | web — `components/wallet/asset-picker.tsx` |
+| Wallet: wire AssetPicker + helpers into send form | 🟡 | next — use helpers in `wallet-view.tsx` |
+| Wallet: per-asset balance list in header | 🟡 | depends on node returning asset UTXOs |
 | Explorer: show asset_id on outputs | ❌ | web |
-| Spec text update (`/api/spec`) | ❌ | web |
+| Spec text update (`/api/spec`) | 🟡 | partial |
 
-**Note:** RFC-002 landed 2026-09-06. Wire format bumped; testnet must activate native tokens before UI can go live against public node.
+**Note:** RFC-002 landed 2026-09-06. Wire format bumped; testnet must activate native tokens before UI can go live against public node. Web foundations are ready so the UI lights up as soon as the node starts returning `asset_id`.
 
 ### 2.2 Network / status page
 
 | Task | Status |
 | --- | --- |
-| Route `/network` — head, peers, pow, k, subsidy, finality, light_config | ❌ → implementing this PR |
-| Link from shell nav | ❌ → this PR |
-| Peer list + bootstrap seeds | ❌ → this PR |
+| Route `/network` — head, peers, pow, k, subsidy, finality | ✅ |
+| Link from shell nav | ✅ |
+| Peer list + bootstrap seeds | ✅ |
 
 ### 2.3 Multisig polish
 
 | Task | Status |
 | --- | --- |
 | Deep-link from wallet to multisig | 🟡 |
+| Landing card for Multisig | ✅ |
 | Show multisig balance in wallet when watching P2SH | ❌ |
 | Cosigner QR / share flow | 🟡 (JSON copy exists) |
 
@@ -72,12 +76,13 @@ Status key: ✅ done · 🟡 partial · ❌ missing · 🔒 node API not exposed
 
 ## 4. Implementation order (recommended)
 
-1. **Network status page** (this PR) — pure frontend + existing bootstrap/head API.
-2. **Node API multi-asset endpoints** — required before wallet asset UI.
-3. **Wallet multi-asset send + balances**.
-4. **Explorer multi-asset display**.
-5. **Staking / hybrid UI** after mainnet design freeze.
-6. **Landing mobile download strip**.
+1. ~~**Network status page**~~ ✅
+2. ~~**Web contract + AssetPicker foundations**~~ ✅ (this PR)
+3. **Node API multi-asset endpoints** — required before live multi-asset UX
+4. **Wallet wire-up** — drop AssetPicker into send form using `assets.ts` helpers
+5. **Explorer multi-asset display**
+6. **Staking / hybrid UI** after mainnet design freeze
+7. **Landing mobile download strip**
 
 ---
 
@@ -86,4 +91,7 @@ Status key: ✅ done · 🟡 partial · ❌ missing · 🔒 node API not exposed
 - [x] Checklist document
 - [x] `/network` status page (bootstrap + head + p2p)
 - [x] Nav entry (desktop + mobile)
-- [x] Spec note about RFC-001 / RFC-002 readiness
+- [x] Landing cards for Multisig + Network
+- [x] RFC-002 contract types (`asset_id` on UTXO / history / prepare)
+- [x] `lib/api/assets.ts` helpers
+- [x] `AssetPicker` component
