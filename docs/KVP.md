@@ -13,6 +13,7 @@ familiar token-standard brands (e.g. ERC-20) while staying tied to the RFC serie
 | **KVP-102** | [RFC-002](./RFC-002-NativeTokens.md) | Native multi-asset tokens | Shipped |
 | **KVP-103** | [RFC-003](./RFC-003-ScriptV2-and-Stealth.md) | Stealth addresses + script v2 | Shipped |
 | **KVP-104** | [RFC-004](./RFC-004-Htlc.md) | HTLC atomic swaps | Shipped |
+| **KVP-105** | [RFC-005](./RFC-005-Vault.md) | Time-lock vault / escrow (real CSV) | Shipped |
 
 ## Native coin vs token standard
 
