@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Compass, Map, Wallet, Coins, Users, FileText, Pickaxe, Activity, MapIcon } from "lucide-react";
+import { Compass, Map, Wallet, Coins, Users, FileText, Pickaxe, Activity, Route } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SourceSwitch } from "@/components/layout/source-switch";
 
@@ -79,7 +79,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             )}
             aria-label="Roadmap"
           >
-            <MapIcon className="size-5" />
+            <Route className="size-5" />
           </Link>
           <Link
             to="/docs"
