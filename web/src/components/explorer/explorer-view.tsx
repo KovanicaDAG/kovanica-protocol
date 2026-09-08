@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Pause, Play, RotateCcw, Hammer } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { AssetBadge, AssetOutputRow } from "@/components/explorer/asset-badge";
 import { DagCanvas, DagLegend } from "@/components/explorer/dag-canvas";
 import { dagToBlocks } from "@/lib/api/map-blocks";
 import { useNode } from "@/lib/api/use-node";
@@ -8,7 +9,7 @@ import { fmtKvnc } from "@/lib/ledger/format";
 import { shortId } from "@/lib/ledger/hash";
 import { cn } from "@/lib/utils";
 import type { Block } from "@/lib/ledger/types";
-import { assetLabel, isNativeAsset, type ApiNode, type ApiDagBlock } from "@/lib/api/contract";
+import { isNativeAsset, type ApiNode, type ApiDagBlock } from "@/lib/api/contract";
 
 const TABS = ["Graph", "Mempool", "Order", "Blocks", "Analytics"] as const;
 type Tab = (typeof TABS)[number];
@@ -41,6 +42,21 @@ export function ExplorerView() {
   const selected = blocks.find((b) => b.id === selectedBlock) ?? null;
   const selectedApi = state?.node.dag.find((b) => b.id === selectedBlock) ?? null;
   const n = state?.node;
+
+  const assetStats = useMemo(() => {
+    if (!n?.dag) return { native: 0, other: 0 };
+    let native = 0;
+    let other = 0;
+    for (const b of n.dag) {
+      for (const tx of b.txs) {
+        for (const o of tx.outputs) {
+          if (isNativeAsset(o.asset_id)) native += 1;
+          else other += 1;
+        }
+      }
+    }
+    return { native, other };
+  }, [n]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -87,6 +103,21 @@ export function ExplorerView() {
         <Stat label="Genesis" value={n ? shortId(n.genesis) : "—"} />
         <Stat label="Txs" value={String(n?.tx_count ?? "—")} />
       </dl>
+
+      {/* Asset legend strip */}
+      <div className="flex flex-wrap items-center gap-3 border-b border-border bg-surface/60 px-4 py-2 md:px-6">
+        <span className="text-[10px] tracking-wide text-subtle uppercase">Assets</span>
+        <div className="flex items-center gap-2">
+          <AssetBadge assetId={null} copyable={false} size="sm" />
+          <span className="font-mono text-[11px] text-muted">{assetStats.native} outs</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <AssetBadge assetId={"a".repeat(64)} copyable={false} size="sm" />
+          <span className="font-mono text-[11px] text-muted">
+            {assetStats.other > 0 ? `${assetStats.other} multi-asset outs` : "no multi-asset yet"}
+          </span>
+        </div>
+      </div>
 
       <section className="border-b border-border bg-surface px-4 py-4 md:px-6">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
@@ -155,7 +186,7 @@ function GraphPanel({
     return <p className="text-sm text-muted">Select a block on the graph.</p>;
   }
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
       <article className="rounded-lg border border-border bg-surface p-4">
         <p className="text-[10px] tracking-wide text-subtle uppercase">Block</p>
         <p className="mt-1 font-mono text-sm break-all text-fg">{selected.id}</p>
@@ -179,32 +210,37 @@ function GraphPanel({
         </dl>
       </article>
       <aside className="rounded-lg border border-border bg-surface p-4">
-        <p className="text-[10px] tracking-wide text-subtle uppercase">Transactions</p>
-        <ul className="mt-2 space-y-3 font-mono text-xs text-muted">
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[10px] tracking-wide text-subtle uppercase">Transactions</p>
+          <div className="flex items-center gap-1.5">
+            <AssetBadge assetId={null} copyable={false} size="sm" />
+            <span className="text-[10px] text-subtle">native</span>
+          </div>
+        </div>
+        <ul className="mt-3 space-y-3">
           {(apiBlock?.txs ?? []).map((tx) => (
-            <li key={tx.id} className="border-b border-border/60 pb-2 last:border-0">
-              <div className="text-fg">
-                {tx.coinbase ? "coinbase" : "transfer"} · {shortId(tx.id)}
+            <li key={tx.id} className="rounded-lg border border-border/70 bg-bg/30 p-2.5">
+              <div className="flex items-center justify-between gap-2 font-mono text-[11px]">
+                <span className="text-fg">
+                  <span className="capitalize text-muted">{tx.coinbase ? "coinbase" : "transfer"}</span>
+                  <span className="text-subtle"> · </span>
+                  {shortId(tx.id)}
+                </span>
+                <span className="text-subtle">{tx.outputs.length} out</span>
               </div>
               {tx.outputs.length === 0 ? (
-                <div className="mt-1 text-subtle">(no outputs)</div>
+                <p className="mt-2 text-[11px] text-subtle">(no outputs)</p>
               ) : (
-                <ul className="mt-1 space-y-1">
+                <ul className="mt-2 space-y-1.5">
                   {tx.outputs.map((o, i) => (
-                    <li key={`${tx.id}-${i}`} className="flex flex-wrap items-baseline gap-x-2">
-                      <span className="text-fg">{fmtKvnc(o.value)}</span>
-                      <span
-                        className={cn(
-                          "rounded px-1 text-[10px]",
-                          isNativeAsset(o.asset_id)
-                            ? "bg-surface-2 text-subtle"
-                            : "bg-gold/10 text-gold",
-                        )}
-                      >
-                        {assetLabel(o.asset_id)}
-                      </span>
-                      <span className="text-subtle">{shortId(o.owner)}</span>
-                    </li>
+                    <AssetOutputRow
+                      key={`${tx.id}-${i}`}
+                      value={o.value}
+                      assetId={o.asset_id}
+                      owner={o.owner}
+                      formatValue={fmtKvnc}
+                      shortOwner={shortId}
+                    />
                   ))}
                 </ul>
               )}
@@ -212,7 +248,7 @@ function GraphPanel({
           ))}
           {!apiBlock &&
             selected.txs.map((tx) => (
-              <li key={tx.id}>
+              <li key={tx.id} className="font-mono text-xs text-muted">
                 {tx.coinbase ? "coinbase" : "transfer"} · {fmtKvnc(tx.amount)}
               </li>
             ))}
@@ -272,7 +308,7 @@ function MempoolPanel({ node }: { node: ApiNode | undefined }) {
   }
   return (
     <div>
-      <p className="text-sm text-muted mb-3">
+      <p className="mb-3 text-sm text-muted">
         Min fee {fmtKvnc(node.min_fee)}. Miner collects fees on produce. {node.pending.length} in pool.
       </p>
       <div className="overflow-x-auto">
@@ -302,11 +338,11 @@ function OrderPanel({ node }: { node: ApiNode | undefined }) {
     return <p className="text-sm text-muted">No blocks in order.</p>;
   }
   return (
-    <ol className="font-mono text-xs text-muted list-decimal pl-5">
+    <ol className="list-decimal pl-5 font-mono text-xs text-muted">
       {node.order.map((id, i) => (
         <li key={id} className="py-1">
           <span className="text-subtle">{i}</span> · {id}
-          {id === node.selected_tip && <span className="text-accent ml-2">← tip</span>}
+          {id === node.selected_tip && <span className="ml-2 text-accent">← tip</span>}
         </li>
       ))}
     </ol>
@@ -325,7 +361,7 @@ function AnalyticsPanel({ node }: { node: ApiNode | undefined }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <div className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-display text-lg text-fg mb-3">Network Health</h3>
+        <h3 className="mb-3 font-display text-lg text-fg">Network Health</h3>
         <dl className="space-y-2">
           <div className="flex justify-between text-sm">
             <dt className="text-subtle">Total Blocks</dt>
@@ -347,7 +383,7 @@ function AnalyticsPanel({ node }: { node: ApiNode | undefined }) {
       </div>
 
       <div className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-display text-lg text-fg mb-3">DAG Structure</h3>
+        <h3 className="mb-3 font-display text-lg text-fg">DAG Structure</h3>
         <dl className="space-y-2">
           <div className="flex justify-between text-sm">
             <dt className="text-subtle">Tips</dt>
@@ -377,7 +413,7 @@ function AnalyticsPanel({ node }: { node: ApiNode | undefined }) {
       </div>
 
       <div className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-display text-lg text-fg mb-3">Economics</h3>
+        <h3 className="mb-3 font-display text-lg text-fg">Economics</h3>
         <dl className="space-y-2">
           <div className="flex justify-between text-sm">
             <dt className="text-subtle">Subsidy</dt>
@@ -407,7 +443,7 @@ function AnalyticsPanel({ node }: { node: ApiNode | undefined }) {
       </div>
 
       <div className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-display text-lg text-fg mb-3">Genesis</h3>
+        <h3 className="mb-3 font-display text-lg text-fg">Genesis</h3>
         <dl className="space-y-2">
           <div className="flex justify-between text-sm">
             <dt className="text-subtle">Network</dt>
@@ -419,7 +455,7 @@ function AnalyticsPanel({ node }: { node: ApiNode | undefined }) {
           </div>
           <div className="flex justify-between text-sm">
             <dt className="text-subtle">Genesis</dt>
-            <dd className="font-mono text-fg break-all">{shortId(node.genesis)}</dd>
+            <dd className="break-all font-mono text-fg">{shortId(node.genesis)}</dd>
           </div>
           <div className="flex justify-between text-sm">
             <dt className="text-subtle">Miner</dt>
