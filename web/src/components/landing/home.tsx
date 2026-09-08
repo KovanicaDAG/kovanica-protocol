@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Activity, Compass, Map, Users, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { WalletDownloads } from "@/components/wallet/wallet-downloads";
 import { useLedger } from "@/lib/ledger/store";
 import { useHydrated } from "@/lib/use-hydrated";
 
@@ -39,6 +40,8 @@ export function HomeLanding() {
           Create a wallet to get started with faucet funds on Testnet.
         </p>
       )}
+
+      <WalletDownloads className="mt-8" variant="card" />
 
       <ul className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <ProductCard
