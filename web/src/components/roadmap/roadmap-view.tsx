@@ -12,6 +12,7 @@ type Item = {
   note?: string;
 };
 
+/** Public KVP-10x labels (see docs/KVP.md). */
 const PROTOCOL: Item[] = [
   {
     id: "kvp-101",
