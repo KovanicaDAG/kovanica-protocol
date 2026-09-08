@@ -1,5 +1,5 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Compass, Map, Wallet, Coins, Users, FileText, Pickaxe, Activity } from "lucide-react";
+import { Compass, Map, Wallet, Coins, Users, FileText, Pickaxe, Activity, MapIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SourceSwitch } from "@/components/layout/source-switch";
 
@@ -16,6 +16,7 @@ const NAV = [
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const docsOn = pathname === "/docs" || pathname.startsWith("/docs/");
+  const roadmapOn = pathname === "/roadmap" || pathname.startsWith("/roadmap/");
 
   return (
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
@@ -45,6 +46,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
             );
           })}
           <Link
+            to="/roadmap"
+            className={cn(
+              "inline-flex h-10 items-center rounded-md px-3 text-sm font-medium transition-colors duration-150",
+              roadmapOn ? "bg-surface-2 text-fg" : "text-muted hover:bg-surface-2 hover:text-fg",
+            )}
+          >
+            Roadmap
+          </Link>
+          <Link
             to="/docs"
             className={cn(
               "inline-flex h-10 items-center rounded-md px-3 text-sm font-medium transition-colors duration-150",
@@ -61,6 +71,16 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <span className="hidden md:inline-flex">
             <SourceSwitch />
           </span>
+          <Link
+            to="/roadmap"
+            className={cn(
+              "inline-flex size-10 items-center justify-center rounded-md md:hidden",
+              roadmapOn ? "text-fg" : "text-muted",
+            )}
+            aria-label="Roadmap"
+          >
+            <MapIcon className="size-5" />
+          </Link>
           <Link
             to="/docs"
             className={cn(
