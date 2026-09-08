@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Compass, Map, Wallet } from "lucide-react";
+import { Activity, Compass, Map, Users, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useLedger } from "@/lib/ledger/store";
 import { useHydrated } from "@/lib/use-hydrated";
@@ -18,7 +18,8 @@ export function HomeLanding() {
         Kovanica
       </h1>
       <p className="mx-auto mt-3 max-w-md text-center text-sm leading-relaxed text-muted md:text-base">
-        A BlockDAG you can explore, a wallet you can fund, a map of where users come from.
+        A BlockDAG you can explore, a wallet you can fund, multisig custody, and a live network
+        status view.
       </p>
 
       <div className="mt-8 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center">
@@ -29,7 +30,7 @@ export function HomeLanding() {
           <Link to="/wallet">Open wallet</Link>
         </Button>
         <Button asChild variant="ghost" className="h-12 px-6">
-          <Link to="/docs">Technical details</Link>
+          <Link to="/network">Network status</Link>
         </Button>
       </div>
 
@@ -39,7 +40,7 @@ export function HomeLanding() {
         </p>
       )}
 
-      <ul className="mt-10 grid gap-3 sm:grid-cols-3">
+      <ul className="mt-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <ProductCard
           to="/explorer"
           icon={Compass}
@@ -50,7 +51,19 @@ export function HomeLanding() {
           to="/wallet"
           icon={Wallet}
           title="Wallet"
-          body="Create or import a seed, switch accounts 0–2, scan the QR. Faucet and Ed25519 sends on Testnet."
+          body="Create or import a seed, hardware wallets, accounts 0–2, QR, faucet and Ed25519 sends."
+        />
+        <ProductCard
+          to="/multisig"
+          icon={Users}
+          title="Multisig"
+          body="M-of-N P2SH addresses, spend proposals, partial signatures and combine — RFC-001."
+        />
+        <ProductCard
+          to="/network"
+          icon={Activity}
+          title="Network"
+          body="Live head, peers, PoW, subsidy, finality and bootstrap seeds for the selected source."
         />
         <ProductCard
           to="/map"
@@ -69,7 +82,7 @@ function ProductCard({
   title,
   body,
 }: {
-  to: "/explorer" | "/wallet" | "/map";
+  to: "/explorer" | "/wallet" | "/map" | "/multisig" | "/network";
   icon: typeof Compass;
   title: string;
   body: string;
