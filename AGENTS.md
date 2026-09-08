@@ -99,6 +99,7 @@ crates/
       validation.rs            TxStructureValidator: context-free structural checks (a BlockValidator)
       multisig.rs               M-of-N multisignature (RFC-001 P2SH): MultisigScript, script hash, threshold signature verification (see docs/RFC-001-Multisig.md)
       script_v2.rs              RFC-003 script v2: bounded stack machine (ED25519_VERIFY/CLTV/CSV/HASH_BLAKE3/EQUAL/AND/OR/THRESHOLD), step budget, ScriptV2::new/execute (see docs/RFC-003-ScriptV2-and-Stealth.md)
+      htlc.rs                  RFC-004 HTLC template: 100-byte HtlcScript (preimage_hash/recipient_pk/sender_pk/timeout), parse-time validation, witness-shape helpers (see docs/RFC-004-Htlc.md)
     tests/
       ledger.rs                Integration + adversarial (double-spend across parallel blocks, order-independence)
       validation.rs            Integration: structural rejection at insert vs stateful rejection at apply
@@ -110,10 +111,12 @@ crates/
       multisig_consensus.rs     Adversarial consensus suite for RFC-001 multisig (35 tests: M-of-N spends, malformed scripts, activation gating, mixed P2PK/P2SH, snapshot roundtrip)
       native_token_consensus.rs  Adversarial consensus suite for RFC-002 native tokens (29 tests: single/multi-asset transfers, per-asset conservation, fee-in-native, coinbase minting, activation gating, mixed blocks, parallel-DAG conflicts, checkpoint/snapshot roundtrip)
       stealth_script_v2_consensus.rs  Adversarial consensus suite for RFC-003 stealth + script v2 (25 tests: 12 stealth + 13 script v2 — one-time-key ECDH spends, view tags, CLTV/CSV/hash-lock/threshold scripts, activation gating, parallel-DAG conflicts, checkpoint roundtrip)
+      htlc.rs                  Adversarial consensus suite for RFC-004 HTLC (23 tests: redeem/refund paths, timeout boundary, preimage mismatch, activation gating, parallel-DAG double-spend, checkpoint/snapshot roundtrip, CLTV non-final fix)
   kovanica-node/               Runnable node binary, mempool, and block gossip (third slice + multi-node)
     src/
       lib.rs                   Crate docs + re-exports + a doctest of the RPC
       node.rs                  Node: Ledger + Mempool; genesis/send/pool/produce/balance/tips/save/load + gossip; multi-input prepare_transfer/submit_signed (UTXOs accumulated largest-first, one signature attached to every input)
+      atomic_swap.rs           RFC-004 Tier Nolan atomic swap: SwapParams/SwapSession/SwapError, timeout ordering T_B < T_A, generate_preimage/extract_preimage (see docs/RFC-004-Htlc.md)
       mempool.rs               Mempool: pending txs, deterministic (id) ordering for block assembly
       mempool_v2.rs            Mempool upgrades: orphan pool (missing-input txs held and re-tried), fee-based eviction, capacity limits
       net.rs                   gossip() (in-process) + serve_blocks/pull_blocks (one-shot TCP sync) + framed bidirectional exchange (pull_blocks_timeout/serve_exchange: read peer dump, apply, send own back; old one-way peers still work)
@@ -141,6 +144,7 @@ crates/
       challenger_external_mining.rs        Empirical external-mining JSON endpoint suite (7 tests: full mine loop, invalid nonce, duplicate idempotency, mempool packing, custom payout, mesh propagation, malformed inputs)
       challenger_e2e_mining_lifecycle.rs   Challenger 2 e2e external-mining lifecycle + consensus integration harness (1 test: template → PoW → submit → DAG/mempool/coinbase verification)
       challenger_consensus_sync.rs         Empirical consensus-invariant suite (10 tests: difficulty retarget clamps, SPV difficulty bounds, wall-clock drift, reorg locator sync, deep-reorg/fork convergence)
+      htlc_node.rs             Integration: RFC-004 swap e2e (create/verify/redeem/extract/refund), timeout-ordering enforcement, htlc_* RPC commands
 ```
 
 android-light-node/            Jetpack Compose light-node wallet app (slices 9a–9e)
@@ -149,6 +153,8 @@ android-light-node/            Jetpack Compose light-node wallet app (slices 9a�
     ui/                        Compose screens, ViewModel, Material3 theme
     work/                      WorkManager periodic sync + local notifications (Slice 9e)
   gradle/libs.versions.toml    AGP / Kotlin / Compose / WorkManager / biometric dependency pins
+
+docs/                          Protocol RFCs + plans: RFC-001-Multisig.md, RFC-002-NativeTokens.md, RFC-003-ScriptV2-and-Stealth.md, RFC-004-Htlc.md, plans/ (mobile-light-node, htlc-atomic-swap, …)
 
 VRF is shipped (Stage 3) — see `crates/kovanica-dag/src/vrf.rs` above and the Stage 3 checklist.
 
@@ -301,6 +307,57 @@ ECDH. Both are consensus upgrades gated on blue score.
   invalid script, activation boundary), plus
   `crates/kovanica-node/tests/stealth_script_v2_node.rs` (4 tests) and
   `crates/kovanica-ffi/tests/ffi.rs` (`send_to_script_v2_and_stealth_over_ffi`).
+
+### HTLC / atomic swap — RFC-004
+
+Shipped in `kovanica-state` + `kovanica-node`; full spec in
+`docs/RFC-004-Htlc.md`. RFC-004 adds **Version 0x04 (HTLC)** — a dedicated,
+structurally-validated 100-byte template (not a script v2 extension) that locks
+value behind a preimage hash + timeout, plus a Tier Nolan atomic-swap
+orchestration layer. Consensus upgrade gated on blue score.
+
+- **Template** (`htlc.rs`): `HtlcScript` = `preimage_hash (32B) ||
+  recipient_pk (32B) || sender_pk (32B) || timeout u32 LE` (100 bytes, no
+  version byte inside — the address version is the discriminator). Parse-time
+  validation rejects wrong length, invalid Ed25519 points, and duplicate
+  recipient/sender keys. `Address::VERSION_HTLC = 0x04`; address =
+  `0x04 || BLAKE3(template)` (33 bytes, `kvnc…dag` rendering unchanged);
+  `VERSION_MAX` bumps 0x03 → 0x04.
+- **Two spend paths** (ledger branch on `is_htlc()`, discriminated by witness
+  length — deterministic, no script interpreter): **redeem** (3 elements:
+  template, preimage, recipient sig) has no time constraint (BIP-199);
+  **refund** (2 elements: template, sender sig) requires `height >= timeout`
+  (`HtlcTimeoutNotReached`). Wrong preimage → `HtlcPreimageMismatch`.
+- **Activation gating**: `HTLC_ACTIVATION_SCORE = 0` (default;
+  `Ledger::set_htlc_activation_score` with getter). Pre-activation
+  (`blue_score <= activation_score`) rejects HTLC outputs and spends
+  (`PreActivationHtlc`); coinbase outputs exempt. Enforced identically in the
+  incremental `Ledger` and batch `apply_dag`/`apply_block` paths.
+- **Companion CLTV fix** (BIP-65/BIP-113, separable commit): `apply_regular`
+  now rejects any tx with `n_lock_time > block height` (`NonFinalTransaction`)
+  — script v2's CLTV becomes real (`block_height >= n_lock_time >= v`). CSV
+  (BIP-112) deferred to 5.2 (needs per-UTXO creation-height tracking).
+- **Atomic swap** (`atomic_swap.rs`, pure library): `SwapParams`/`SwapSession`/
+  `SwapError`; `SwapSession::new` enforces the safety invariant `timeout_b <
+  timeout_a` (`TimeoutOrdering`) and distinct parties (`SameParty`);
+  `verify_against` is Bob's on-chain check of HTLC-A before funding HTLC-B;
+  `generate_preimage`/`preimage_hash`/`extract_preimage` (trustless
+  preimage-revelation path).
+- **Node methods**: `create_htlc(kp, amount, asset_id, recipient_pk,
+  preimage_hash, timeout)` → `HtlcInfo`, `redeem_htlc(kp, outpoint, script,
+  preimage, to)`, `refund_htlc(kp, outpoint, script, to)`,
+  `balance_of_htlc(script)`, `scan_for_htlc_redeem(script, from_height)`.
+- **RPC commands**: `htlc_create`, `htlc_redeem`, `htlc_refund`, `htlc_balance`.
+- **FFI methods**: `create_htlc`, `redeem_htlc`, `refund_htlc`,
+  `balance_of_htlc`, `htlc_script_hex`, `htlc_preimage_hash_hex`.
+- **Tests**: `crates/kovanica-state/tests/htlc.rs` (23 tests — redeem/refund
+  paths, timeout boundary, preimage mismatch, activation boundary,
+  parallel-DAG double-spend, checkpoint/snapshot roundtrip, CLTV non-final
+  fix), `crates/kovanica-node/tests/htlc_node.rs` (4 tests — swap e2e,
+  refund path, timeout-ordering enforcement, RPC), plus 2 ffi.rs cases.
+- **Format bump: none** — HTLC is an address version in the existing 33-byte
+  `owner` field; tx encoding, checkpoint (v5), snapshot, and `kvnc…dag`
+  rendering are unchanged. **No testnet reset.**
 
 ### Web app — Grok preview bridge (dev-only)
 
@@ -1014,6 +1071,7 @@ Cross-repo execution plan from `Obsidian-Vault/Poslovno/KovanicaDAG/UPGRADE-PHAS
 | 6 — Operations & reliability | ✅ completed | operations automation: `840e8f1` (#40) |
 | 7 — P2 polish | ✅ completed | see breakdown below |
 | 8 — Stealth + script v2 (RFC-003) | ✅ completed | `consensus/stealth-script-v2-rfc-003` |
+| 9 — HTLC / atomic swap (RFC-004) | ✅ completed | `consensus/htlc-atomic-swap-rfc-004` |
 
 ### Phase 7 breakdown
 
