@@ -3,7 +3,56 @@
 > **Source:** `Obsidian-Vault/Poslovno/KovanicaDAG/Notes/2026-09-05-protocol-evolution-6-points.md`
 > **Critical path:** `3A → 6A+3B → 5A → 5B → 5C` — this is the next slice after RFC-002 (shipped).
 > **Branch naming:** `consensus/stealth-script-v2-rfc-003`
-> **Status:** NOT STARTED
+> **Status:** LANDED (2026-09-08) — the full implementation shipped on branch
+> `consensus/stealth-script-v2-rfc-003`: `keys.rs` `StealthAddress` + `verify_pk`,
+> `tx.rs` `StealthExt` + locktime/sequence, `script_v2.rs` engine, `ledger.rs`
+> spend branches + activation gates + checkpoint v5, the 25-test consensus suite,
+> node + FFI surface. The plan below documents the design as built.
+
+## What shipped
+
+- **`crates/kovanica-state/src/keys.rs`** — `verify_pk(pubkey, message, sig)`;
+  `StealthAddress([u8; 65])` (`0x03 || scan_pk || spend_pk`) with
+  `new`/`scan_pk`/`spend_pk`/`to_bytes`/`as_bytes`/`from_slice`/`to_hex`/
+  `to_kvnc`/`parse`/`address`/`derive_output`/`derive_one_time_key`/
+  `view_tag_for`; `KeyPair::seed()`; `Address` versions `0x00` P2PK, `0x01`
+  P2SH, `0x02` script v2, `0x03` stealth-hash (33-byte hashed owner =
+  `0x03 || BLAKE3(scan_pk || spend_pk)`).
+- **`crates/kovanica-state/src/tx.rs`** — `StealthExt { r, view_tag, p }`;
+  `TxOutput.stealth: Option<StealthExt>`; `Transaction.n_lock_time`/`sequence`
+  (u32) with `new_with_lock`; canonical encoding carries a `stealth_flag` byte +
+  65-byte extension per output and locktime/sequence after the outputs.
+- **`crates/kovanica-state/src/script_v2.rs`** — the stack machine (opcodes
+  `0x01` ED25519_VERIFY, `0x02` CLTV, `0x03` CSV, `0x04` HASH_BLAKE3, `0x05`
+  EQUAL, `0x06` AND, `0x07` OR, `0x08` THRESHOLD), `SCRIPT_V2_MAX_LENGTH =
+  1024`, `SCRIPT_V2_STEP_BUDGET = 1000`, `ScriptV2::new` / `ScriptV2::execute`.
+  Note: `execute` does **not** pre-load the sighash onto the stack — the initial
+  stack is the witness elements only; the sighash is an environment value
+  available to `ED25519_VERIFY`/`THRESHOLD` (deliberate divergence from the
+  RFC's original §5.3 wording).
+- **`crates/kovanica-state/src/ledger.rs`** — spend branches for `is_script_v2()`
+  (witness[0] = script, BLAKE3 match → `ScriptHashMismatch`, `ScriptV2::new` →
+  `InvalidRedeemScript`, execute → `BadSignature`) and `is_stealth()` (witness
+  exactly 1 × 64B sig, `verify_pk(&stealth.p, &sighash, &sig)` → `BadSignature`);
+  activation gates `STEALTH_ACTIVATION_SCORE = 0` / `SCRIPT_V2_ACTIVATION_SCORE
+  = 0` with setters/getters; `CHECKPOINT_VERSION = 5` (checkpoint encoding
+  carries the stealth flag + 65-byte `StealthExt` per output).
+- **Consensus suite** — `crates/kovanica-state/tests/stealth_script_v2_consensus.rs`
+  (25 tests: 12 stealth + 13 script v2).
+- **Node surface** — `crates/kovanica-node/src/node.rs`:
+  `send_to_script_v2(kp, amount, script)`, `send_to_stealth(kp, amount,
+  &StealthAddress)`, `balance_of_script(script)`, `balance_of_stealth(&StealthAddress)`.
+  ⚠️ `r_secret` is derived deterministically (`BLAKE3(kp.seed() || amount_le ||
+  counter_le)` with a node-local `AtomicU64` counter) — production should use a
+  random `r` for unlinkability.
+- **FFI surface** — `crates/kovanica-ffi/src/light_node.rs`:
+  `send_to_script_v2(signing_secret_hex, amount, script_hex)`,
+  `send_to_stealth(signing_secret_hex, amount, stealth_address_hex)`,
+  `balance_of_script(script_hex)`, `balance_of_stealth(stealth_address_hex)`.
+- **Tests** — `crates/kovanica-node/tests/stealth_script_v2_node.rs` (4 tests)
+  and `crates/kovanica-ffi/tests/ffi.rs` (`send_to_script_v2_and_stealth_over_ffi`).
+
+---
 
 ## Why these two together
 

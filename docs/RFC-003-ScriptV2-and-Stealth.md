@@ -1,19 +1,71 @@
 # RFC-003 — Stealth Addresses (6A) + Script v2 (3B)
 
-- **Status:** Spec (implementation-targeted)
+- **Status:** Implemented (landed 2026-09-08 on branch `consensus/stealth-script-v2-rfc-003`)
 - **Reference implementation:** `crates/kovanica-state/src/keys.rs`, `crates/kovanica-state/src/tx.rs`,
   `crates/kovanica-state/src/utxo.rs`, `crates/kovanica-state/src/ledger.rs`,
-  `crates/kovanica-state/src/script_v2.rs` (new), `crates/kovanica-node/src/node.rs`,
+  `crates/kovanica-state/src/script_v2.rs`, `crates/kovanica-node/src/node.rs`,
   `crates/kovanica-ffi/src/light_node.rs`
-- **Consensus test suite:** `crates/kovanica-state/tests/stealth_script_v2_consensus.rs` (combined)
+- **Consensus test suite:** `crates/kovanica-state/tests/stealth_script_v2_consensus.rs` (25 tests: 12 stealth + 13 script v2)
+- **Node tests:** `crates/kovanica-node/tests/stealth_script_v2_node.rs` (4 tests)
+- **FFI test:** `crates/kovanica-ffi/tests/ffi.rs` (`send_to_script_v2_and_stealth_over_ffi`)
 - **Activation:** gated on blue score (see [Activation gating](#activation-gating))
 
 This document is the specification that the stealth-address and script-v2 code in
 `kovanica-state` references as "RFC-003". It describes the `v0x03` stealth address
 format, the `v0x02` script-v2 address format, the per-output stealth extension
 encoding, the deterministic bounded script execution model, and the consensus
-activation gates for both. It is grounded in the planned implementation — do not
-change the formats here without changing the code, and vice versa.
+activation gates for both. The implementation now exists and matches this spec —
+do not change the formats here without changing the code, and vice versa.
+
+## Implementation status
+
+All of the following shipped on branch `consensus/stealth-script-v2-rfc-003`
+(landed 2026-09-08):
+
+- **`crates/kovanica-state/src/keys.rs`** — `verify_pk(pubkey, message, sig)`
+  (strict Ed25519 verification against a raw 32-byte pubkey, not an `Address`);
+  `StealthAddress([u8; 65])` = `0x03 || scan_pk || spend_pk` with
+  `new`/`scan_pk`/`spend_pk`/`to_bytes`/`as_bytes`/`from_slice`/`to_hex`/
+  `to_kvnc`/`parse`/`address`/`derive_output`/`derive_one_time_key`/
+  `view_tag_for`; `KeyPair::seed()`; `Address` versions `0x00` P2PK, `0x01`
+  P2SH, `0x02` script v2, `0x03` stealth-hash (33-byte hashed owner =
+  `0x03 || BLAKE3(scan_pk || spend_pk)`).
+- **`crates/kovanica-state/src/tx.rs`** — `StealthExt { r, view_tag, p }`;
+  `TxOutput.stealth: Option<StealthExt>`; `Transaction.n_lock_time`/`sequence`
+  (u32) with `new_with_lock`; the canonical encoding carries a `stealth_flag`
+  byte + 65-byte extension per output and locktime/sequence after the outputs.
+- **`crates/kovanica-state/src/script_v2.rs`** — the stack machine (opcodes
+  `0x01` ED25519_VERIFY, `0x02` CLTV, `0x03` CSV, `0x04` HASH_BLAKE3, `0x05`
+  EQUAL, `0x06` AND, `0x07` OR, `0x08` THRESHOLD), `SCRIPT_V2_MAX_LENGTH =
+  1024`, `SCRIPT_V2_STEP_BUDGET = 1000`, `ScriptV2::new(bytes) ->
+  Result<Self, ScriptV2Error>`, and `ScriptV2::execute(&self, sighash, witness,
+  n_lock_time, sequence) -> Result<bool, ScriptV2Error>`.
+- **`crates/kovanica-state/src/ledger.rs`** — spend branches for
+  `is_script_v2()` (witness[0] = script, BLAKE3 match → `ScriptHashMismatch`,
+  `ScriptV2::new` → `InvalidRedeemScript`, execute → `BadSignature`) and
+  `is_stealth()` (witness exactly 1 × 64B sig, `verify_pk(&stealth.p, &sighash,
+  &sig)` → `BadSignature`); activation gates `STEALTH_ACTIVATION_SCORE = 0` /
+  `SCRIPT_V2_ACTIVATION_SCORE = 0` with setters/getters
+  (`set_stealth_activation_score`/`stealth_activation_score`/
+  `set_script_v2_activation_score`/`script_v2_activation_score`);
+  `CHECKPOINT_VERSION = 5` (checkpoint encoding carries the stealth flag +
+  65-byte `StealthExt` per output).
+- **Consensus suite** — `crates/kovanica-state/tests/stealth_script_v2_consensus.rs`
+  (25 tests: 12 stealth + 13 script v2; see §9).
+- **Node surface** — `crates/kovanica-node/src/node.rs`:
+  `send_to_script_v2(kp, amount, script)`, `send_to_stealth(kp, amount,
+  &StealthAddress)`, `balance_of_script(script)`, `balance_of_stealth(&StealthAddress)`.
+  ⚠️ **Determinism caveat:** the node derives `r_secret` deterministically as
+  `BLAKE3(kp.seed() || amount.to_le_bytes() || counter.to_le_bytes())` with a
+  node-local `AtomicU64` counter (deterministic-but-distinct). Production wallets
+  should supply a **random** `r` per send for unlinkability.
+- **FFI surface** — `crates/kovanica-ffi/src/light_node.rs`:
+  `send_to_script_v2(signing_secret_hex, amount, script_hex)`,
+  `send_to_stealth(signing_secret_hex, amount, stealth_address_hex)`,
+  `balance_of_script(script_hex)`, `balance_of_stealth(stealth_address_hex)`.
+- **Node/FFI tests** — `crates/kovanica-node/tests/stealth_script_v2_node.rs`
+  (4 tests) and `crates/kovanica-ffi/tests/ffi.rs`
+  (`send_to_script_v2_and_stealth_over_ffi`).
 
 ---
 
@@ -96,22 +148,43 @@ address     = 0x02 || script_hash       # 33 bytes
 
 ### 2.3 Stealth address (`v0x03`)
 
+Stealth has **two** forms, and it is important to keep them distinct:
+
+**Published address (what the recipient shares with senders)** — the 65-byte
+`StealthAddress`:
+
 ```text
-address = 0x03 || scan_pk (32 bytes) || spend_pk (32 bytes)   # 65 bytes total
+StealthAddress = 0x03 || scan_pk (32 bytes) || spend_pk (32 bytes)   # 65 bytes total
+```
+
+**On-chain owner (what the ledger stores on outputs)** — the 33-byte hashed
+`Address`:
+
+```text
+owner = 0x03 || BLAKE3(scan_pk || spend_pk)   # 33 bytes total
 ```
 
 - `scan_pk` — the recipient's **scan public key**. Anyone can derive the view
-  tag for an output sent to this address (see §3.2).
+  tag for an output sent to this address (see §3.3).
 - `spend_pk` — the recipient's **spend public key**. Only the recipient, holding
-  `spend_sk`, can derive the one-time private key and spend (see §4.1).
-- The canonical on-wire form is **65 bytes** (1 version + 64 payload). This is
-  the only address version whose payload is longer than 32 bytes — the decoder
-  must handle the variable-length payload (see §3.3 and §10).
-- `Address::stealth(scan_pk, spend_pk)` constructs the address.
-- `Address::is_stealth()` returns true for `v0x03`.
-- Rendering: `kvnc…dag` over the 65 bytes.
-- `Address::parse` accepts 130-hex (65 bytes), 66-hex, 64-hex (legacy P2PK), or
-  `kvnc…dag`.
+  `spend_sk`, can derive the one-time private key and spend (see §4.3).
+- **Why two forms:** the sender needs the **raw keys** to run the ECDH
+  derivation (`R = r·G`, `view_tag = BLAKE3(r·scan_pk)[0]`,
+  `P = H(r·spend_pk)·G`), so the published address carries `scan_pk || spend_pk`
+  in the clear. The ledger, by contrast, only needs to *identify* the output's
+  owner and verify spends against the per-output one-time key `P` — it never
+  needs the raw keys. Storing only `BLAKE3(scan_pk || spend_pk)` keeps the
+  on-chain owner a fixed 33 bytes (same shape as P2PK/P2SH/script v2) and never
+  leaks the key material. The full 65-byte `StealthAddress` is **never stored
+  on-chain**.
+- `StealthAddress::new(scan_pk, spend_pk)` constructs the published form;
+  `StealthAddress::address()` returns the 33-byte on-chain owner
+  (`Address::stealth(scan_pk, spend_pk)`).
+- `Address::is_stealth()` returns true for the `v0x03` hashed owner.
+- Rendering: the published `StealthAddress` renders as `kvnc…dag` over the 65
+  bytes; `StealthAddress::parse` accepts 130-hex (65 bytes) or `kvnc…dag`. The
+  33-byte hashed `Address` renders like every other address (66-hex /
+  `kvnc…dag`).
 
 ### 2.4 Predicate summary
 
@@ -150,15 +223,17 @@ pub struct StealthExt {
   `stealth` is `None` and the output serializes exactly as in RFC-002.
 - For a **stealth** output (`owner.is_stealth()`), `stealth` is `Some(...)` and
   the canonical encoding appends the stealth extension after the owner address.
-- The `owner` field of a stealth output is the **`v0x03` address**
-  (`scan_pk || spend_pk`). The `p` field is the derived one-time pubkey; it is
-  stored for ledger verification and is **not** the owner — the owner is the
-  long-lived `v0x03` address.
+- The `owner` field of a stealth output is the **33-byte hashed `v0x03` address**
+  (`0x03 || BLAKE3(scan_pk || spend_pk)`). The `p` field is the derived one-time
+  pubkey; it is stored for ledger verification and is **not** the owner — the
+  owner is the long-lived hashed `v0x03` address. The full 65-byte
+  `StealthAddress` (raw scan/spend keys) is the *published* form only and never
+  appears on-chain.
 
 ### 3.2 Canonical transaction encoding (stealth extension)
 
-Per output, after the existing RFC-002 fields (value, asset_flag + asset_id,
-owner), the encoder writes:
+Per output, after the existing RFC-002 fields (value, asset_flag + asset_id), the
+encoder writes:
 
 ```text
 value (8 bytes)
@@ -169,31 +244,31 @@ stealth_flag (1 byte): 0 = ordinary, 1 = stealth
     r (32 bytes)
     view_tag (1 byte)
     p (32 bytes)
-owner (variable: 33 bytes for 0x00/0x01/0x02, 65 bytes for 0x03)
+owner (33 bytes, always)         # 0x00/0x01/0x02/0x03 — stealth owner is the hashed v0x03 address
 ```
 
 - `stealth_flag == 0` → ordinary output, no extension.
 - `stealth_flag == 1` → the next 65 bytes are `r || view_tag || p`, followed by
-  the owner address (which must be a `v0x03` address).
+  the owner address (which must be a `v0x03` hashed address).
 
 **Minimum output size:**
 
-- Ordinary, native: 8 (value) + 1 (asset_flag=0) + 1 (stealth_flag=0) + 33 (owner
-  P2PK) = **43 bytes**.
+- Ordinary, native: 8 (value) + 1 (asset_flag=0) + 1 (stealth_flag=0) + 33 (owner)
+  = **43 bytes**.
 - Ordinary, asset: 8 + 1 (flag=1) + 32 (asset) + 1 (stealth_flag=0) + 33 = **75 bytes**.
-- Stealth, native: 8 + 1 (asset_flag=0) + 1 (stealth_flag=1) + 65 (ext) + 65 (owner
-  v0x03) = **140 bytes**.
-- Stealth, asset: 8 + 1 + 32 + 1 + 65 + 65 = **172 bytes**.
+- Stealth, native: 8 + 1 (asset_flag=0) + 1 (stealth_flag=1) + 65 (ext) + 33 (owner
+  v0x03) = **108 bytes**.
+- Stealth, asset: 8 + 1 + 32 + 1 + 65 + 33 = **140 bytes**.
 
-The decoder's `read_count` bound for outputs uses the 140-byte minimum (the
-smallest stealth output), since a decoder must be able to skip past a stealth
-output to reach the next one.
+The decoder's `read_count` bound for outputs uses the 43-byte minimum (the
+smallest ordinary output), since a decoder must be able to skip past any output
+to reach the next one.
 
 ### 3.3 View tag derivation
 
 The view tag is **one byte**: the first byte of `BLAKE3(scan_pk · r)` where `·`
-denotes elliptic-curve scalar multiplication / ECDH on Ristretto255
-(curve25519-dalek, the same curve as ed25519/VRF already in workspace deps).
+denotes elliptic-curve scalar multiplication / ECDH on Edwards25519 (the
+Ed25519 curve, curve25519-dalek — already in workspace deps).
 
 - A light client that knows its `scan_sk` can compute `scan_pk = scan_sk·G`, then
   for each output on chain compute the view tag from `R` and match against its own
@@ -240,14 +315,15 @@ The ledger:
 1. **Script-hash match** — `BLAKE3(witness[0])` must equal the output's address
    payload (`ScriptHashMismatch` otherwise).
 2. **Script validity** — `witness[0]` must parse as a valid v2 script
-   (`InvalidScript` otherwise; see §5.2 for validation rules).
-3. **Execution** — run the script against the witness stack (after `witness[0]`)
-   with the sighash available as an environment value and the enclosing
-   transaction's `nLockTime`/`sequence` available for CLTV/CSV (see §5.3).
+   (`InvalidRedeemScript` otherwise; see §5.2 for validation rules).
+3. **Execution** — run the script against the witness elements after `witness[0]`
+   (the initial stack is the witness elements **only** — the sighash is **not**
+   pre-loaded; it is passed as an environment value available to
+   `ED25519_VERIFY`/`THRESHOLD`), with the enclosing transaction's
+   `nLockTime`/`sequence` available for CLTV/CSV (see §5.3).
 4. **Result** — the script must leave exactly one value on the stack, and that
    value must be **non-zero** (truthy). A zero result, an empty stack, or a stack
-   with more than one element after execution fails the spend
-   (`ScriptExecutionFailed`).
+   with more than one element after execution fails the spend (`BadSignature`).
 
 ### 4.3 Stealth spend (`v0x03`)
 
@@ -258,16 +334,16 @@ derived from the output's stealth extension, not a long-term published key.
 **Derivation (recipient side):**
 
 ```text
-c = H(spend_sk · r)              # ECDH on Ristretto255: scalar × point
-one_time_sk = c                  # the one-time private key (32 bytes)
+c = H(spend_sk · R)              # ECDH on Edwards25519: scalar × point
+one_time_sk = SigningKey::from_bytes(c)   # the one-time private key (32 bytes)
 one_time_pk = c·G = P            # matches the output's p field
 ```
 
-- `spend_sk · r` is the ECDH shared secret: the recipient's spend private key
+- `spend_sk · R` is the ECDH shared secret: the recipient's spend private key
   scalar multiplied by the sender's ephemeral point `R = r·G`.
 - `H` is BLAKE3 (the same hash used everywhere in the protocol).
 - The recipient signs the transaction sighash with `one_time_sk` (an Ed25519
-  signing key on Ristretto255 — same curve, same signing operation as ordinary
+  signing key on Edwards25519 — same curve, same signing operation as ordinary
   P2PK).
 
 **Verification (ledger side):**
@@ -277,7 +353,7 @@ The ledger, when spending a stealth output:
 1. Reads the output's `StealthExt` (`r`, `view_tag`, `p`).
 2. Reads the input's witness: a single 64-byte signature.
 3. Verifies the signature against `p` (the one-time pubkey) over the sighash.
-4. Rejects (`BadStealthSignature`) if verification fails.
+4. Rejects (`BadSignature`) if verification fails.
 
 The ledger does **not** re-derive `c` — it only verifies the signature against
 the published `p`. Derivation is the recipient's job.
@@ -315,9 +391,12 @@ initial opcode set:
   expansion).
 - All stack values are raw byte vectors (`Vec<u8>`). Integers are little-endian
   byte vectors (CLTV/CSV read u32, THRESHOLD reads u8).
-- The sighash is available as a **pre-loaded environment value** on the stack
-  before execution begins (pushed by the interpreter, not by the script). This is
-  how `ED25519_VERIFY` accesses the sighash to verify against.
+- The sighash is **not** pre-loaded onto the stack. The initial stack is the
+  witness elements only (after `witness[0]`, the script itself); the sighash is
+  passed to the interpreter as an **environment value** that `ED25519_VERIFY`
+  and `THRESHOLD` consult when verifying signatures. This is a deliberate
+  divergence from the original RFC wording (which described a pre-loaded
+  sighash) — the implemented engine keeps the stack purely witness-driven.
 
 ### 5.2 Script format & validation
 
@@ -340,34 +419,38 @@ to the opcode's arity:
 - `THRESHOLD`: immediates = `M` (1 byte) + `N` (1 byte) + `N * (64 + 32)` bytes
   (signatures + pubkeys inline). **The signatures and pubkeys are embedded in the
   script**, not on the stack — this is what makes the script self-contained. The
-  stack must still provide the sighash (via the environment push).
+  sighash is supplied by the interpreter as an environment value (not pushed on
+  the stack).
 
-**Script validation rules (`ScriptV2::parse` / `ScriptV2::new`):**
+**Script validation rules (`ScriptV2::new`):**
 
 A script is strictly validated at parse time and rejected if any of the following
 holds:
 
 - Empty script (zero bytes).
 - Unknown opcode (not in `0x01..0x08`).
-- Stack underflow during a dry-run parse (an opcode requires more stack elements
-  than available given the script's inline data and the pre-loaded sighash).
 - `THRESHOLD` with `M < 1`, `N < 1`, `M > N`, or `N > 16` (same constraints as
   RFC-001 multisig).
-- `THRESHOLD` script byte length does not match `2 + N * (64 + 32)` (truncated
+- `THRESHOLD` script byte length does not match `3 + N * (64 + 32)` (truncated
   or trailing garbage).
 - Any pubkey in a `THRESHOLD` is not a valid Ed25519 point.
 - Any two pubkeys within a `THRESHOLD` are identical (duplicate keys rejected).
 - Any signature in a `THRESHOLD` is not exactly 64 bytes.
-- Total script length exceeds a consensus maximum (default e.g. 1024 bytes).
+- Total script length exceeds `SCRIPT_V2_MAX_LENGTH` (1024 bytes).
+
+Stack underflow is **not** checked at parse time — it is an execution-time
+failure (see §5.4), since the initial stack depends on the witness supplied at
+spend time.
 
 ### 5.3 Execution model
 
-- The script runs against a **stack** initialized with the pre-loaded sighash
-  (pushed by the interpreter before execution begins), followed by the witness
-  elements after `witness[0]` (the script itself).
+- The script runs against a **stack** initialized with the witness elements
+  after `witness[0]` (the script itself) — **only** the witness elements. The
+  sighash is **not** pre-loaded; it is passed as an environment value available
+  to `ED25519_VERIFY`/`THRESHOLD`. (Deliberate divergence from the original
+  §5.3 wording.)
 - The enclosing transaction's `nLockTime` (u32) and `sequence` (u32) are
-  available to CLTV/CSV. These fields must exist on `Transaction` (add if
-  missing — see §6.2).
+  available to CLTV/CSV. Both fields exist on `Transaction` (see §5.5).
 - Execution is **deterministic**: no HashMap iteration order, no wall-clock, no
   unstable sorts. Only stack operations and the fixed opcode semantics.
 - **Step budget**: every opcode execution counts as one step. A consensus parameter
@@ -391,21 +474,23 @@ Execution fails (output not spendable) on:
 
 ### 5.5 Transaction fields for CLTV/CSV
 
-`Transaction` gains two new fields (add if missing):
+`Transaction` carries two new fields:
 
 ```rust
 pub struct Transaction {
     // ... existing fields ...
-    pub nLockTime: u32,    // absolute locktime (BIP-65 style)
+    pub n_lock_time: u32,  // absolute locktime (BIP-65 style)
     pub sequence: u32,     // relative locktime / sequence (BIP-112 style)
 }
 ```
 
+Constructed via `Transaction::new_with_lock(...)`; default values are
+`n_lock_time = 0`, `sequence = 0` (no lock when zero, matching BIP-65/BIP-112
+semantics).
+
 - The sighash domain includes `nLockTime` and `sequence` so signatures cover
   these values (a signature on a transaction with a given locktime cannot be
   reused on a transaction with a different locktime).
-- Default values: `nLockTime = 0`, `sequence = 0` (no lock when zero, matching
-  BIP-65/BIP-112 semantics).
 
 ---
 
@@ -492,27 +577,29 @@ Existing P2PK/P2SH helpers remain unchanged.
 
 **Script v2:**
 
-- `send_to_script_v2(kp, amount, script_bytes)` — send from actor to a
-  script-v2 address (constructs the address from `script_bytes`, builds and signs
-  the transfer).
-- `build_transfer_to_script_v2(kp, amount, script_bytes)` — build a signed
-  transfer to a script-v2 address.
-- `prepare_transfer_to_script_v2(from, amount, script_bytes)` — build an
-  **unsigned** transfer, selecting covering UTXOs of the script-v2 output.
-- `balance_of_script_v2(script_bytes)` — spendable balance of a script-v2
-  address.
+- `send_to_script_v2(kp, amount, script)` — send from an explicit keypair to a
+  script-v2 address immediately, as a new block built on the current tips. The
+  address is `Address::from_script_v2(script)` (BLAKE3 of the script); the
+  script itself is revealed at spend time.
+- `balance_of_script(script)` — spendable balance of the script-v2 address
+  (`Address::from_script_v2(script)`) in the current full ledger state.
 
 **Stealth:**
 
-- `send_to_stealth(kp, amount, scan_pk, spend_pk)` — send from actor to a
-  stealth address (constructs the `v0x03` address, derives `R` and `view_tag`
-  using an ephemeral `r`, builds and signs the transfer).
-- `build_transfer_to_stealth(kp, amount, scan_pk, spend_pk)` — build a signed
-  transfer to a stealth address.
-- `prepare_transfer_to_stealth(from, amount, scan_pk, spend_pk)` — build an
-  **unsigned** transfer, selecting covering UTXOs of the stealth output.
-- `balance_of_stealth(scan_pk, spend_pk)` — spendable balance of a stealth
-  address.
+- `send_to_stealth(kp, amount, &StealthAddress)` — send from an explicit keypair
+  to a stealth address immediately, as a new block built on the current tips.
+  The one-time output is derived via `to.derive_output(&r_secret)` and locked to
+  `to.address()` (the 33-byte hashed owner).
+- `balance_of_stealth(&StealthAddress)` — spendable balance of the stealth
+  address (its 33-byte on-chain owner) in the current full ledger state.
+
+**`r_secret` determinism caveat:** the node derives the ephemeral secret
+deterministically as `BLAKE3(kp.seed() || amount.to_le_bytes() ||
+counter.to_le_bytes())` with a node-local `AtomicU64` counter, so repeated sends
+with the same amount still yield distinct one-time keys (deterministic-but-
+distinct). **Production must use a random `r`** (a fresh 32-byte value per send)
+so distinct payments to the same stealth address are unlinkable — a deterministic
+`r` would let an observer correlate outputs.
 
 `Node::balance(owner)` continues to count **native KVNC only** (filters on
 `asset_id.is_none()`); the new balance helpers are asset-aware where applicable.
@@ -522,19 +609,14 @@ Existing P2PK/P2SH helpers remain unchanged.
 The mobile FFI exposes:
 
 - `send_to_script_v2(signing_secret_hex, amount, script_hex)` — send to a
-  script-v2 address using an imported secret.
-- `send_to_stealth(signing_secret_hex, amount, scan_pk_hex, spend_pk_hex)` —
-  send to a stealth address.
-- `balance_of_script_v2(script_hex)` — script-v2 balance as a decimal string.
-- `balance_of_stealth(scan_pk_hex, spend_pk_hex)` — stealth balance as a decimal
-  string.
-
-The history/record types gain optional fields for the new address versions:
-
-- `HistoryEntry.address_type: AddressType` — enum `{ P2PK, P2SH, ScriptV2, Stealth }`
-  distinguishing the output's address version.
-- `HistoryEntry.owner_hex: String` — the full owner address hex (33 bytes for
-  P2PK/P2SH/script-v2, 65 bytes for stealth).
+  script-v2 address using an imported 32-byte Ed25519 secret (hex). Returns the
+  tx id (lowercase hex).
+- `send_to_stealth(signing_secret_hex, amount, stealth_address_hex)` — send to a
+  stealth address (130-hex, version 0x03) using an imported secret. The one-time
+  output is derived deterministically by the node (see §7.1); production wallets
+  should prefer supplying their own random `r` for unlinkability.
+- `balance_of_script(script_hex)` — script-v2 balance in atoms.
+- `balance_of_stealth(stealth_address_hex)` — stealth balance in atoms.
 
 ---
 
@@ -546,21 +628,20 @@ The history/record types gain optional fields for the new address versions:
 bumped to **v5**:
 
 - Each entry writes the existing v4 fields (value, asset_flag + asset_id, owner)
-  plus, when the owner is a stealth address, the stealth extension (`r || view_tag
-  || p`).
-- The owner's address is written in its full variable-length form: 33 bytes for
-  `0x00`/`0x01`/`0x02`, 65 bytes for `0x03`. The decoder reads the version byte
-  first, then branches on the expected payload length.
+  plus, when the output carries the stealth extension, `r || view_tag || p`
+  (65 bytes) after a 1-byte stealth flag.
+- The owner is always the fixed 33-byte versioned `Address` (for stealth outputs,
+  the hashed `v0x03` owner) — there is no variable-length owner on the wire.
 - This is the encoding used inside checkpoints.
 
 ### 8.2 Checkpoint format (v5)
 
 `CHECKPOINT_VERSION` in `crates/kovanica-state/src/ledger.rs` is **5**. v5 adds:
 
-- The variable-length owner encoding (33 or 65 bytes depending on version).
-- The stealth extension when present.
-- The reader accepts versions `4..=5` (v4 = asset_id in UTXO, v5 = variable-length
-  owner + stealth extension).
+- The stealth flag + 65-byte stealth extension (`r || view_tag || p`) per output
+  in the UTXO encoding (the owner stays a fixed 33 bytes).
+- The reader accepts versions `3..=5` (v3 = stake registry, v4 = asset_id in
+  UTXO, v5 = stealth extension).
 
 ### 8.3 Snapshot format
 
@@ -568,78 +649,86 @@ The ledger snapshot (`LEDGER_VERSION`) and the DAG snapshot (`VERSION` in
 `crates/kovanica-dag/src/snapshot.rs`) are **not** bumped for this RFC. A
 snapshot stores the replay log of blocks, not per-output state; on load the blocks
 are replayed through the new transaction encoding (which carries the stealth flag
-and variable-length owner), so outputs round-trip without a format change. Only the
-checkpoint — which stores the materialized UTXO set directly — requires a bump.
+and 65-byte stealth extension), so outputs round-trip without a format change.
+Only the checkpoint — which stores the materialized UTXO set directly — requires
+a bump.
 
 ---
 
 ## 9. Test coverage summary
 
-`crates/kovanica-state/tests/stealth_script_v2_consensus.rs` (combined suite)
-covers:
+`crates/kovanica-state/tests/stealth_script_v2_consensus.rs` is the combined
+consensus suite: **25 tests** (12 stealth + 13 script v2), all deterministic and
+adversarial per AGENTS.md conventions.
 
-### 9.1 Stealth addresses
+### 9.1 Stealth addresses (12 tests)
 
-1. **Address encode/decode roundtrip** — `v0x03` parse from 130-hex, 66-hex
-   legacy P2PK reject, `kvnc…dag` roundtrip, `Address::stealth` constructor.
-2. **`kvnc…dag` rendering roundtrip** — parse a rendered stealth address back to
-   the same bytes.
-3. **View-tag derivation** — known `scan_pk` + `r` produce the expected view tag;
-   different scan keys produce different view tags.
-4. **Spend with derived key** — constructive spend: sender derives `R`, view_tag,
-   `P`; recipient derives one-time key `c` and signs; ledger verifies against `P`.
-5. **Wrong scan/spend key rejected** — a signature from a key that is not the
-   derived one-time key fails (`BadStealthSignature`); a different `scan_pk` gives
-   a different view tag (filter mismatch).
-6. **Conservation** — stealth outputs conserve per-asset identically; native + asset
-   stealth outputs; burning stealth asset allowed; fee in native.
-7. **Activation boundary** — pre-activation `v0x03` output rejected, pre-activation
-   stealth spend rejected, post-activation allowed, exact boundary transition
-   (`blue_score == activation_score` rejected, `blue_score == activation_score + 1`
-   allowed).
-8. **Mixed block** — block with P2PK + P2SH + script-v2 + stealth outputs coexisting.
-9. **Parallel-DAG conflict** — double-spend of a stealth output across parallel
-   blocks, resolved by linearization.
-10. **Checkpoint/snapshot roundtrip** — checkpoint v5 roundtrip preserves stealth
-    outputs; snapshot roundtrip preserves balances.
-11. **Edge cases** — zero-value stealth output rejected; `r` is 32 bytes; view_tag
-    is 1 byte; `p` is 32 bytes; `owner` is 65 bytes; `Address::is_stealth`
-    predicate.
+1. `test_stealth_coinbase_output_created` — a coinbase may mint a stealth output.
+2. `test_stealth_spend_success` — constructive spend: sender derives `R`,
+   `view_tag`, `P` via `derive_output`; recipient derives the one-time key via
+   `derive_one_time_key` and signs; the ledger verifies against `P`.
+3. `test_stealth_spend_wrong_key_rejected` — a signature from a key that is not
+   the derived one-time key fails (`BadSignature`).
+4. `test_stealth_spend_wrong_witness_count` — a stealth spend with more than one
+   witness element is rejected (`InvalidWitnessCount`).
+5. `test_stealth_spend_bad_signature_size` — a stealth spend whose signature is
+   not exactly 64 bytes is rejected (`BadSignatureSize`).
+6. `test_stealth_spend_tampered_r` — tampering with the output's `R` breaks the
+   recipient's ECDH recovery, so the derived key no longer matches `P`.
+7. `test_stealth_view_tag_matches` — `view_tag_for(scan_sk_seed, r)` matches the
+   sender's `derive_output` view tag; a different scan key gives a different tag.
+8. `test_stealth_pre_activation_output_rejected` — pre-activation `v0x03` output
+   rejected (`PreActivationStealth`).
+9. `test_stealth_pre_activation_spend_rejected` — pre-activation stealth spend
+   rejected (`PreActivationStealth`).
+10. `test_stealth_activation_boundary` — exact boundary transition
+    (`blue_score == activation_score` rejected, `blue_score == activation_score + 1`
+    allowed).
+11. `test_stealth_parallel_dag_double_spend` — double-spend of a stealth output
+    across parallel blocks, resolved by linearization.
+12. `test_stealth_checkpoint_roundtrip` — checkpoint v5 roundtrip preserves
+    stealth outputs (stealth flag + 65-byte extension).
 
-### 9.2 Script v2
+### 9.2 Script v2 (13 tests)
 
-1. **Script parse/validate** — valid script parses; empty script rejected; unknown
-   opcode rejected; `THRESHOLD` with bad M/N rejected; `THRESHOLD` with duplicate
-   pubkeys rejected; `THRESHOLD` with invalid Ed25519 points rejected; truncated
-   script rejected; oversized script rejected.
-2. **Each opcode executes correctly** — `ED25519_VERIFY` with valid sig passes,
-   with bad sig fails; `CHECKLOCKTIMEVERIFY` enforces `nLockTime`; `CHECKSEQUENCE
-   VERIFY` enforces `sequence`; `HASH_BLAKE3` produces correct digest; `EQUAL`
-   true/false; `AND`/`OR` truth tables; `THRESHOLD` M-of-N success and failure.
-3. **Step-budget exhaustion fails** — a script that hits the step budget fails
-   (`ScriptStepBudgetExceeded`); a script under the budget succeeds.
-4. **CLTV/CSV enforce locktime/sequence** — transaction with `nLockTime` too low
-   for a CLTV script fails; transaction with `sequence` too low for a CSV script
-   fails; signature covers `nLockTime`/`sequence` (sighash domain).
-5. **Hash-lock redeem/refund pattern** — script that requires a preimage hash
-   (via `HASH_BLAKE3` + `EQUAL`) and a refund path (via `CHECKLOCKTIMEVERIFY` +
-   `ED25519_VERIFY`).
-6. **AND/OR/threshold logic** — combined boolean scripts; threshold scripts with
-   various M/N combinations (1-of-1, 2-of-2, 2-of-3, 3-of-5, 16-of-16, 1-of-16).
-7. **Activation boundary** — pre-activation `v0x02` output rejected, pre-activation
-   script-v2 spend rejected, post-activation allowed, exact boundary transition.
-8. **Conservation** — script-v2 outputs conserve per-asset identically; native +
-   asset script-v2 outputs; burning allowed; fee in native.
-9. **Mixed block** — block with all four address versions coexisting.
-10. **Parallel-DAG conflict** — double-spend of a script-v2 output across parallel
-    blocks, resolved by linearization.
-11. **Checkpoint/snapshot roundtrip** — checkpoint v5 roundtrip preserves script-v2
-    outputs; snapshot roundtrip preserves balances.
-12. **Edge cases** — zero-value script-v2 output rejected; script max length enforced;
-    stack underflow during execution fails; post-execution stack with zero/multiple
-    elements fails.
+1. `test_script_v2_single_sig_spend` — `ED25519_VERIFY` script: witness[0] =
+   script, witness[1] = sig, witness[2] = pk; valid sig passes.
+2. `test_script_v2_cltv_spend` — `CHECKLOCKTIMEVERIFY` script passes when
+   `tx.n_lock_time >= v`.
+3. `test_script_v2_cltv_rejected` — `CHECKLOCKTIMEVERIFY` fails when
+   `tx.n_lock_time < v`.
+4. `test_script_v2_csv_spend` — `CHECKSEQUENCEVERIFY` script passes when
+   `tx.sequence >= v`.
+5. `test_script_v2_csv_rejected` — `CHECKSEQUENCEVERIFY` fails when
+   `tx.sequence < v`.
+6. `test_script_v2_hash_equal` — `HASH_BLAKE3` + `EQUAL` hash-lock: correct
+   preimage passes, wrong preimage fails.
+7. `test_script_v2_and_or` — `AND`/`OR` truth tables.
+8. `test_script_v2_threshold_2of3` — inline `THRESHOLD` 2-of-3 with the right
+   two signatures passes.
+9. `test_script_v2_threshold_not_met` — `THRESHOLD` with too few valid
+   signatures fails.
+10. `test_script_v2_script_hash_mismatch` — witness[0] whose BLAKE3 does not
+    match the output's script hash is rejected (`ScriptHashMismatch`).
+11. `test_script_v2_invalid_script` — witness[0] that fails `ScriptV2::new`
+    (unknown opcode / malformed THRESHOLD) is rejected (`InvalidRedeemScript`).
+12. `test_script_v2_pre_activation_output_rejected` — pre-activation `v0x02`
+    output rejected (`PreActivationScriptV2`).
+13. `test_script_v2_activation_boundary` — exact boundary transition
+    (`blue_score == activation_score` rejected, `blue_score == activation_score + 1`
+    allowed).
 
-### 9.3 Cross-cutting invariants
+### 9.3 Node & FFI tests
+
+- `crates/kovanica-node/tests/stealth_script_v2_node.rs` (4 tests):
+  `send_to_script_v2_funds_and_balances`, `send_to_stealth_funds_and_balances`,
+  `stealth_send_is_deterministic_and_distinct_per_send` (two same-amount sends
+  yield distinct tx ids via the per-send counter), and
+  `zero_amount_stealth_send_rejected`.
+- `crates/kovanica-ffi/tests/ffi.rs` — `send_to_script_v2_and_stealth_over_ffi`:
+  script-v2 and stealth sends over the FFI surface with balance checks.
+
+### 9.4 Cross-cutting invariants
 
 - **Address-version invariant:** every blue block's spent outputs are validly
   authorized by their address version's rule (P2PK signature, P2SH threshold, v2
@@ -654,12 +743,14 @@ covers:
 
 ## 10. Wire & persistence notes
 
-- **Variable-length owner:** `v0x03` is the only address version with a 65-byte
-  payload. The transaction decoder, UTXO encoder/decoder, and checkpoint reader
-  must read the version byte first and branch on payload length (33 vs 65).
+- **Fixed 33-byte owner:** every on-chain owner is a 33-byte versioned address,
+  including the `v0x03` stealth owner (`0x03 || BLAKE3(scan_pk || spend_pk)`).
+  The 65-byte `StealthAddress` (raw scan/spend keys) is the *published* form
+  only — it is never written to the transaction encoding, the UTXO encoding, or
+  the checkpoint.
 - **No separate address type on wire:** all addresses are versioned byte strings.
   `v0x02` and `v0x03` are distinguished from `0x00`/`0x01` only by their version
-  byte and payload length.
+  byte.
 - **Stealth extension is per-output:** the `stealth_flag` byte and the 65-byte
   extension are written per output, not per transaction. A transaction may mix
   ordinary and stealth outputs.
@@ -671,8 +762,9 @@ covers:
   different locktime values.
 - **Format bump:** pre-RFC-003 wire blobs and checkpoints are undecodable; the
   genesis id changes; the live testnet chain resets at activation.
-- **Curve:** stealth ECDH uses Ristretto255 (curve25519-dalek, already in workspace
-  deps) — no new curve dependency. The same curve as ed25519/VRF.
+- **Curve:** stealth ECDH uses Edwards25519 (the Ed25519 curve, curve25519-dalek
+  — already in workspace deps) — no new curve dependency. The same curve family
+  as ed25519 signing.
 
 ---
 

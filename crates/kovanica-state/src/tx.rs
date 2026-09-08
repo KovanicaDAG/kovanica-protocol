@@ -552,9 +552,8 @@ impl Transaction {
                 }
             }
             // stealth flag: 1 byte (0 = ordinary, 1 = stealth)
-            if output.stealth.is_some() {
+            if let Some(s) = output.stealth {
                 buf.push(1);
-                let s = output.stealth.unwrap();
                 buf.extend_from_slice(&s.r);
                 buf.push(s.view_tag);
                 buf.extend_from_slice(&s.p);
@@ -886,7 +885,7 @@ mod tests {
 
     #[test]
     fn lock_time_and_sequence_roundtrip() {
-        let kp = KeyPair::from_u64(1);
+        let _kp = KeyPair::from_u64(1);
         let op = OutPoint::new(TxId::from_bytes([7u8; 32]), 3);
         let tx = Transaction::new_with_lock(
             vec![TxInput::single_sig(

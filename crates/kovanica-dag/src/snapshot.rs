@@ -112,6 +112,11 @@ impl Dag {
         if version > VERSION {
             return Err(SnapshotError::UnsupportedVersion(version));
         }
+        // The reader must decode blocks using the snapshot's own version (v5
+        // and earlier use the all-three-together VRF layout; v6+ uses the
+        // independent proof/output flags). Without this, the v5 backward-compat
+        // path is dead code and old snapshots fail with UnexpectedEof.
+        reader.version = version;
         let k = reader.read_u16()?;
         // v4 added block id (32 bytes). v3 and earlier don't have it.
         // v5 added VRF fields: 1 byte flag + up to 160 bytes (pk+proof+output)
@@ -547,10 +552,7 @@ mod tests {
         let bytes = dag.write_snapshot();
         let restored = Dag::read_snapshot(&bytes).unwrap();
         assert_eq!(restored.linearize(), dag.linearize());
-        assert_eq!(
-            restored.ghostdag(&a).unwrap().selected_parent,
-            Some(g)
-        );
+        assert_eq!(restored.ghostdag(&a).unwrap().selected_parent, Some(g));
     }
 
     #[test]
@@ -669,12 +671,30 @@ mod tests {
         for id in dag.linearize() {
             let orig = dag.ghostdag(&id).unwrap();
             let rest = restored.ghostdag(&id).unwrap();
-            assert_eq!(orig.blue_score, rest.blue_score, "blue_score mismatch for {id}");
-            assert_eq!(orig.blue_work, rest.blue_work, "blue_work mismatch for {id}");
-            assert_eq!(orig.selected_parent, rest.selected_parent, "selected_parent mismatch for {id}");
-            assert_eq!(orig.mergeset_blues, rest.mergeset_blues, "mergeset_blues mismatch for {id}");
-            assert_eq!(orig.mergeset_reds, rest.mergeset_reds, "mergeset_reds mismatch for {id}");
-            assert_eq!(orig.blue_anticone_sizes, rest.blue_anticone_sizes, "blue_anticone_sizes mismatch for {id}");
+            assert_eq!(
+                orig.blue_score, rest.blue_score,
+                "blue_score mismatch for {id}"
+            );
+            assert_eq!(
+                orig.blue_work, rest.blue_work,
+                "blue_work mismatch for {id}"
+            );
+            assert_eq!(
+                orig.selected_parent, rest.selected_parent,
+                "selected_parent mismatch for {id}"
+            );
+            assert_eq!(
+                orig.mergeset_blues, rest.mergeset_blues,
+                "mergeset_blues mismatch for {id}"
+            );
+            assert_eq!(
+                orig.mergeset_reds, rest.mergeset_reds,
+                "mergeset_reds mismatch for {id}"
+            );
+            assert_eq!(
+                orig.blue_anticone_sizes, rest.blue_anticone_sizes,
+                "blue_anticone_sizes mismatch for {id}"
+            );
         }
 
         for id in [vrf_block, partial_vrf] {
@@ -703,16 +723,8 @@ mod tests {
         let (sk, pk) = vrf_keypair_from_seed(&[99u8; 32]);
         let vrf_input = Dag::vrf_input(&[]);
         let eval = vrf_prove(&sk, &vrf_input);
-        let test_block = Block::new_with_vrf(
-            vec![],
-            1,
-            0,
-            0,
-            pk,
-            eval.proof.clone(),
-            eval.output,
-            vec![],
-        );
+        let test_block =
+            Block::new_with_vrf(vec![], 1, 0, 0, pk, eval.proof.clone(), eval.output, vec![]);
         let correct_id = test_block.id();
 
         // Block with VRF: id(32) + n_parents(8) + parents(0) + work(16) +
@@ -720,7 +732,7 @@ mod tests {
         // payload_len(8) + payload(0).
         buf.extend_from_slice(correct_id.as_bytes()); // id: 32
         buf.extend_from_slice(&0u64.to_le_bytes()); // n_parents: 8
-        // no parents
+                                                    // no parents
         buf.extend_from_slice(&1u128.to_le_bytes()); // work: 16
         buf.extend_from_slice(&0u64.to_le_bytes()); // ts: 8
         buf.extend_from_slice(&0u64.to_le_bytes()); // nonce: 8
