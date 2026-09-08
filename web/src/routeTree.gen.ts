@@ -14,7 +14,9 @@ import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as MapRouteImport } from './routes/map'
 import { Route as MultisigRouteImport } from './routes/multisig'
+import { Route as NetworkRouteImport } from './routes/network'
 import { Route as PoolRouteImport } from './routes/pool'
+import { Route as RoadmapRouteImport } from './routes/roadmap'
 import { Route as WalletRouteImport } from './routes/wallet'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
 
@@ -43,9 +45,19 @@ const MultisigRoute = MultisigRouteImport.update({
   path: '/multisig',
   getParentRoute: () => rootRouteImport,
 } as any)
+const NetworkRoute = NetworkRouteImport.update({
+  id: '/network',
+  path: '/network',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PoolRoute = PoolRouteImport.update({
   id: '/pool',
   path: '/pool',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RoadmapRoute = RoadmapRouteImport.update({
+  id: '/roadmap',
+  path: '/roadmap',
   getParentRoute: () => rootRouteImport,
 } as any)
 const WalletRoute = WalletRouteImport.update({
@@ -65,7 +77,9 @@ export interface FileRoutesByFullPath {
   '/explorer': typeof ExplorerRoute
   '/map': typeof MapRoute
   '/multisig': typeof MultisigRoute
+  '/network': typeof NetworkRoute
   '/pool': typeof PoolRoute
+  '/roadmap': typeof RoadmapRoute
   '/wallet': typeof WalletRoute
   '/api/$': typeof ApiSplatRoute
 }
@@ -75,7 +89,9 @@ export interface FileRoutesByTo {
   '/explorer': typeof ExplorerRoute
   '/map': typeof MapRoute
   '/multisig': typeof MultisigRoute
+  '/network': typeof NetworkRoute
   '/pool': typeof PoolRoute
+  '/roadmap': typeof RoadmapRoute
   '/wallet': typeof WalletRoute
   '/api/$': typeof ApiSplatRoute
 }
@@ -86,7 +102,9 @@ export interface FileRoutesById {
   '/explorer': typeof ExplorerRoute
   '/map': typeof MapRoute
   '/multisig': typeof MultisigRoute
+  '/network': typeof NetworkRoute
   '/pool': typeof PoolRoute
+  '/roadmap': typeof RoadmapRoute
   '/wallet': typeof WalletRoute
   '/api/$': typeof ApiSplatRoute
 }
@@ -98,7 +116,9 @@ export interface FileRouteTypes {
     | '/explorer'
     | '/map'
     | '/multisig'
+    | '/network'
     | '/pool'
+    | '/roadmap'
     | '/wallet'
     | '/api/$'
   fileRoutesByTo: FileRoutesByTo
@@ -108,7 +128,9 @@ export interface FileRouteTypes {
     | '/explorer'
     | '/map'
     | '/multisig'
+    | '/network'
     | '/pool'
+    | '/roadmap'
     | '/wallet'
     | '/api/$'
   id:
@@ -118,7 +140,9 @@ export interface FileRouteTypes {
     | '/explorer'
     | '/map'
     | '/multisig'
+    | '/network'
     | '/pool'
+    | '/roadmap'
     | '/wallet'
     | '/api/$'
   fileRoutesById: FileRoutesById
@@ -129,7 +153,9 @@ export interface RootRouteChildren {
   ExplorerRoute: typeof ExplorerRoute
   MapRoute: typeof MapRoute
   MultisigRoute: typeof MultisigRoute
+  NetworkRoute: typeof NetworkRoute
   PoolRoute: typeof PoolRoute
+  RoadmapRoute: typeof RoadmapRoute
   WalletRoute: typeof WalletRoute
   ApiSplatRoute: typeof ApiSplatRoute
 }
@@ -171,11 +197,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MultisigRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/network': {
+      id: '/network'
+      path: '/network'
+      fullPath: '/network'
+      preLoaderRoute: typeof NetworkRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/pool': {
       id: '/pool'
       path: '/pool'
       fullPath: '/pool'
       preLoaderRoute: typeof PoolRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/roadmap': {
+      id: '/roadmap'
+      path: '/roadmap'
+      fullPath: '/roadmap'
+      preLoaderRoute: typeof RoadmapRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/wallet': {
@@ -201,7 +241,9 @@ const rootRouteChildren: RootRouteChildren = {
   ExplorerRoute: ExplorerRoute,
   MapRoute: MapRoute,
   MultisigRoute: MultisigRoute,
+  NetworkRoute: NetworkRoute,
   PoolRoute: PoolRoute,
+  RoadmapRoute: RoadmapRoute,
   WalletRoute: WalletRoute,
   ApiSplatRoute: ApiSplatRoute,
 }

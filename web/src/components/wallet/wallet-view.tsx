@@ -407,7 +407,7 @@ export function WalletView() {
         <p className="break-all font-mono text-xs text-fg">{hexToKvnc(wallet.address)}</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" onClick={() => void onCopy()}><Copy className="size-3.5" /> Copy</Button>
-          <AddressQr address={hexToKvnc(wallet.address)} />
+          <AddressQr value={hexToKvnc(wallet.address)} />
           {!live && <Button type="button" variant="outline" size="sm" onClick={() => void onFaucet()}>Faucet 1 KVNC</Button>}
         </div>
         <div className="mt-3 flex gap-1">
