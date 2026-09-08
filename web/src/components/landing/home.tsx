@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Activity, Compass, Map, Users, Wallet } from "lucide-react";
+import { Activity, Compass, Map, Route, Users, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { WalletDownloads } from "@/components/wallet/wallet-downloads";
 import { useLedger } from "@/lib/ledger/store";
@@ -31,7 +31,7 @@ export function HomeLanding() {
           <Link to="/wallet">Open wallet</Link>
         </Button>
         <Button asChild variant="ghost" className="h-12 px-6">
-          <Link to="/network">Network status</Link>
+          <Link to="/roadmap">Roadmap</Link>
         </Button>
       </div>
 
@@ -69,6 +69,12 @@ export function HomeLanding() {
           body="Live head, peers, PoW, subsidy, finality and bootstrap seeds for the selected source."
         />
         <ProductCard
+          to="/roadmap"
+          icon={Route}
+          title="Roadmap"
+          body="RFC status, client surfaces, and what is shipping next on the protocol."
+        />
+        <ProductCard
           to="/map"
           icon={Map}
           title="Origins map"
@@ -85,7 +91,7 @@ function ProductCard({
   title,
   body,
 }: {
-  to: "/explorer" | "/wallet" | "/map" | "/multisig" | "/network";
+  to: "/explorer" | "/wallet" | "/map" | "/multisig" | "/network" | "/roadmap";
   icon: typeof Compass;
   title: string;
   body: string;
