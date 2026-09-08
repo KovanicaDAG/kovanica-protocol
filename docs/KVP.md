@@ -12,7 +12,7 @@ familiar token-standard brands (e.g. ERC-20) while staying tied to the RFC serie
 | **KVP-101** | [RFC-001](./RFC-001-Multisig.md) | Multisig (M-of-N P2SH) | Shipped |
 | **KVP-102** | [RFC-002](./RFC-002-NativeTokens.md) | Native multi-asset tokens | Shipped |
 | **KVP-103** | [RFC-003](./RFC-003-ScriptV2-and-Stealth.md) | Stealth addresses + script v2 | Shipped |
-| **KVP-104** | RFC-004 | HTLC atomic swaps | In progress |
+| **KVP-104** | [RFC-004](./RFC-004-Htlc.md) | HTLC atomic swaps | Shipped |
 
 ## Native coin vs token standard
 

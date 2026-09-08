@@ -1,7 +1,7 @@
 # HTLC / Atomic Swap — RFC-004 (Slice 5A)
 
-**Status:** IN PROGRESS (design locked, implementation lanes dispatched)
-**Branch:** `consensus/htlc-atomic-swap-rfc-004` (stacked on `consensus/stealth-script-v2-rfc-003`, PR #87)
+**Status:** ✅ SHIPPED (merged to `main` via PR #88, `fb13741`, 2026-09-08)
+**Branch:** `consensus/htlc-atomic-swap-rfc-004` (merged; RFC-004 rebased onto `main` as a single clean commit, redundant RFC-003 stack dropped)
 **Builds on:** RFC-003 script v2 (hash-lock + timelock primitives), RFC-001 multisig (template pattern), RFC-002 (per-asset conservation)
 **Reference protocols:** Bitcoin HTLC (BIP-199), Tier Nolan atomic swap, Lightning Network (preimage revelation), BIP-65/BIP-113 (absolute locktime). BIP-68/BIP-112 (relative locktime) deferred to 5.2 vault.
 

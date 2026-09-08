@@ -1,6 +1,6 @@
 # RFC-004 — HTLC / Atomic Swap (5.1)
 
-- **Status:** Specification (design locked 2026-09-08; implementation in progress on branch `consensus/htlc-atomic-swap-rfc-004`)
+- **Status:** **Shipped** (merged to `main` via PR #88, `fb13741`, 2026-09-08)
 - **Reference implementation:** `crates/kovanica-state/src/htlc.rs`, `crates/kovanica-state/src/keys.rs`,
   `crates/kovanica-state/src/ledger.rs`, `crates/kovanica-node/src/atomic_swap.rs`,
   `crates/kovanica-node/src/node.rs`, `crates/kovanica-node/src/rpc.rs`,
