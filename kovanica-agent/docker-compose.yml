@@ -131,7 +131,8 @@ services:
   # file's directory (kovanica-agent/), so `..` is the protocol repo root.
   # This also means kovanica-agent/ must stay checked out inside the
   # kovanica-protocol repo tree at kovanica-agent/ (as it is here), not
-  # moved elsewhere on its own.
+  # moved elsewhere on its own. A standalone kovanica-agent checkout should
+  # build the sandbox image with sandbox/build-image.sh instead.
   sandbox-image:
     build:
       context: ..
