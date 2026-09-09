@@ -6,11 +6,11 @@ Usage:
 """
 
 import argparse
-import hashlib
 import logging
 import os
 import re
 import sys
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -65,66 +65,186 @@ class Chunk:
     lang: str            # file extension (e.g. ".rs", ".md")
     start_line: int      # 1-indexed inclusive
     end_line: int        # 1-indexed inclusive
-    chunk_id: str = field(default="")  # sha1(rel_path:start:end) hex
+    chunk_id: str = field(default="")  # uuid5(rel_path:start:end) hex
 
     def __post_init__(self):
         if not self.chunk_id:
             raw = f"{self.rel_path}:{self.start_line}:{self.end_line}"
-            self.chunk_id = hashlib.sha1(raw.encode()).hexdigest()
+            # Qdrant point ids must be an unsigned integer or a UUID string.
+            # Derive a deterministic UUID from the chunk locator.
+            self.chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
 
 # ---------------------------------------------------------------------------
 # Rust-aware chunking
 # ---------------------------------------------------------------------------
 
-def chunk_rust(content: str, rel_path: str, abs_path: str) -> list[Chunk]:
-    """Split a .rs file on top-level fn/impl/struct/enum/trait/mod blocks.
+_ITEM_RE = re.compile(
+    r"^\s*(pub(\s*\([^)]*\))?\s+)?"
+    r"(async\s+|unsafe\s+|extern\s+(\"[^\"]*\"\s+)?|const\s+)*"
+    r"(fn|struct|enum|trait|mod|impl|union)\b"
+)
 
-    Each chunk includes any immediately preceding doc-comment (///) or
-    attribute (#[…]) lines that belong to the item.
+
+def _strip_line_for_brace_scan(line: str, in_block_comment: bool) -> tuple[str, bool]:
+    """Return a copy of ``line`` with string/char literals and comments
+    blanked out (so their braces can't be mistaken for structural ones),
+    plus whether a ``/* ... */`` block comment is still open afterwards.
+    """
+    out = []
+    i = 0
+    n = len(line)
+    in_str = False
+    in_char = False
+    while i < n:
+        c = line[i]
+        if in_block_comment:
+            if c == "*" and i + 1 < n and line[i + 1] == "/":
+                in_block_comment = False
+                out.append("  ")
+                i += 2
+                continue
+            out.append(" ")
+            i += 1
+            continue
+        if in_str:
+            out.append(" ")
+            if c == "\\" and i + 1 < n:
+                out.append(" ")
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+            i += 1
+            continue
+        if in_char:
+            out.append(" ")
+            if c == "\\" and i + 1 < n:
+                out.append(" ")
+                i += 2
+                continue
+            if c == "'":
+                in_char = False
+            i += 1
+            continue
+        if c == "/" and i + 1 < n and line[i + 1] == "/":
+            break  # rest of line is a line comment
+        if c == "/" and i + 1 < n and line[i + 1] == "*":
+            in_block_comment = True
+            out.append("  ")
+            i += 2
+            continue
+        if c == '"':
+            in_str = True
+            out.append(" ")
+            i += 1
+            continue
+        if c == "'":
+            # Could be a char literal ('a', '\n') or a lifetime ('static).
+            # Heuristic: char literals close within 4 chars via an
+            # unescaped closing quote; lifetimes don't. Treat as char
+            # literal only when we can see the closing quote nearby.
+            closing = line.find("'", i + 1, i + 5)
+            if closing != -1:
+                in_char = True
+                out.append(" ")
+                i += 1
+                continue
+            out.append(c)
+            i += 1
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out), in_block_comment
+
+
+def chunk_rust(content: str, rel_path: str, abs_path: str) -> list[Chunk]:
+    """Split a .rs file on top-level fn/impl/struct/enum/trait/mod/union items.
+
+    Tracks brace depth (ignoring braces inside string/char literals and
+    comments) so nested blocks -- match arms, closures, if/else, loops --
+    never trigger a premature split. A chunk ends only when depth returns
+    to 0 after having gone positive, i.e. at the item's *own* closing
+    brace, not the first bare ``}`` anywhere inside it.
+
+    Each chunk includes any immediately preceding doc-comment (``///``,
+    ``//!``) or attribute (``#[...]``) lines that belong to the item.
     """
     lines = content.split("\n")
     total = len(lines)
     chunks: list[Chunk] = []
-    start_line = 0  # 0-indexed line where the current item starts
 
-    for i, line in enumerate(lines):
-        # Detect the closing brace of a top-level item.
-        if line.strip() == "}":
-            # Walk backward over doc-comment / attribute lines that belong
-            # to this item (they precede the item's opening line but come
-            # after the previous item's closing brace).
-            start = start_line
-            j = start_line
-            while j < i:
-                stripped = lines[j].strip()
-                if stripped.startswith("///") or stripped.startswith("//!") or stripped.startswith("#["):
-                    start = j
-                    break
-                j += 1
+    start_line = 0  # 0-indexed line where the current item (+ its leading
+                     # doc-comments/attributes) starts
+    item_start = None  # 0-indexed line of the item's own signature, once found
+    depth = 0
+    in_block_comment = False
+    seen_open_brace = False
 
-            item_text = "\n".join(lines[start : i + 1]).strip()
-            if item_text:
-                chunks.append(Chunk(
-                    text=item_text,
-                    file_path=abs_path,
-                    rel_path=rel_path,
-                    lang=".rs",
-                    start_line=start + 1,
-                    end_line=i + 1,
-                ))
+    def flush(end_i: int) -> None:
+        nonlocal start_line
+        text = "\n".join(lines[start_line:end_i + 1]).strip()
+        if text:
+            chunks.append(Chunk(
+                text=text,
+                file_path=abs_path,
+                rel_path=rel_path,
+                lang=".rs",
+                start_line=start_line + 1,
+                end_line=end_i + 1,
+            ))
+        next_start = end_i + 1
+        while next_start < total and lines[next_start].strip() == "":
+            next_start += 1
+        start_line = next_start
 
-            # Next item starts after the blank/doc gap following this brace.
-            next_start = i + 1
-            while next_start < total:
-                s = lines[next_start].strip()
-                if s.startswith("///") or s.startswith("//!") or s.startswith("#["):
-                    next_start += 1
-                else:
-                    break
-            start_line = next_start
+    i = 0
+    while i < total:
+        raw = lines[i]
+        scan_line, in_block_comment = _strip_line_for_brace_scan(raw, in_block_comment)
+        stripped = raw.strip()
 
-    # Handle any trailing content (e.g. incomplete items, trailing comments).
+        if item_start is None:
+            if stripped.startswith("///") or stripped.startswith("//!") or stripped.startswith("#["):
+                i += 1
+                continue
+            if stripped == "":
+                # Blank line before any item content -- part of the gap
+                # between items, drop it from the pending chunk start.
+                if start_line == i:
+                    start_line = i + 1
+                i += 1
+                continue
+            # Any other top-level content (item keyword, `use`, `static`,
+            # `type X = ...;`, macro invocation) becomes the item anchor.
+            item_start = i
+            depth = 0
+            seen_open_brace = False
+
+        depth += scan_line.count("{")
+        if "{" in scan_line:
+            seen_open_brace = True
+        depth -= scan_line.count("}")
+
+        # Brace-less item (e.g. `use foo::bar;`, `type X = Y;`) ends at the
+        # first line containing a statement-terminating `;` with no brace
+        # ever opened.
+        if not seen_open_brace and ";" in scan_line:
+            flush(i)
+            item_start = None
+            i += 1
+            continue
+
+        if seen_open_brace and depth <= 0:
+            flush(i)
+            item_start = None
+            i += 1
+            continue
+
+        i += 1
+
+    # Handle any trailing, unterminated content (e.g. a file that ends
+    # mid-item, or trailing comments with no following item).
     if start_line < total:
         tail = "\n".join(lines[start_line:]).strip()
         if tail:
@@ -138,6 +258,7 @@ def chunk_rust(content: str, rel_path: str, abs_path: str) -> list[Chunk]:
             ))
 
     return chunks
+
 
 
 # ---------------------------------------------------------------------------
@@ -324,13 +445,35 @@ def get_qdrant_client():
 
 
 def recreate_collection(client, collection: str) -> None:
-    """Create (or recreate) a Qdrant collection with cosine distance."""
+    """Drop (if present) and recreate a Qdrant collection with cosine distance."""
     from qdrant_client.models import Distance, VectorParams
     client.recreate_collection(
         collection_name=collection,
         vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
     )
     logger.info("Recreated collection '%s' (dim=%d, cosine)", collection, VECTOR_SIZE)
+
+
+def ensure_collection(client, collection: str) -> None:
+    """Create the collection if it doesn't already exist; no-op otherwise.
+
+    Without this, the very first index run (no one has passed --recreate
+    yet, because there's nothing to recreate) fails outright: upsert()
+    404s against a collection Qdrant has never heard of. --recreate stays
+    the explicit "drop and rebuild from scratch" path; this is what makes
+    a bare first run (and every incremental webhook-triggered reindex,
+    which never passes --recreate) actually work.
+    """
+    from qdrant_client.models import Distance, VectorParams
+
+    existing = {c.name for c in client.get_collections().collections}
+    if collection in existing:
+        return
+    client.create_collection(
+        collection_name=collection,
+        vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+    )
+    logger.info("Created collection '%s' (dim=%d, cosine)", collection, VECTOR_SIZE)
 
 
 def upsert_chunks(client, collection: str, chunks: list[Chunk], embedder) -> None:
@@ -402,6 +545,8 @@ def main() -> None:
 
     if args.recreate:
         recreate_collection(client, args.collection)
+    else:
+        ensure_collection(client, args.collection)
 
     files = walk_repo(args.repo)
     if not files:

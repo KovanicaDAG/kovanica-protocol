@@ -30,7 +30,9 @@ services:
     restart: unless-stopped
 
   agent-api:
-    build: ./agent
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
     environment:
       - VLLM_BASE_URL=http://vllm:8000/v1
       - QDRANT_URL=http://qdrant:6333
@@ -93,6 +95,13 @@ services:
     tmpfs:
       - /tmp
     read_only: true
+    # The runner image drops to a non-root user (sandbox-runner), but the
+    # docker.sock it must drive is owned root:docker — add the host docker
+    # group via group_add so the socket stays group-accessible without
+    # mounting it with a worse mode. Set DOCKER_GID on hosts where the
+    # group id differs from the default.
+    group_add:
+      - "${DOCKER_GID:-988}"
     # privileged: false is the default; kept explicit for clarity — the socket
     # is mounted deliberately, not via broad privileged access.
     privileged: false
@@ -114,8 +123,20 @@ services:
   #   docker compose --profile build-only build sandbox-image
   # sandbox-runner then spawns short-lived containers from this image per
   # cargo call via the Docker SDK (see sandbox/runner/server.py: run_cargo).
+  #
+  # Context is the repo root (one level up from this compose file), not
+  # ./sandbox — sandbox/Dockerfile's pre-vendoring step COPYs Cargo.toml
+  # and each crate's Cargo.toml from crates/, which only exist at the repo
+  # root. `docker compose build` resolves this path relative to this
+  # file's directory (kovanica-agent/), so `..` is the protocol repo root.
+  # This also means kovanica-agent/ must stay checked out inside the
+  # kovanica-protocol repo tree at kovanica-agent/ (as it is here), not
+  # moved elsewhere on its own. A standalone kovanica-agent checkout should
+  # build the sandbox image with sandbox/build-image.sh instead.
   sandbox-image:
-    build: ./sandbox
+    build:
+      context: ..
+      dockerfile: kovanica-agent/sandbox/Dockerfile
     image: kovanica-sandbox:latest
     profiles: ["build-only"]
 

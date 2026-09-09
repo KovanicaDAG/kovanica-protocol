@@ -34,13 +34,27 @@ def get_checkpoint(path: str | None = None) -> object:
     ------
     ImportError
         If ``langgraph.checkpoint.sqlite`` is not installed.
+
+    Notes
+    -----
+    ``SqliteSaver.from_conn_string`` is a ``@contextmanager`` generator
+    (it *yields* a ``SqliteSaver``, it does not return one) — calling it
+    directly hands back a context-manager object, not a usable saver, and
+    every graph invocation would fail. We open the underlying sqlite3
+    connection ourselves instead (mirroring what ``from_conn_string`` does
+    internally: ``check_same_thread=False``, since FastAPI's sync routes
+    run on a threadpool) and construct ``SqliteSaver`` directly, keeping
+    the connection open for the life of the process.
     """
+    import sqlite3
     from langgraph.checkpoint.sqlite import SqliteSaver  # type: ignore[import-untyped]
 
     db_path = Path(path or DEFAULT_DB_PATH)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
-    saver = SqliteSaver.from_conn_string(str(db_path))
+    conn = sqlite3.connect(str(db_path), check_same_thread=False)
+    saver = SqliteSaver(conn)
+    saver.setup()
     log.info("Checkpointer opened at %s", db_path)
     return saver
 

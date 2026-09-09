@@ -1,16 +1,42 @@
-# Kovanica DevTeam Agent — scaffold
+# Kovi — Kovanica Engineering Agent
+
+> **Kovi, Product of Kovanica.** A RAG-powered engineering agent for the
+> kovanica-protocol codebase: FastAPI `/chat` + `/confirm`, LangGraph with
+> SQLite checkpoints, Qdrant/fastembed semantic codebase search, and a
+> network-disabled sandbox for `cargo` runs. It can propose patches and — when
+> armed — open draft PRs from `/confirm`.
 
 ## Build & run
+
+> **Standalone checkout.** If `kovanica-agent/` is checked out as its own repo
+> (not inside the kovanica-protocol tree), build the sandbox image first with
+> `sandbox/build-image.sh` (it needs `KOVANICA_PROTOCOL_ROOT` pointing at a
+> kovanica-protocol checkout, default `../kovanica-protocol`), then run the
+> stack below. Inside the protocol tree, the compose `context: ..` resolves the
+> manifests automatically.
+
 ```bash
 # 1. Build the sandbox image (not run as a persistent service)
 docker compose --profile build-only build sandbox-image
+#    standalone: KOVANICA_PROTOCOL_ROOT=/path/to/kovanica-protocol ./sandbox/build-image.sh
 
 # 2. Build the sandbox-runner sidecar (owns the Docker socket) and the rest
 docker compose up -d vllm qdrant sandbox-runner agent-api open-webui
+
+# CPU-only host (no NVIDIA GPU): overrides vllm with Ollama on 11434,
+# remaps open-webui -> 13000 and agent-api -> 13080 (host ports busy).
+docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d
+
+# 3. Pull the model (GPU: vLLM serves Qwen/Qwen2.5-Coder-32B-Instruct-AWQ;
+#    CPU: ollama pull qwen2.5-coder:3b) and index the repo once:
+docker exec kovanica-agent-agent-api-1 python /app/indexer.py --repo /repos/kovanica-protocol
 ```
 
-Open WebUI: http://localhost:3000
-Agent API:  http://localhost:8080/chat
+Open WebUI: http://localhost:13000 (GPU: :3000)
+Agent API:  http://localhost:13080/chat (GPU: :8080)
+
+Set `AUTH_DEV_TOKEN` in `.env` (compose reads it) — a request with
+`Authorization: Bearer <token>` maps to the `dev` role (needed for `/confirm`).
 
 ## Architecture — who owns the Docker socket
 
@@ -71,9 +97,11 @@ agent-api ──POST /run──▶ sandbox-runner (owns docker.sock) ──spawn
   `AGENT_GH_BIN` (default `gh`).
 
 ## Before this touches anything beyond your own machine
-- [ ] Index the repo once the stack is up: `docker compose exec agent-api python -m indexer --repo /repos/kovanica-protocol --recreate` (re-run on merge; wire to a GitHub webhook to automate).
-- [ ] Pre-vendor crate deps into the sandbox image at build time
-      (`cargo fetch`) so `--offline` cargo calls actually succeed.
+- [ ] Index the repo once the stack is up: `docker compose exec agent-api python -m indexer --repo /repos/kovanica-protocol` (`--recreate` only needed to force a full rebuild — the collection is now auto-created on first run). Re-run on merge; wire to a GitHub webhook to automate (no receiver exists yet, this is still manual).
+- [x] Pre-vendor crate deps into the sandbox image at build time
+      (`cargo fetch`) so `--offline` cargo calls actually succeed. Build via
+      `docker compose --profile build-only build sandbox-image` (context is
+      the repo root, not `sandbox/`, so the crate manifests resolve).
 - [ ] Install gVisor (`runsc`) on the host and uncomment `runtime="runsc"`
       in `sandbox/runner/server.py` (the Docker-socket-owning sidecar is now
       the single place to set the sandbox runtime).

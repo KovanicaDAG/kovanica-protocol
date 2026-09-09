@@ -35,6 +35,12 @@ except Exception:  # pragma: no cover - defensive fallback
     _get_config = None
 
 VLLM_BASE_URL = os.environ.get("VLLM_BASE_URL", "http://vllm:8000/v1")
+# Model name passed to the OpenAI-compatible server. Default targets the
+# GPU vLLM deployment (Qwen 32B AWQ). CPU/local deployments should set
+# AGENT_MODEL to the served model name (e.g. Ollama "qwen2.5-coder:3b").
+AGENT_MODEL = os.environ.get(
+    "AGENT_MODEL", "Qwen/Qwen2.5-Coder-32B-Instruct-AWQ"
+)
 QDRANT_URL = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 SANDBOX_IMAGE = os.environ.get("SANDBOX_IMAGE", "kovanica-sandbox:latest")
 REPOS_PATH = os.environ.get("REPOS_PATH", "/repos")
@@ -189,7 +195,7 @@ USER_TOOLS = [search_codebase, query_node_api, explain_concept]
 llm = ChatOpenAI(
     base_url=VLLM_BASE_URL,
     api_key="not-needed",  # vLLM's OpenAI-compatible server ignores this
-    model="Qwen/Qwen2.5-Coder-32B-Instruct-AWQ",
+    model=AGENT_MODEL,
     temperature=0.1,
 )
 
