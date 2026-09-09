@@ -71,9 +71,11 @@ agent-api ──POST /run──▶ sandbox-runner (owns docker.sock) ──spawn
   `AGENT_GH_BIN` (default `gh`).
 
 ## Before this touches anything beyond your own machine
-- [ ] Index the repo once the stack is up: `docker compose exec agent-api python -m indexer --repo /repos/kovanica-protocol --recreate` (re-run on merge; wire to a GitHub webhook to automate).
-- [ ] Pre-vendor crate deps into the sandbox image at build time
-      (`cargo fetch`) so `--offline` cargo calls actually succeed.
+- [ ] Index the repo once the stack is up: `docker compose exec agent-api python -m indexer --repo /repos/kovanica-protocol` (`--recreate` only needed to force a full rebuild — the collection is now auto-created on first run). Re-run on merge; wire to a GitHub webhook to automate (no receiver exists yet, this is still manual).
+- [x] Pre-vendor crate deps into the sandbox image at build time
+      (`cargo fetch`) so `--offline` cargo calls actually succeed. Build via
+      `docker compose --profile build-only build sandbox-image` (context is
+      the repo root, not `sandbox/`, so the crate manifests resolve).
 - [ ] Install gVisor (`runsc`) on the host and uncomment `runtime="runsc"`
       in `sandbox/runner/server.py` (the Docker-socket-owning sidecar is now
       the single place to set the sandbox runtime).

@@ -16,6 +16,7 @@ for one of {check, test, clippy, build} against the mounted repo.
 import json
 import os
 import re
+import socketserver
 import uuid
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -132,9 +133,14 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
-class ThreadingHTTPServer(HTTPServer):
+class ThreadingHTTPServer(socketserver.ThreadingMixIn, HTTPServer):
     # /run can block for up to MAX_TIMEOUT_S, so serve each request on its own
     # thread rather than serialising the whole service behind one long run.
+    # ThreadingMixIn must come first in the MRO so handle_request() actually
+    # dispatches onto a new thread — daemon_threads alone (on plain
+    # HTTPServer) does nothing; the server stays single-threaded and every
+    # request, including /run and future health checks, queues behind
+    # whichever cargo call is currently in flight.
     daemon_threads = True
 
 

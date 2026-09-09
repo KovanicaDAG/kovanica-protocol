@@ -114,8 +114,19 @@ services:
   #   docker compose --profile build-only build sandbox-image
   # sandbox-runner then spawns short-lived containers from this image per
   # cargo call via the Docker SDK (see sandbox/runner/server.py: run_cargo).
+  #
+  # Context is the repo root (one level up from this compose file), not
+  # ./sandbox — sandbox/Dockerfile's pre-vendoring step COPYs Cargo.toml
+  # and each crate's Cargo.toml from crates/, which only exist at the repo
+  # root. `docker compose build` resolves this path relative to this
+  # file's directory (kovanica-agent/), so `..` is the protocol repo root.
+  # This also means kovanica-agent/ must stay checked out inside the
+  # kovanica-protocol repo tree at kovanica-agent/ (as it is here), not
+  # moved elsewhere on its own.
   sandbox-image:
-    build: ./sandbox
+    build:
+      context: ..
+      dockerfile: kovanica-agent/sandbox/Dockerfile
     image: kovanica-sandbox:latest
     profiles: ["build-only"]
 

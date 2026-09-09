@@ -20,12 +20,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Pre-vendor dependencies at image build time (network allowed here, at
-# build time only) so requests can run fully offline. Adjust path/COPY to
-# your actual crate layout before building.
-# COPY Cargo.toml Cargo.lock /workspace/
-# RUN cd /workspace && cargo fetch
+# build time only) so requests can run fully offline via `cargo ... --offline`
+# (see entrypoint.sh). Kovanica workspace layout (Cargo.toml
+# [workspace.members]): kovanica-dag, kovanica-state, kovanica-node,
+# kovanica-ffi, kovanica-cli — copy manifests only (no src/) so `cargo fetch`
+# resolves the full dep graph without invalidating the Docker layer cache on
+# every source change.
+#
+# Build context MUST be the kovanica-protocol repo root, not this
+# sandbox/ directory, since Cargo.toml and crates/ only exist there.
+# Via compose (context set in docker-compose.yml's sandbox-image service):
+#   docker compose --profile build-only build sandbox-image
+# Manually, from the repo root:
+#   docker build -f kovanica-agent/sandbox/Dockerfile -t kovanica-sandbox:latest .
+# NOTE: keep this crate list in sync with Cargo.toml's [workspace.members]
+# and AGENTS.md's repository layout section if either changes.
+COPY Cargo.toml Cargo.lock /workspace/
+COPY crates/kovanica-dag/Cargo.toml /workspace/crates/kovanica-dag/Cargo.toml
+COPY crates/kovanica-state/Cargo.toml /workspace/crates/kovanica-state/Cargo.toml
+COPY crates/kovanica-node/Cargo.toml /workspace/crates/kovanica-node/Cargo.toml
+COPY crates/kovanica-ffi/Cargo.toml /workspace/crates/kovanica-ffi/Cargo.toml
+COPY crates/kovanica-cli/Cargo.toml /workspace/crates/kovanica-cli/Cargo.toml
+RUN set -eux; \
+    for crate in kovanica-dag kovanica-state kovanica-node kovanica-ffi kovanica-cli; do \
+      mkdir -p /workspace/crates/$crate/src; \
+      echo "fn main() {}" > /workspace/crates/$crate/src/main.rs; \
+      echo "// placeholder for cargo fetch" > /workspace/crates/$crate/src/lib.rs; \
+    done; \
+    cd /workspace && cargo fetch --locked; \
+    find /workspace/crates -path "*/src/*.rs" -delete
 
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY kovanica-agent/sandbox/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh && \
     chown -R sandbox:sandbox /home/sandbox
 
