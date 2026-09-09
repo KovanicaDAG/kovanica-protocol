@@ -4,12 +4,12 @@ import { cn } from "@/lib/utils";
 
 /** CI artifacts from `.github/workflows/wallet.yml` (Actions → latest green run). */
 export const WALLET_DOWNLOADS = {
-  /** Android debug APK artifact name: `kovanica-wallet-apk` */
-  androidWorkflow:
-    "https://github.com/KovanicaDAG/kovanica-protocol/actions/workflows/wallet.yml",
-  /** iOS unsigned IPA artifact name: `kovanica-wallet-ios-ipa` */
-  iosWorkflow:
-    "https://github.com/KovanicaDAG/kovanica-protocol/actions/workflows/wallet.yml",
+  /** Android debug APK, served publicly by the web host (explorer.kovanica.online/download/). */
+  androidApk: "https://explorer.kovanica.online/download/kovanica-wallet-debug.apk",
+  /** iOS unsigned IPA (sideload), served publicly by the web host. */
+  iosIpa: "https://explorer.kovanica.online/download/kovanica-wallet-ios-unsigned.ipa",
+  /** Latest build run (requires GitHub access to the private repo). */
+  workflow: "https://github.com/KovanicaDAG/kovanica-protocol/actions/workflows/wallet.yml",
   iosGuide:
     "https://github.com/KovanicaDAG/kovanica-protocol/blob/main/kovanica-wallet/ios/README.md#install-on-a-real-iphone--no-mac-needed",
   androidGuide:
@@ -48,15 +48,14 @@ export function WalletDownloads({ className, variant = "card" }: Props) {
             Native wallet
           </h2>
           <p className={cn("mt-1 text-muted", isCard ? "text-sm leading-relaxed" : "text-xs leading-relaxed")}>
-            Android APK and iOS IPA (sideload) build on every relevant push via GitHub Actions.
-            Open the latest green <span className="text-fg/90">kovanica wallet</span> run and download
-            the artifact.
+            Android APK and iOS IPA (sideload) build on every relevant push via GitHub Actions —
+            copies are hosted here for direct download.
           </p>
 
           <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Button asChild variant="outline" className="h-11 justify-start sm:min-w-[11rem]">
               <a
-                href={WALLET_DOWNLOADS.androidWorkflow}
+                href={WALLET_DOWNLOADS.androidApk}
                 target="_blank"
                 rel="noopener noreferrer"
               >
@@ -65,7 +64,7 @@ export function WalletDownloads({ className, variant = "card" }: Props) {
               </a>
             </Button>
             <Button asChild variant="outline" className="h-11 justify-start sm:min-w-[11rem]">
-              <a href={WALLET_DOWNLOADS.iosWorkflow} target="_blank" rel="noopener noreferrer">
+              <a href={WALLET_DOWNLOADS.iosIpa} target="_blank" rel="noopener noreferrer">
                 <Download className="size-4 text-gold" aria-hidden />
                 iOS IPA
               </a>
@@ -101,6 +100,18 @@ export function WalletDownloads({ className, variant = "card" }: Props) {
               >
                 wallet README
               </a>
+            </li>
+            <li>
+              Built by the{" "}
+              <a
+                href={WALLET_DOWNLOADS.workflow}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-blue underline-offset-2 hover:underline"
+              >
+                kovanica wallet
+              </a>{" "}
+              GitHub Actions workflow (copy hosted on the explorer; latest green run lives in the GitHub repo).
             </li>
           </ul>
         </div>
