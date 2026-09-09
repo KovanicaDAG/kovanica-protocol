@@ -60,7 +60,7 @@ verifies genesis match against seed1.
 | `seed.kovanica.online` | A | `145.223.116.178` | DNS only |
 | `seed.kovanica.online` | AAAA | `2a02:4780:41:1f43::1` | DNS only |
 | `seed3.kovanica.online` | A | `3.79.148.71` | DNS only |
-| `explorer/www/app/wallet/trader/bot/dash` | A | `145.223.116.178` | proxied |
+| `explorer/www/app/wallet/trader/bot/dash/kovi` | A | `145.223.116.178` | proxied |
 | `opencode` | A | `145.223.116.178` | DNS only |
 
 ## 4. Hard-won incident lessons (do not relearn)

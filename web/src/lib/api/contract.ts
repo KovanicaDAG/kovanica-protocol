@@ -3,6 +3,7 @@
 export const LIVE_EXPLORER = "https://explorer.kovanica.online";
 export const LIVE_WALLET = "https://wallet.kovanica.online";
 export const LIVE_MAP = "https://map.kovanica.online";
+export const LIVE_KOVI = "https://kovi.kovanica.online";
 export const LIVE_SITE = "https://kovanica.online";
 export const NETWORK_ID = "kovanica-testnet";
 export const MAINNET_ID = "kovanica-mainnet";

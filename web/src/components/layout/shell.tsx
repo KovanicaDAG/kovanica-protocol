@@ -1,7 +1,8 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { Compass, Map, Wallet, Coins, Users, FileText, Pickaxe, Activity, Route } from "lucide-react";
+import { Compass, Map, Wallet, Coins, Users, FileText, Pickaxe, Activity, Route, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SourceSwitch } from "@/components/layout/source-switch";
+import { LIVE_KOVI } from "@/lib/api/contract";
 
 const NAV = [
   { to: "/", label: "Home", icon: Coins },
@@ -63,6 +64,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
           >
             Docs
           </Link>
+          <a
+            href={LIVE_KOVI}
+            className="inline-flex h-10 items-center rounded-md px-3 text-sm font-medium text-muted transition-colors duration-150 hover:bg-surface-2 hover:text-fg"
+          >
+            Kovi
+          </a>
         </nav>
         <div className="flex items-center gap-1.5">
           <span className="md:hidden">

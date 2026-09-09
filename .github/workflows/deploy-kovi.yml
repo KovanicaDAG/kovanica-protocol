@@ -1,0 +1,36 @@
+name: Deploy Kovi
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "kovanica-agent/**"
+      - ".github/workflows/deploy-kovi.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy kovi.kovanica.online
+    runs-on: ubuntu-latest
+    # First bring-up pulls Ollama + the 3B coder model and indexes the
+    # protocol repo, so give the SSH session plenty of room.
+    timeout-minutes: 50
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_PRIVATE_KEY }}
+          port: 2222
+          command_timeout: 40m
+          script: |
+            set -euo pipefail
+            cd /root/kovanica-protocol
+            git pull --ff-only origin main
+            chmod +x kovanica-agent/deploy/vps-up.sh
+            KOVANICA_PROTOCOL_ROOT=/root/kovanica-protocol \
+              bash kovanica-agent/deploy/vps-up.sh
+            curl -fsS http://127.0.0.1:13080/healthz
+            echo
+            echo "Kovi healthz ok"
