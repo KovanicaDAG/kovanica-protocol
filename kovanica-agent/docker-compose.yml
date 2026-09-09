@@ -30,7 +30,9 @@ services:
     restart: unless-stopped
 
   agent-api:
-    build: ./agent
+    build:
+      context: .
+      dockerfile: agent/Dockerfile
     environment:
       - VLLM_BASE_URL=http://vllm:8000/v1
       - QDRANT_URL=http://qdrant:6333
@@ -93,6 +95,13 @@ services:
     tmpfs:
       - /tmp
     read_only: true
+    # The runner image drops to a non-root user (sandbox-runner), but the
+    # docker.sock it must drive is owned root:docker — add the host docker
+    # group via group_add so the socket stays group-accessible without
+    # mounting it with a worse mode. Set DOCKER_GID on hosts where the
+    # group id differs from the default.
+    group_add:
+      - "${DOCKER_GID:-988}"
     # privileged: false is the default; kept explicit for clarity — the socket
     # is mounted deliberately, not via broad privileged access.
     privileged: false

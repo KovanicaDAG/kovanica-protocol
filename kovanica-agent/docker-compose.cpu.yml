@@ -23,15 +23,27 @@ services:
   vllm:
     image: ollama/ollama:latest
     command: ["serve"]
-    ports:
+    # Base vllm publishes 8000:8000 (vLLM); Ollama serves OpenAI-compat on
+    # 11434. The host already has something on 8000 (pm2 dashboard-api), so
+    # !reset the base ports entirely and publish only Ollama's.
+    ports: !override
       - "11434:11434"
     volumes:
       - ollama-data:/root/.ollama
     environment:
       - OLLAMA_HOST=0.0.0.0:11434
+    # Base file's vllm service carries the NVIDIA GPU reservation; clear it
+    # for CPU hosts (compose deep-merges lists, so !reset is required —
+    # an empty devices: [] would still append to the base's reservation).
+    deploy: !reset {}
     restart: unless-stopped
 
   agent-api:
+    # Host 8080 is taken on this VPS by a live kovanica-node metrics
+    # listener; publish the API on 13080 instead (nginx fronts it at
+    # kovanica.online/agent or a subdomain).
+    ports: !override
+      - "13080:8080"
     environment:
       - VLLM_BASE_URL=http://vllm:11434/v1
       - AGENT_MODEL=qwen2.5-coder:3b
@@ -42,6 +54,11 @@ services:
       - vllm
 
   open-webui:
+      # Host port 3000 is already taken on this VPS (claudia-s-store
+    # container). Publish the WebUI on 13000 instead (nginx will front it
+    # at kovac.kovanica.online / kovanica.online/agent).
+    ports: !override
+      - "13000:8080"
     environment:
       - OPENAI_API_BASE_URL=http://vllm:11434/v1
     depends_on:

@@ -6,11 +6,11 @@ Usage:
 """
 
 import argparse
-import hashlib
 import logging
 import os
 import re
 import sys
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -65,12 +65,14 @@ class Chunk:
     lang: str            # file extension (e.g. ".rs", ".md")
     start_line: int      # 1-indexed inclusive
     end_line: int        # 1-indexed inclusive
-    chunk_id: str = field(default="")  # sha1(rel_path:start:end) hex
+    chunk_id: str = field(default="")  # uuid5(rel_path:start:end) hex
 
     def __post_init__(self):
         if not self.chunk_id:
             raw = f"{self.rel_path}:{self.start_line}:{self.end_line}"
-            self.chunk_id = hashlib.sha1(raw.encode()).hexdigest()
+            # Qdrant point ids must be an unsigned integer or a UUID string.
+            # Derive a deterministic UUID from the chunk locator.
+            self.chunk_id = str(uuid.uuid5(uuid.NAMESPACE_URL, raw))
 
 
 # ---------------------------------------------------------------------------

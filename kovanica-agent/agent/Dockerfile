@@ -19,10 +19,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements.txt .
+# graph.py loads the system prompt one directory above the module
+# (os.path.join(dirname(__file__), "..", "SYSTEM_PROMPT.md")), which
+# resolves to /SYSTEM_PROMPT.md once WORKDIR is /app. The build context
+# must be the kovanica-agent repo root (see compose build.context).
+COPY SYSTEM_PROMPT.md /SYSTEM_PROMPT.md
+
+COPY agent/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY . .
+COPY agent/ .
 
 EXPOSE 8080
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

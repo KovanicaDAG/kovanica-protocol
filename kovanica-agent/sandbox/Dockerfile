@@ -6,7 +6,11 @@
 # Set at spawn time (docker SDK: `runtime="runsc"`), not here — the runtime
 # is a host-level flag, not something the image controls.
 
-FROM rust:1.82-slim-bookworm
+# Pin to a Rust that matches the repo's reality: Cargo.lock pulls blake3
+# 1.8.6, whose manifest uses edition-2024 (stabilized in Cargo 1.85+), so
+# older images fail at `cargo fetch` manifest parse. 1.98 matches the
+# toolchain the workspace builds with in CI (dtolnay/rust-toolchain@stable).
+FROM rust:1.98-slim-bookworm
 
 RUN groupadd -r sandbox && useradd -r -g sandbox -m -d /home/sandbox sandbox
 
