@@ -654,7 +654,14 @@ fn test_script_v2_csv_spend() {
 
     let (mut ledger, coin) = funded_ledger(script_addr, 1_000);
 
-    // sequence = 100 >= v = 50 → passes.
+    // Mine 100 empty blocks so the coin is 100 blocks old (BIP-112 age is
+    // measured from the creating block's height, 0 for the genesis coinbase).
+    let mut tip = ledger.dag().selected_tip();
+    for h in 1..=100 {
+        tip = ledger.insert(vec![tip], 1, h, 0, &[]).unwrap();
+    }
+
+    // sequence = 100 (age 100 >= 100 passes the ledger rule) >= v = 50 → passes.
     let spend = build_script_v2_spend_with_lock(
         coin,
         script,
@@ -665,9 +672,7 @@ fn test_script_v2_csv_spend() {
         100,
     );
 
-    ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend])
-        .unwrap();
+    ledger.insert(vec![tip], 1, 101, 0, &[spend]).unwrap();
 
     let utxo = ledger.state(&ledger.dag().selected_tip()).unwrap();
     assert_eq!(utxo.balance(&bob.address()), 900);
@@ -682,20 +687,27 @@ fn test_script_v2_csv_rejected() {
 
     let (mut ledger, coin) = funded_ledger(script_addr, 1_000);
 
-    // sequence = 50 < v = 100 → SequenceViolation → BadSignature.
+    // Mine 100 empty blocks so the coin is 100 blocks old — the ledger-level
+    // BIP-112 rule (age >= sequence) passes, isolating the script-level CSV
+    // failure below.
+    let mut tip = ledger.dag().selected_tip();
+    for h in 1..=100 {
+        tip = ledger.insert(vec![tip], 1, h, 0, &[]).unwrap();
+    }
+
+    // sequence = 100 (age 100 >= 100 passes) < v = 150 → SequenceViolation →
+    // BadSignature.
     let spend = build_script_v2_spend_with_lock(
         coin,
         script,
-        vec![vec![1u8], 100u32.to_le_bytes().to_vec()],
+        vec![vec![1u8], 150u32.to_le_bytes().to_vec()],
         vec![TxOutput::native(900, bob.address())],
         b"csv-fail".to_vec(),
         0,
-        50,
+        100,
     );
 
-    let err = ledger
-        .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend])
-        .unwrap_err();
+    let err = ledger.insert(vec![tip], 1, 101, 0, &[spend]).unwrap_err();
     assert!(matches!(
         err,
         LedgerInsertError::State(LedgerError::BadSignature { .. })

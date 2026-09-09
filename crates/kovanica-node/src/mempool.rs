@@ -115,7 +115,7 @@ mod tests {
 
         pool.add(t);
         let mut utxo = UtxoSet::new();
-        utxo.insert(op, TxOutput::native(1, KeyPair::from_u64(1).address()));
+        utxo.insert(op, TxOutput::native(1, KeyPair::from_u64(1).address()), 0);
         assert_eq!(pool.evict_invalid(&utxo), 0);
         assert_eq!(pool.len(), 1);
     }

@@ -12,7 +12,10 @@
 //!   doubles as a block's opaque payload
 //!   ([`encode_block_payload`] / [`decode_block_payload`]).
 //! * [`KeyPair`] / [`Address`] / [`verify`] — ed25519 spend authorisation.
-//! * [`UtxoSet`] — the ledger state (unspent outputs).
+//! * [`UtxoSet`] — the ledger state (unspent outputs), including each output's
+//!   creation height for BIP-112 relative locktime.
+//! * [`VaultScript`] — the RFC-005 time-lock vault template (beneficiary/owner
+//!   keys + absolute/relative lock), spent via a claim/recover witness pair.
 //! * [`apply_block`] — the strict, atomic state transition for one block.
 //! * [`apply_dag`] — the bridge to consensus: linearize a
 //!   [`kovanica_dag::Dag`] and apply every block's transactions in that order,
@@ -80,6 +83,7 @@ pub mod store;
 pub mod tx;
 pub mod utxo;
 pub mod validation;
+pub mod vault;
 
 pub use htlc::{HtlcScript, HtlcScriptError, HTLC_SCRIPT_LEN};
 pub use keys::{verify, verify_pk, Address, KeyPair, StealthAddress};
@@ -87,7 +91,7 @@ pub use ledger::{
     apply_block, apply_dag, BlockSummary, HalvingSchedule, HybridConfig, Ledger,
     LedgerCheckpointError, LedgerError, LedgerInsertError, LedgerRun, LedgerSnapshotError,
     StakedVrf, DEFAULT_HALVING_ERA, HTLC_ACTIVATION_SCORE, MULTISIG_ACTIVATION_SCORE,
-    NATIVE_TOKEN_ACTIVATION_SCORE,
+    NATIVE_TOKEN_ACTIVATION_SCORE, VAULT_ACTIVATION_SCORE,
 };
 pub use multisig::{verify_threshold_signatures, MultisigScript, MAX_MULTISIG_KEYS};
 pub use spv::{
@@ -102,4 +106,7 @@ pub use utxo::UtxoSet;
 pub use validation::{
     validate_block_payload, BlockValidationError, TxStructureValidator, MAX_BLOCK_PAYLOAD_SIZE,
     MAX_TXS_PER_BLOCK, MAX_TX_SIZE,
+};
+pub use vault::{
+    VaultScript, VaultScriptError, VAULT_PATH_CLAIM, VAULT_PATH_RECOVER, VAULT_SCRIPT_LEN,
 };

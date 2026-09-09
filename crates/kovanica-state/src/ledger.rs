@@ -77,6 +77,7 @@ use crate::script_v2::ScriptV2;
 use crate::stake::{
     is_unbond_tag, parse_bond_tag, Freeze, StakeError, StakeState, UNBOND_MATURITY,
 };
+use crate::vault::{VaultScript, VAULT_PATH_CLAIM, VAULT_PATH_RECOVER};
 use crate::TxOutput;
 
 /// Default blue-score threshold for RFC-001 multisig activation.
@@ -93,6 +94,9 @@ pub const SCRIPT_V2_ACTIVATION_SCORE: u64 = 0;
 
 /// Default blue-score threshold for RFC-004 HTLC activation.
 pub const HTLC_ACTIVATION_SCORE: u64 = 0;
+
+/// Default blue-score threshold for RFC-005 vault activation.
+pub const VAULT_ACTIVATION_SCORE: u64 = 0;
 
 /// Halving schedule for block subsidy.
 ///
@@ -311,6 +315,44 @@ pub enum LedgerError {
         n_lock_time: u32,
         height: u64,
     },
+
+    // Vault (RFC-005) Variants
+    /// RFC-005 vault output/spend attempted before activation.
+    PreActivationVault {
+        tx: TxId,
+        blue_score: u64,
+        activation_score: u64,
+    },
+    /// RFC-005 vault claim attempted before the lock expired.
+    VaultLockNotExpired {
+        tx: TxId,
+        input: usize,
+        height: u64,
+        created_at: u64,
+        absolute_time: u32,
+        relative_delay: u32,
+    },
+    /// RFC-005 vault recovery attempted after the lock expired.
+    VaultLockExpired {
+        tx: TxId,
+        input: usize,
+        height: u64,
+        created_at: u64,
+        absolute_time: u32,
+        relative_delay: u32,
+    },
+    /// RFC-005 vault witness carried an unknown path byte.
+    InvalidVaultPath { tx: TxId, input: usize, path: u8 },
+    /// BIP-112: a transaction with `sequence > 0` spent an output younger than `sequence`.
+    SequenceNotFinal {
+        tx: TxId,
+        input: usize,
+        sequence: u32,
+        height: u64,
+        created_at: u64,
+    },
+    /// BIP-112: an output's creation height is unknown (pre-v6 checkpoint).
+    UnknownOutputAge { tx: TxId, input: usize },
 }
 
 impl core::fmt::Display for LedgerError {
@@ -446,6 +488,54 @@ impl core::fmt::Display for LedgerError {
                 f,
                 "transaction {tx} is non-final: n_lock_time {n_lock_time} > block height {height}"
             ),
+            LedgerError::PreActivationVault {
+                tx,
+                blue_score,
+                activation_score,
+            } => write!(
+                f,
+                "vault tx {tx} rejected before activation: blue score {blue_score} <= activation {activation_score}"
+            ),
+            LedgerError::VaultLockNotExpired {
+                tx,
+                input,
+                height,
+                created_at,
+                absolute_time,
+                relative_delay,
+            } => write!(
+                f,
+                "vault claim on input {input} of {tx} before lock expiry: height {height}, created_at {created_at}, absolute_time {absolute_time}, relative_delay {relative_delay}"
+            ),
+            LedgerError::VaultLockExpired {
+                tx,
+                input,
+                height,
+                created_at,
+                absolute_time,
+                relative_delay,
+            } => write!(
+                f,
+                "vault recovery on input {input} of {tx} after lock expiry: height {height}, created_at {created_at}, absolute_time {absolute_time}, relative_delay {relative_delay}"
+            ),
+            LedgerError::InvalidVaultPath { tx, input, path } => write!(
+                f,
+                "invalid vault path byte {path:#04x} on input {input} of {tx}"
+            ),
+            LedgerError::SequenceNotFinal {
+                tx,
+                input,
+                sequence,
+                height,
+                created_at,
+            } => write!(
+                f,
+                "transaction {tx} is non-final on input {input}: output age {height} - {created_at} < sequence {sequence}"
+            ),
+            LedgerError::UnknownOutputAge { tx, input } => write!(
+                f,
+                "output age unknown on input {input} of {tx} (pre-v6 checkpoint)"
+            ),
         }
     }
 }
@@ -497,6 +587,7 @@ pub fn apply_block(
         STEALTH_ACTIVATION_SCORE,
         SCRIPT_V2_ACTIVATION_SCORE,
         HTLC_ACTIVATION_SCORE,
+        VAULT_ACTIVATION_SCORE,
     )
 }
 
@@ -530,6 +621,7 @@ pub fn apply_block_with_stake(
         STEALTH_ACTIVATION_SCORE,
         SCRIPT_V2_ACTIVATION_SCORE,
         HTLC_ACTIVATION_SCORE,
+        VAULT_ACTIVATION_SCORE,
     )
 }
 
@@ -549,6 +641,7 @@ fn apply_block_inner(
     stealth_activation_score: u64,
     script_v2_activation_score: u64,
     htlc_activation_score: u64,
+    vault_activation_score: u64,
 ) -> Result<BlockSummary, LedgerError> {
     // Stage all changes on a copy; only commit if the whole block validates, so
     // a rejected block has no effect (atomicity).
@@ -576,6 +669,7 @@ fn apply_block_inner(
             stealth_activation_score,
             script_v2_activation_score,
             htlc_activation_score,
+            vault_activation_score,
         )?;
         total_fees = total_fees
             .checked_add(fee)
@@ -590,6 +684,7 @@ fn apply_block_inner(
             &mut staging,
             cb,
             allowed,
+            height,
             blue_score,
             multisig_activation_score,
             native_token_activation_score,
@@ -622,6 +717,7 @@ fn apply_regular(
     stealth_activation_score: u64,
     script_v2_activation_score: u64,
     htlc_activation_score: u64,
+    vault_activation_score: u64,
 ) -> Result<u64, LedgerError> {
     if tx.inputs().is_empty() || tx.outputs().is_empty() {
         return Err(LedgerError::EmptyTransaction(tx.id()));
@@ -707,6 +803,19 @@ fn apply_regular(
         }
     }
 
+    // RFC-005 vault pre-activation gating on outputs:
+    if blue_score <= vault_activation_score {
+        for output in tx.outputs() {
+            if output.owner.is_vault() {
+                return Err(LedgerError::PreActivationVault {
+                    tx: tx.id(),
+                    blue_score,
+                    activation_score: vault_activation_score,
+                });
+            }
+        }
+    }
+
     // Tag-driven stake roles. A tag that matches neither convention is an
     // ordinary transfer and only faces the frozen-input rule.
     let bond_pk = parse_bond_tag(tx.tag());
@@ -773,6 +882,43 @@ fn apply_regular(
                 blue_score,
                 activation_score: htlc_activation_score,
             });
+        }
+
+        // RFC-005 vault pre-activation gating on spends:
+        if blue_score <= vault_activation_score && prev.owner.is_vault() {
+            return Err(LedgerError::PreActivationVault {
+                tx: tx.id(),
+                blue_score,
+                activation_score: vault_activation_score,
+            });
+        }
+
+        // BIP-112/BIP-68 relative locktime: a transaction with `sequence > 0`
+        // is non-final unless every input's output is at least `sequence`
+        // blocks old. Combined with the script's CSV check (`tx.sequence >= v`),
+        // the effective constraint is `block_height - created_at >= sequence >= v`.
+        // `sequence == 0` means final (no relative constraint), matching every
+        // constructor's default. Placed after the activation gates so a
+        // pre-activation vault/HTLC spend reports its activation error, not
+        // `SequenceNotFinal` — deterministic, keeps test diagnostics clean.
+        if tx.sequence() > 0 {
+            let created_at =
+                staging
+                    .created_at_of(&input.outpoint)
+                    .ok_or(LedgerError::UnknownOutputAge {
+                        tx: tx.id(),
+                        input: i,
+                    })?;
+            let age = height.saturating_sub(created_at); // fail-closed on invariant violation
+            if age < u64::from(tx.sequence()) {
+                return Err(LedgerError::SequenceNotFinal {
+                    tx: tx.id(),
+                    input: i,
+                    sequence: tx.sequence(),
+                    height,
+                    created_at,
+                });
+            }
         }
 
         // Branch on address version:
@@ -1001,6 +1147,120 @@ fn apply_regular(
                     });
                 }
             }
+        } else if prev.owner.is_vault() {
+            // Pay-to-Vault (RFC-005): witness[0] = template bytes; BLAKE3(template)
+            // must match the owner's script hash; the template then authorises one
+            // of two mutually-exclusive paths discriminated by a path byte —
+            // deterministic, no branch evaluation:
+            //   path 0x01 → CLAIM (beneficiary signature, only after the lock expires)
+            //   path 0x02 → RECOVER (owner signature, only before the lock expires)
+            if input.witness.is_empty() {
+                return Err(LedgerError::InvalidWitnessCount {
+                    tx: tx.id(),
+                    input: i,
+                    expected: 3,
+                    actual: 0,
+                });
+            }
+            let template_bytes = &input.witness[0];
+            let script_hash = *blake3::hash(template_bytes).as_bytes();
+            if script_hash != *prev.owner.payload() {
+                return Err(LedgerError::ScriptHashMismatch {
+                    tx: tx.id(),
+                    input: i,
+                });
+            }
+            let script = VaultScript::parse(template_bytes).map_err(|e| {
+                LedgerError::InvalidRedeemScript {
+                    tx: tx.id(),
+                    input: i,
+                    reason: e.as_str(),
+                }
+            })?;
+            if input.witness.len() != 3 {
+                return Err(LedgerError::InvalidWitnessCount {
+                    tx: tx.id(),
+                    input: i,
+                    expected: 3,
+                    actual: input.witness.len(),
+                });
+            }
+            let sig_bytes = &input.witness[2];
+            if sig_bytes.len() != 64 {
+                return Err(LedgerError::BadSignatureSize {
+                    tx: tx.id(),
+                    input: i,
+                    len: sig_bytes.len(),
+                });
+            }
+            let created_at =
+                staging
+                    .created_at_of(&input.outpoint)
+                    .ok_or(LedgerError::UnknownOutputAge {
+                        tx: tx.id(),
+                        input: i,
+                    })?;
+            let age = height.saturating_sub(created_at);
+            let lock_expired = height >= u64::from(script.absolute_time())
+                && age >= u64::from(script.relative_delay());
+            // The path byte is a single witness element; anything else is malformed.
+            if input.witness[1].len() != 1 {
+                return Err(LedgerError::InvalidWitnessCount {
+                    tx: tx.id(),
+                    input: i,
+                    expected: 3,
+                    actual: input.witness.len(),
+                });
+            }
+            match input.witness[1][0] {
+                VAULT_PATH_CLAIM => {
+                    if !lock_expired {
+                        return Err(LedgerError::VaultLockNotExpired {
+                            tx: tx.id(),
+                            input: i,
+                            height,
+                            created_at,
+                            absolute_time: script.absolute_time(),
+                            relative_delay: script.relative_delay(),
+                        });
+                    }
+                    let mut sig_arr = [0u8; 64];
+                    sig_arr.copy_from_slice(sig_bytes);
+                    if !verify_pk(script.beneficiary_pk(), &sighash, &sig_arr) {
+                        return Err(LedgerError::BadSignature {
+                            tx: tx.id(),
+                            input: i,
+                        });
+                    }
+                }
+                VAULT_PATH_RECOVER => {
+                    if lock_expired {
+                        return Err(LedgerError::VaultLockExpired {
+                            tx: tx.id(),
+                            input: i,
+                            height,
+                            created_at,
+                            absolute_time: script.absolute_time(),
+                            relative_delay: script.relative_delay(),
+                        });
+                    }
+                    let mut sig_arr = [0u8; 64];
+                    sig_arr.copy_from_slice(sig_bytes);
+                    if !verify_pk(script.owner_pk(), &sighash, &sig_arr) {
+                        return Err(LedgerError::BadSignature {
+                            tx: tx.id(),
+                            input: i,
+                        });
+                    }
+                }
+                path => {
+                    return Err(LedgerError::InvalidVaultPath {
+                        tx: tx.id(),
+                        input: i,
+                        path,
+                    });
+                }
+            }
         } else if prev.owner.is_stealth() {
             // Stealth address (RFC-003): witness is exactly one 64-byte signature
             // over the sighash, verified against the output's one-time pubkey P.
@@ -1153,7 +1413,7 @@ fn apply_regular(
     for input in tx.inputs() {
         staging.remove(&input.outpoint);
     }
-    add_outputs(staging, txid, tx)?;
+    add_outputs(staging, txid, tx, height)?;
 
     // Stake mutations come last and are infallible by now: every rule they
     // enforce was pre-checked against the same inputs above.
@@ -1178,6 +1438,7 @@ fn apply_coinbase(
     staging: &mut UtxoSet,
     cb: &Transaction,
     allowed: u64,
+    height: u64,
     blue_score: u64,
     activation_score: u64,
     _native_token_activation_score: u64,
@@ -1216,16 +1477,23 @@ fn apply_coinbase(
             allowed,
         });
     }
-    add_outputs(staging, cb.id(), cb)?;
+    add_outputs(staging, cb.id(), cb, height)?;
     Ok(claimed_native)
 }
 
 /// Insert every output of `tx` into `staging`, keyed by `(txid, index)`,
-/// rejecting any outpoint that already exists.
-fn add_outputs(staging: &mut UtxoSet, txid: TxId, tx: &Transaction) -> Result<(), LedgerError> {
+/// rejecting any outpoint that already exists. `height` is the block height at
+/// which the outputs are created (the creating block's own selected-chain
+/// height) — recorded for BIP-112 relative locktime support.
+fn add_outputs(
+    staging: &mut UtxoSet,
+    txid: TxId,
+    tx: &Transaction,
+    height: u64,
+) -> Result<(), LedgerError> {
     for (i, output) in tx.outputs().iter().enumerate() {
         let outpoint = OutPoint::new(txid, i as u32);
-        if staging.insert(outpoint, *output).is_some() {
+        if staging.insert(outpoint, *output, height).is_some() {
             return Err(LedgerError::OutputAlreadyExists(outpoint));
         }
     }
@@ -1267,13 +1535,14 @@ pub fn apply_dag(dag: &Dag, subsidy: u64) -> LedgerRun {
                 None,
                 &txs,
                 subsidy,
-                0,
+                blue_score,
                 blue_score,
                 MULTISIG_ACTIVATION_SCORE,
                 NATIVE_TOKEN_ACTIVATION_SCORE,
                 STEALTH_ACTIVATION_SCORE,
                 SCRIPT_V2_ACTIVATION_SCORE,
                 HTLC_ACTIVATION_SCORE,
+                VAULT_ACTIVATION_SCORE,
             ) {
                 Ok(_) => run.accepted.push(id),
                 Err(e) => run.rejected.push((id, e)),
@@ -1427,10 +1696,15 @@ impl std::error::Error for LedgerInsertError {}
 /// Within one block the two lists are disjoint; across composed deltas an
 /// outpoint created by the first part and spent by the second cancels under
 /// the insert-then-remove order.
+///
+/// `created` carries each output's creation height (the creating block's own
+/// selected-chain height) so prune-folding preserves BIP-112 relative-locktime
+/// ages: a folded delta must be able to answer "how old is this output?" for
+/// every output it creates.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct BlockDelta {
     spent: Vec<(OutPoint, TxOutput)>,
-    created: Vec<(OutPoint, TxOutput)>,
+    created: Vec<(OutPoint, TxOutput, u64)>,
 }
 
 /// Net stake-registry change of one block, mirroring [`BlockDelta`]: `frozen`
@@ -1454,7 +1728,7 @@ fn diff_utxo(pre: &UtxoSet, post: &UtxoSet) -> BlockDelta {
     }
     for (op, out) in post.iter() {
         if pre.get(op) != Some(out) {
-            created.push((*op, *out));
+            created.push((*op, *out, post.created_at_of(op).unwrap_or(u64::MAX)));
         }
     }
     BlockDelta { spent, created }
@@ -1481,8 +1755,8 @@ fn diff_stake(pre: &StakeState, post: &StakeState) -> StakeDelta {
 /// The order matters — an outpoint created by one part of a composed delta and
 /// spent by a later part must end up spent.
 fn apply_delta(delta: &BlockDelta, state: &mut UtxoSet) {
-    for (op, out) in &delta.created {
-        state.insert(*op, *out);
+    for (op, out, created_at) in &delta.created {
+        state.insert(*op, *out, *created_at);
     }
     for (op, _) in &delta.spent {
         state.remove(op);
@@ -1654,6 +1928,8 @@ pub struct Ledger {
     script_v2_activation_score: u64,
     /// Blue score activation threshold for RFC-004 HTLC transactions.
     htlc_activation_score: u64,
+    /// Blue score activation threshold for RFC-005 vault transactions.
+    vault_activation_score: u64,
 }
 
 impl Ledger {
@@ -1703,6 +1979,7 @@ impl Ledger {
             stealth_activation_score: STEALTH_ACTIVATION_SCORE,
             script_v2_activation_score: SCRIPT_V2_ACTIVATION_SCORE,
             htlc_activation_score: HTLC_ACTIVATION_SCORE,
+            vault_activation_score: VAULT_ACTIVATION_SCORE,
         })
     }
 
@@ -1754,6 +2031,16 @@ impl Ledger {
     /// The blue-score activation threshold for RFC-004 HTLC transactions.
     pub fn htlc_activation_score(&self) -> u64 {
         self.htlc_activation_score
+    }
+
+    /// Set the blue-score activation threshold for RFC-005 vault transactions.
+    pub fn set_vault_activation_score(&mut self, score: u64) {
+        self.vault_activation_score = score;
+    }
+
+    /// The blue-score activation threshold for RFC-005 vault transactions.
+    pub fn vault_activation_score(&self) -> u64 {
+        self.vault_activation_score
     }
 
     /// Like [`Ledger::new`], but with a finite finality depth: blocks more than
@@ -2222,6 +2509,7 @@ impl Ledger {
                     self.stealth_activation_score,
                     self.script_v2_activation_score,
                     self.htlc_activation_score,
+                    self.vault_activation_score,
                 );
             }
         }
@@ -2240,6 +2528,7 @@ impl Ledger {
             self.stealth_activation_score,
             self.script_v2_activation_score,
             self.htlc_activation_score,
+            self.vault_activation_score,
         )?;
 
         // Commit: add to the DAG (structural checks run here), then store the
@@ -2684,7 +2973,8 @@ impl Ledger {
             return Err(LedgerCheckpointError::UnexpectedEof);
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        // Accept v3 (stake registry), v4 (asset_id in UTXO), and v5 (stealth ext)
+        // Accept v3 (stake registry), v4 (asset_id in UTXO), v5 (stealth ext),
+        // and v6 (per-output creation heights for BIP-112 relative locktime).
         if !(3..=CHECKPOINT_VERSION).contains(&version) {
             return Err(LedgerCheckpointError::UnsupportedVersion(version));
         }
@@ -2702,9 +2992,9 @@ impl Ledger {
         let checkpoint_height = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
         pos += 8;
 
-        // Decode checkpoint UTXO set
+        // Decode checkpoint UTXO set (v6 reads per-output creation heights).
         let mut remaining = &bytes[pos..];
-        let checkpoint_state = UtxoSet::decode(&mut remaining)
+        let checkpoint_state = UtxoSet::decode(&mut remaining, version)
             .map_err(|_| LedgerCheckpointError::Payload(DecodeError::UnexpectedEof))?;
         pos = bytes.len() - remaining.len();
 
@@ -2795,6 +3085,7 @@ impl Ledger {
             stealth_activation_score: STEALTH_ACTIVATION_SCORE,
             script_v2_activation_score: SCRIPT_V2_ACTIVATION_SCORE,
             htlc_activation_score: HTLC_ACTIVATION_SCORE,
+            vault_activation_score: VAULT_ACTIVATION_SCORE,
         };
         ledger.deltas.insert(checkpoint_id, checkpoint_delta);
         ledger
@@ -3005,7 +3296,7 @@ const CHECKPOINT_MAGIC: [u8; 4] = *b"KVCP";
 /// optional asset_id to UTXO encoding; v5 adds the optional stealth extension
 /// (R + view_tag + P) to UTXO encoding so stealth outputs survive a checkpoint
 /// round-trip.
-const CHECKPOINT_VERSION: u16 = 5;
+const CHECKPOINT_VERSION: u16 = 6;
 
 /// Why a ledger checkpoint could not be encoded or decoded.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3143,7 +3434,7 @@ mod tests {
     // tests need no coinbase plumbing.
     fn funded(set: &mut UtxoSet, kp: &KeyPair, value: u64, seed: u8) -> OutPoint {
         let op = OutPoint::new(TxId::from_bytes([seed; 32]), 0);
-        set.insert(op, TxOutput::native(value, kp.address()));
+        set.insert(op, TxOutput::native(value, kp.address()), 0);
         op
     }
 
@@ -3536,6 +3827,53 @@ mod prune_tests {
         assert!(
             ledger.state(&next).is_some(),
             "new block above finality reconstructs"
+        );
+    }
+
+    #[test]
+    fn prune_folding_preserves_creation_heights() {
+        // A coin created below the finality boundary must keep its creation
+        // height after its block's delta is folded into a non-final child —
+        // otherwise BIP-112 relative locktime silently breaks post-prune.
+        let alice = KeyPair::from_u64(1);
+        let bob = KeyPair::from_u64(2);
+        let genesis_cb = Transaction::coinbase(
+            vec![TxOutput::native(1_000, alice.address())],
+            b"g".to_vec(),
+        );
+        let genesis_cb_id = genesis_cb.id();
+        let mut ledger =
+            Ledger::with_finality(3, HalvingSchedule::new(1_000, 1_000), &[genesis_cb], 5).unwrap();
+
+        // Spend the genesis coin at height 1: the bob output is created at height 1.
+        let coin = OutPoint::new(genesis_cb_id, 0);
+        let spend = Transaction::signed(
+            &[(coin, &alice)],
+            vec![TxOutput::native(500, bob.address())],
+            Vec::new(),
+        );
+        let spend_id = spend.id();
+        let mut tip = ledger
+            .insert(vec![ledger.genesis()], 1, 1, 0, &[spend])
+            .unwrap();
+
+        // Extend past finality so the height-1 block's delta is folded.
+        for h in 2..20 {
+            tip = ledger.insert(vec![tip], 1, h, 0, &[]).unwrap();
+        }
+        ledger.prune();
+
+        // The bob output survives in the tip state with its original height.
+        let bob_op = OutPoint::new(spend_id, 0);
+        let tip_state = ledger.state(&tip).expect("tip state reconstructs");
+        assert_eq!(
+            tip_state.get(&bob_op),
+            Some(&TxOutput::native(500, bob.address()))
+        );
+        assert_eq!(
+            tip_state.created_at_of(&bob_op),
+            Some(1),
+            "creation height must survive prune folding"
         );
     }
 }

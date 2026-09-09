@@ -617,7 +617,7 @@ mod tests {
 
     fn utxo_with(op: OutPoint, value: u64) -> UtxoSet {
         let mut utxo = UtxoSet::new();
-        utxo.insert(op, TxOutput::native(value, addr(1)));
+        utxo.insert(op, TxOutput::native(value, addr(1)), 0);
         utxo
     }
 
@@ -666,9 +666,9 @@ mod tests {
         let op2 = OutPoint::new(TxId::from_bytes([2u8; 32]), 0);
         let op3 = OutPoint::new(TxId::from_bytes([3u8; 32]), 0);
         let mut utxo = UtxoSet::new();
-        utxo.insert(op1, TxOutput::native(100_000, addr(1)));
-        utxo.insert(op2, TxOutput::native(100_000, addr(1)));
-        utxo.insert(op3, TxOutput::native(100_000, addr(1)));
+        utxo.insert(op1, TxOutput::native(100_000, addr(1)), 0);
+        utxo.insert(op2, TxOutput::native(100_000, addr(1)), 0);
+        utxo.insert(op3, TxOutput::native(100_000, addr(1)), 0);
 
         // Low fee
         let tx1 = tx_spending(op1, 100_000, 99_000);
@@ -707,7 +707,7 @@ mod tests {
         assert_eq!(pool.len_orphans(), 1);
 
         let mut utxo = UtxoSet::new();
-        utxo.insert(op, TxOutput::native(1000, kp.address()));
+        utxo.insert(op, TxOutput::native(1000, kp.address()), 0);
 
         let promoted = pool.on_new_block(&utxo, 1);
         assert_eq!(promoted, 1);
@@ -749,7 +749,7 @@ mod tests {
         for i in 0..3 {
             let op = OutPoint::new(TxId::from_bytes([i; 32]), 0);
             let fee = (i + 1) as u64 * 10; // 10, 20, 30
-            utxo.insert(op, TxOutput::native(100, addr(1)));
+            utxo.insert(op, TxOutput::native(100, addr(1)), 0);
             let tx = Transaction::signed(
                 &[(op, &kp)],
                 vec![TxOutput::native(100 - fee, kp.address())],
@@ -760,7 +760,7 @@ mod tests {
 
         // Add 4th with highest fee - should evict lowest (10)
         let op = OutPoint::new(TxId::from_bytes([9u8; 32]), 0);
-        utxo.insert(op, TxOutput::native(100, addr(1)));
+        utxo.insert(op, TxOutput::native(100, addr(1)), 0);
         let tx4 = Transaction::signed(
             &[(op, &kp)],
             vec![TxOutput::native(40, kp.address())],
@@ -815,7 +815,7 @@ mod tests {
         );
 
         let mut utxo = UtxoSet::new();
-        utxo.insert(op1, TxOutput::native(1000, kp.address()));
+        utxo.insert(op1, TxOutput::native(1000, kp.address()), 0);
         pool.add(tx1.clone(), &utxo).unwrap();
         pool.add(tx2.clone(), &UtxoSet::new()).unwrap();
 
@@ -832,7 +832,7 @@ mod tests {
         let mut pool = MempoolV2::new(config);
         let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let mut utxo = UtxoSet::new();
-        utxo.insert(op, TxOutput::native(10_000, addr(1)));
+        utxo.insert(op, TxOutput::native(10_000, addr(1)), 0);
 
         let tx1 = tx_spending(op, 10_000, 9_000); // fee 1000
         pool.add(tx1.clone(), &utxo).unwrap();
@@ -855,7 +855,7 @@ mod tests {
         let mut pool = MempoolV2::new(config);
         let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let mut utxo = UtxoSet::new();
-        utxo.insert(op, TxOutput::native(10_000, addr(1)));
+        utxo.insert(op, TxOutput::native(10_000, addr(1)), 0);
 
         let tx1 = tx_spending(op, 10_000, 9_000);
         pool.add(tx1.clone(), &utxo).unwrap();
@@ -876,8 +876,8 @@ mod tests {
         let op1 = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let op2 = OutPoint::new(TxId::from_bytes([2u8; 32]), 0);
         let mut utxo = UtxoSet::new();
-        utxo.insert(op1, TxOutput::native(10_000, addr(1)));
-        utxo.insert(op2, TxOutput::native(10_000, addr(1)));
+        utxo.insert(op1, TxOutput::native(10_000, addr(1)), 0);
+        utxo.insert(op2, TxOutput::native(10_000, addr(1)), 0);
 
         let tx1 = tx_spending(op1, 10_000, 9_000);
         pool.add(tx1, &utxo).unwrap();
@@ -899,7 +899,7 @@ mod tests {
 
         for i in 0..3u8 {
             let op = OutPoint::new(TxId::from_bytes([i; 32]), 0);
-            utxo.insert(op, TxOutput::native(100_000, addr(1)));
+            utxo.insert(op, TxOutput::native(100_000, addr(1)), 0);
             // fee = 1000 + i*1000
             let tx = tx_spending(op, 100_000, 99_000 - u64::from(i) * 1000);
             pool.add(tx, &utxo).unwrap();
@@ -919,7 +919,7 @@ mod tests {
         let mut pool = MempoolV2::new(config);
         let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let mut utxo = UtxoSet::new();
-        utxo.insert(op, TxOutput::native(10_000, addr(1)));
+        utxo.insert(op, TxOutput::native(10_000, addr(1)), 0);
         let tx = tx_spending(op, 10_000, 9_000);
         pool.add(tx, &utxo).unwrap();
 
