@@ -1,0 +1,51 @@
+version: "3.9"
+
+# CPU-only override for hosts without an NVIDIA GPU (e.g. the VPS).
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml \
+#     --profile build-only build sandbox-image
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml up -d \
+#     qdrant sandbox-runner agent-api open-webui
+#
+# Replaces the vLLM service (needs a GPU) with Ollama running a small
+# coder model on CPU. Compose merges these overrides into the base file:
+# the service keeps the name `vllm` and agent-api's VLLM_BASE_URL switch
+# points it at Ollama's OpenAI-compatible /v1 on port 11434. Pull the
+# model first:
+#   docker compose -f docker-compose.yml -f docker-compose.cpu.yml \
+#     exec ollama ollama pull qwen2.5-coder:3b
+# then restart agent-api / open-webui so they pick it up.
+#
+# AGENT_MODEL is set to the CPU model name; graph.py defaults the other
+# way to the GPU model so both topologies are coherent.
+
+services:
+  vllm:
+    image: ollama/ollama:latest
+    command: ["serve"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    restart: unless-stopped
+
+  agent-api:
+    environment:
+      - VLLM_BASE_URL=http://vllm:11434/v1
+      - AGENT_MODEL=qwen2.5-coder:3b
+    depends_on:
+      - qdrant
+      - sandbox-runner
+      # override base's vllm dep so this still resolves
+      - vllm
+
+  open-webui:
+    environment:
+      - OPENAI_API_BASE_URL=http://vllm:11434/v1
+    depends_on:
+      - vllm
+
+volumes:
+  ollama-data:
