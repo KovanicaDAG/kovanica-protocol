@@ -36,9 +36,14 @@ const PROTOCOL: Item[] = [
   {
     id: "kvp-104",
     title: "KVP-104 · HTLC atomic swaps",
-    status: "active",
+    status: "done",
     blurb: "RFC-004 — hashed time-locked contracts, redeem/refund paths, swap session helpers.",
-    note: "Implementation on branch; needs rebase onto main after RFC-003 squash.",
+  },
+  {
+    id: "kvp-105",
+    title: "KVP-105 · Time-lock vault + CSV",
+    status: "done",
+    blurb: "RFC-005 — check-lock-time-verify / check-sequence-verify vaults, escrow templates, node + FFI helpers.",
   },
 ];
 
@@ -71,10 +76,10 @@ const SURFACE: Item[] = [
 
 const NEXT: Item[] = [
   {
-    id: "htlc-land",
-    title: "Land KVP-104 on main",
+    id: "token-staking",
+    title: "Token staking & sortition",
     status: "next",
-    blurb: "Rebase HTLC branch, green tests, merge; then optional web swap UI.",
+    blurb: "Extend the stake registry to native-token assets (KVP-102) so bonds can be denominated in any issued token.",
   },
   {
     id: "asset-http",
@@ -165,7 +170,7 @@ export function RoadmapView() {
         <p className="font-mono text-[10px] tracking-brand text-subtle uppercase">Protocol</p>
         <h1 className="mt-1 font-display text-3xl tracking-tight text-fg md:text-4xl">Roadmap</h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
-          Public view of Kovanica Protocol standards (**KVP-101…104**), client surfaces, and what
+          Public view of Kovanica Protocol standards (**KVP-101…105**), client surfaces, and what
           lands next. Full legitimacy checklist:{" "}
           <code className="text-fg/80">docs/LEGIT-BOARD.md</code> (P0–P2).
         </p>

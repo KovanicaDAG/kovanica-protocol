@@ -19,7 +19,8 @@ export const SUBSIDY = 200 * ATOM;
 export const FOUNDER_AMOUNT = 200 * ATOM;
 export const FOUNDER_SEED = 1;
 export const HALVING_ERA = 500_000;
-export const MIN_FEE = 10_000;
+// Mirrors the node: min_fee = max(subsidy / 500_000, 1) atoms.
+export const MIN_FEE = Math.max(Math.floor(SUBSIDY / 500_000), 1);
 export const K = 3;
 export const TREASURY = "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc";
 

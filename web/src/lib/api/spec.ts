@@ -24,9 +24,9 @@ Engine is the Rust node; this app speaks the same HTTP contract.
 | Map | ${LIVE_MAP} |
 | Site | ${LIVE_SITE} |
 | Network | \`${NETWORK_ID}\` |
-| Premine | 50 KVNC (founder / treasury) |
+| Premine | ${SUBSIDY / ATOM} KVNC (founder / treasury) |
 | Subsidy cap | ${SUBSIDY / ATOM} KVNC / block, halves every ${HALVING_ERA} blocks |
-| Min fee | ${MIN_FEE} atoms (0.0001 KVNC) — burned |
+| Min fee | ${MIN_FEE} atoms (${MIN_FEE / ATOM} KVNC) — burned |
 | k | ${K} (GHOSTDAG) |
 | Atom | 1 KVNC = 10^8 atoms |
 
