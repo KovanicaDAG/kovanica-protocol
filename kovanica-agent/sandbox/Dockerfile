@@ -43,12 +43,24 @@ COPY crates/kovanica-ffi/Cargo.toml /workspace/crates/kovanica-ffi/Cargo.toml
 COPY crates/kovanica-cli/Cargo.toml /workspace/crates/kovanica-cli/Cargo.toml
 RUN set -eux; \
     for crate in kovanica-dag kovanica-state kovanica-node kovanica-ffi kovanica-cli; do \
-      mkdir -p /workspace/crates/$crate/src; \
-      echo "fn main() {}" > /workspace/crates/$crate/src/main.rs; \
-      echo "// placeholder for cargo fetch" > /workspace/crates/$crate/src/lib.rs; \
+      dir=/workspace/crates/$crate; \
+      mkdir -p $dir/src $dir/benches $dir/examples; \
+      echo "fn main() {}" > $dir/src/main.rs; \
+      echo "// placeholder for cargo fetch" > $dir/src/lib.rs; \
+      # create placeholder files for every declared [[bench]] (default
+      # path benches/<name>.rs) and [[example]] (examples/<name>.rs) so
+      # `cargo fetch` can parse the manifest — cargo validates target
+      # paths even when it only needs the dependency graph. The name= line
+      # follows the section header directly (no path= override in these
+      # manifests today; if one appears, this still creates the default
+      # path, which is enough for fetch).
+      awk '/^\[\[bench\]\]/{s="bench"} /^\[\[example\]\]/{s="example"} /^name *=/{n=$3; gsub(/"/,"",n); if (s=="bench") printf "benches/%s.rs\n", n; else if (s=="example") printf "examples/%s.rs\n", n; s=""}' $dir/Cargo.toml | while read f; do \
+        mkdir -p $dir/$(dirname $f); \
+        echo "fn main() {}" > $dir/$f; \
+      done; \
     done; \
     cd /workspace && cargo fetch --locked; \
-    find /workspace/crates -path "*/src/*.rs" -delete
+    find /workspace/crates \( -path "*/src/*.rs" -o -path "*/benches/*.rs" -o -path "*/examples/*.rs" \) -delete
 
 COPY kovanica-agent/sandbox/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh && \
