@@ -34,7 +34,8 @@ jobs:
             "${VPS_USERNAME}@${VPS_HOST}" bash -s <<'REMOTE'
           set -euo pipefail
           cd /root/kovanica-protocol
-          git pull --ff-only origin main
+          git fetch origin main
+          git reset --hard origin/main
           chmod +x kovanica-agent/deploy/vps-up.sh
           KOVANICA_PROTOCOL_ROOT=/root/kovanica-protocol \
             bash kovanica-agent/deploy/vps-up.sh
