@@ -4,15 +4,12 @@ on:
   push:
     branches: [main]
     paths:
-      - "kovanica-agent/**"
       - ".github/workflows/deploy-kovi.yml"
   workflow_dispatch:
 
 jobs:
   deploy:
     name: Deploy kovi.kovanica.online
-    # GitHub-hosted runners are not assigning on this account (jobs die
-    # in ~4s with runner_id 0). A labeled self-hosted runner picks this up.
     runs-on: [self-hosted, kovi-deploy]
     timeout-minutes: 50
     steps:
@@ -25,7 +22,6 @@ jobs:
           set -euo pipefail
           install -d -m 700 "$HOME/.ssh"
           KEY="$(mktemp)"
-          # Normalise newlines; secrets sometimes arrive without a trailing one.
           printf '%s\n' "$VPS_PRIVATE_KEY" > "$KEY"
           chmod 600 "$KEY"
           trap 'rm -f "$KEY"' EXIT
@@ -36,9 +32,14 @@ jobs:
           cd /root/kovanica-protocol
           git fetch origin main
           git reset --hard origin/main
-          chmod +x kovanica-agent/deploy/vps-up.sh
-          KOVANICA_PROTOCOL_ROOT=/root/kovanica-protocol \
-            bash kovanica-agent/deploy/vps-up.sh
+          if [ ! -d /root/kovanica-agent ]; then
+            git clone https://github.com/KovanicaDAG/kovanica-agent.git /root/kovanica-agent
+          fi
+          cd /root/kovanica-agent
+          git fetch origin main
+          git reset --hard origin/main
+          chmod +x deploy/vps-up.sh
+          KOVANICA_PROTOCOL_ROOT=/root/kovanica-protocol bash deploy/vps-up.sh
           curl -fsS http://127.0.0.1:13080/healthz
           echo
           echo "Kovi healthz ok"
