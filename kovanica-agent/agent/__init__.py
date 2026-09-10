@@ -1,1 +1,0 @@
-"""Kovanica DevTeam agent package."""
