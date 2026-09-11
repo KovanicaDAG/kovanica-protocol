@@ -1991,10 +1991,14 @@ pub struct Ledger {
     htlc_activation_score: u64,
     /// Blue score activation threshold for RFC-005 vault transactions.
     vault_activation_score: u64,
-    /// RFC-006: cumulative native KVNC atoms minted.
+    /// RFC-006: cumulative native KVNC atoms minted on the selected chain.
     native_minted: u64,
-    /// RFC-006: cumulative fee atoms burned (75%).
+    /// RFC-006: cumulative fee atoms burned (75% of selected-chain fees).
     fees_burned: u64,
+    /// Per-block native mint at insert time (summed along selected chain).
+    block_minted: HashMap<BlockId, u64>,
+    /// Per-block fees collected at insert time.
+    block_fees: HashMap<BlockId, u64>,
 }
 
 impl Ledger {
@@ -2033,6 +2037,11 @@ impl Ledger {
         stake_deltas.insert(genesis_id, StakeDelta::default());
         let mut heights = HashMap::new();
         heights.insert(genesis_id, 0);
+        let mut block_minted = HashMap::new();
+        block_minted.insert(genesis_id, summary.minted);
+        let mut block_fees = HashMap::new();
+        block_fees.insert(genesis_id, summary.fees);
+        let burned = summary.fees.saturating_sub(summary.fees / FEE_PRODUCER_DEN);
         Ok(Self {
             dag,
             schedule,
@@ -2053,7 +2062,9 @@ impl Ledger {
             htlc_activation_score: HTLC_ACTIVATION_SCORE,
             vault_activation_score: VAULT_ACTIVATION_SCORE,
             native_minted: summary.minted,
-            fees_burned: 0,
+            fees_burned: burned,
+            block_minted,
+            block_fees,
         })
     }
 
@@ -2258,6 +2269,41 @@ impl Ledger {
     /// RFC-006: cumulative fee atoms burned.
     pub fn fees_burned(&self) -> u64 {
         self.fees_burned
+    }
+
+    /// Sum of recorded native mint along the selected-parent chain ending at `tip`
+    /// (inclusive), walking via GHOSTDAG selected parents.
+    fn chain_minted_through(&self, tip: BlockId) -> u64 {
+        let mut total = 0u64;
+        let mut cur = Some(tip);
+        let mut guard = 0u32;
+        while let Some(id) = cur {
+            if let Some(m) = self.block_minted.get(&id) {
+                total = total.saturating_add(*m);
+            }
+            cur = self.dag.ghostdag(&id).and_then(|g| g.selected_parent);
+            guard += 1;
+            if guard > 10_000_000 {
+                break;
+            }
+        }
+        total
+    }
+
+    /// Recompute `native_minted` / `fees_burned` from the selected chain.
+    fn recompute_supply(&mut self) {
+        let mut minted = 0u64;
+        let mut fees = 0u64;
+        for id in self.dag.selected_chain() {
+            if let Some(m) = self.block_minted.get(&id) {
+                minted = minted.saturating_add(*m);
+            }
+            if let Some(f) = self.block_fees.get(&id) {
+                fees = fees.saturating_add(*f);
+            }
+        }
+        self.native_minted = minted;
+        self.fees_burned = fees.saturating_sub(fees / FEE_PRODUCER_DEN);
     }
 
     /// RFC-006 supply metrics at the selected tip.
@@ -2645,16 +2691,16 @@ impl Ledger {
             self.vault_activation_score,
         )?;
 
-        // RFC-006 supply cap.
-        if self
-            .native_minted
+        // RFC-006 supply cap against the selected-parent chain + this block.
+        let parent_chain_minted = self.chain_minted_through(sp);
+        if parent_chain_minted
             .checked_add(summary.minted)
             .map(|tot| tot > MAX_SUPPLY)
             .unwrap_or(true)
         {
             return Err(LedgerInsertError::State(LedgerError::SupplyCapExceeded {
                 claimed: summary.minted,
-                native_minted: self.native_minted,
+                native_minted: parent_chain_minted,
                 max_supply: MAX_SUPPLY,
             }));
         }
@@ -2670,14 +2716,14 @@ impl Ledger {
         self.deltas.insert(id, delta);
         self.stake_deltas.insert(id, stake_delta);
         self.heights.insert(id, new_height);
+        self.block_minted.insert(id, summary.minted);
+        self.block_fees.insert(id, summary.fees);
         // The selected tip can only change to the block just inserted; when it
         // does, its state is the single materialised tip state.
         if self.dag.selected_tip() == id {
             self.tip_state = state;
             self.tip_stake = stake;
-            self.native_minted = self.native_minted.saturating_add(summary.minted);
-            let burned = summary.fees.saturating_sub(summary.fees / FEE_PRODUCER_DEN);
-            self.fees_burned = self.fees_burned.saturating_add(burned);
+            self.recompute_supply();
         }
         self.prune();
         Ok(id)
@@ -3083,6 +3129,9 @@ impl Ledger {
         for block in &tip_segment {
             kovanica_dag::encode_block(block, &mut buf);
         }
+        // v7: supply counters at the live tip (not only the checkpoint block).
+        buf.extend_from_slice(&self.native_minted.to_le_bytes());
+        buf.extend_from_slice(&self.fees_burned.to_le_bytes());
         Ok(buf)
     }
 
@@ -3138,13 +3187,15 @@ impl Ledger {
         let checkpoint_height = u64::from_le_bytes(bytes[pos..pos + 8].try_into().unwrap());
         pos += 8;
 
-        // Decode checkpoint UTXO set. Checkpoint v5 and earlier carry no per-entry
-        // creation heights — those UTXOs are unlocked immediately
-        // (creation_height = 0; csv only delays, never fast-forwards — the
-        // safe legacy default, RFC-005 §3.2/§8).
+        // Decode checkpoint UTXO set.
+        // v5-: no creation_height, no coinbase flag
+        // v6: creation_height, no coinbase flag
+        // v7+: creation_height + is_coinbase
         let mut remaining = &bytes[pos..];
         let checkpoint_state = if version <= 5 {
             UtxoSet::decode_v5(&mut remaining)
+        } else if version == 6 {
+            UtxoSet::decode_v6(&mut remaining)
         } else {
             UtxoSet::decode(&mut remaining)
         }
@@ -3201,6 +3252,19 @@ impl Ledger {
             blocks.push(block);
         }
 
+        // v7: trailing supply counters (tip values at write time).
+        let (stored_minted, stored_burned) = if version >= 7 {
+            if bytes.len() < block_pos + 16 {
+                return Err(LedgerCheckpointError::UnexpectedEof);
+            }
+            let minted = u64::from_le_bytes(bytes[block_pos..block_pos + 8].try_into().unwrap());
+            let burned =
+                u64::from_le_bytes(bytes[block_pos + 8..block_pos + 16].try_into().unwrap());
+            (Some(minted), Some(burned))
+        } else {
+            (None, None)
+        };
+
         // The first block in tip_segment is the checkpoint block; use it as genesis.
         let mut blocks_iter = blocks.into_iter();
         let checkpoint_block = blocks_iter
@@ -3239,8 +3303,10 @@ impl Ledger {
             script_v2_activation_score: SCRIPT_V2_ACTIVATION_SCORE,
             htlc_activation_score: HTLC_ACTIVATION_SCORE,
             vault_activation_score: VAULT_ACTIVATION_SCORE,
-            native_minted: checkpoint_state.total_value().min(u128::from(MAX_SUPPLY)) as u64,
+            native_minted: 0,
             fees_burned: 0,
+            block_minted: HashMap::new(),
+            block_fees: HashMap::new(),
         };
         ledger.deltas.insert(checkpoint_id, checkpoint_delta);
         ledger
@@ -3295,6 +3361,21 @@ impl Ledger {
             ledger
                 .insert_prepared_block(rebuilt, &txs)
                 .map_err(LedgerCheckpointError::Rebuild)?;
+        }
+
+        // Authoritative supply from checkpoint (v7+). Tip replay may have
+        // recomputed from an incomplete block_minted map (history below
+        // finality is not present); prefer the stored tip counters.
+        if let (Some(m), Some(b)) = (stored_minted, stored_burned) {
+            ledger.native_minted = m;
+            ledger.fees_burned = b;
+        } else {
+            // Legacy: approximate from checkpoint UTXO value only.
+            ledger.native_minted = ledger
+                .tip_state
+                .total_value()
+                .min(u128::from(MAX_SUPPLY)) as u64;
+            ledger.fees_burned = 0;
         }
 
         Ok(ledger)
@@ -3451,7 +3532,8 @@ const CHECKPOINT_MAGIC: [u8; 4] = *b"KVCP";
 /// optional asset_id to UTXO encoding; v5 adds the optional stealth extension
 /// (R + view_tag + P) to UTXO encoding so stealth outputs survive a checkpoint
 /// round-trip.
-const CHECKPOINT_VERSION: u16 = 6;
+/// v7 (RFC-006): UTXO entries carry `is_coinbase`; trailing native_minted + fees_burned.
+const CHECKPOINT_VERSION: u16 = 7;
 
 /// Why a ledger checkpoint could not be encoded or decoded.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3688,31 +3770,32 @@ mod tests {
     }
 
     #[test]
-    fn coinbase_may_claim_subsidy_plus_fees_but_no_more() {
+    fn coinbase_may_claim_subsidy_plus_fee_share_but_no_more() {
         let alice = KeyPair::from_u64(1);
         let bob = KeyPair::from_u64(2);
         let miner = KeyPair::from_u64(3);
         let mut utxo = UtxoSet::new();
         let op = funded(&mut utxo, &alice, 100, 1);
 
-        // Transfer leaves a fee of 10; subsidy 50 ⇒ coinbase may claim 60.
+        // Transfer leaves a fee of 10; subsidy 50 ⇒ producer share fees/4 = 2
+        // ⇒ coinbase may claim 52 (RFC-006 75/25 burn).
         let transfer = Transaction::signed(
             &[(op, &alice)],
             vec![TxOutput::native(90, bob.address())],
             vec![],
         );
         let good_cb =
-            Transaction::coinbase(vec![TxOutput::native(60, miner.address())], b"h1".to_vec());
+            Transaction::coinbase(vec![TxOutput::native(52, miner.address())], b"h1".to_vec());
         let summary = apply_block(&mut utxo, &[good_cb, transfer.clone()], 50).unwrap();
         assert_eq!(
             summary,
             BlockSummary {
                 fees: 10,
-                minted: 60
+                minted: 52
             }
         );
 
-        // Claiming 61 overspends.
+        // Claiming 53 overspends.
         let mut utxo2 = UtxoSet::new();
         let op2 = funded(&mut utxo2, &alice, 100, 1);
         let transfer2 = Transaction::signed(
@@ -3721,15 +3804,98 @@ mod tests {
             vec![],
         );
         let greedy_cb =
-            Transaction::coinbase(vec![TxOutput::native(61, miner.address())], b"h1".to_vec());
+            Transaction::coinbase(vec![TxOutput::native(53, miner.address())], b"h1".to_vec());
         let err = apply_block(&mut utxo2, &[greedy_cb, transfer2], 50).unwrap_err();
         assert_eq!(
             err,
             LedgerError::CoinbaseOverspend {
-                claimed: 61,
-                allowed: 60
+                claimed: 53,
+                allowed: 52
             }
         );
+    }
+
+
+
+    #[test]
+    fn rfc006_geometric_subsidy() {
+        let s = HalvingSchedule::rfc006();
+        assert_eq!(s.subsidy_at(0), RFC006_GENESIS_SUBSIDY);
+        assert_eq!(s.subsidy_at(RFC006_ERA_LENGTH - 1), RFC006_GENESIS_SUBSIDY);
+        assert_eq!(s.subsidy_at(RFC006_ERA_LENGTH), RFC006_GENESIS_SUBSIDY * 3 / 4);
+        assert_eq!(
+            s.subsidy_at(2 * RFC006_ERA_LENGTH),
+            RFC006_GENESIS_SUBSIDY * 3 / 4 * 3 / 4
+        );
+    }
+
+    #[test]
+    fn rfc006_coinbase_immature_until_maturity() {
+        let miner = KeyPair::from_u64(1);
+        let alice = KeyPair::from_u64(2);
+        let mut utxo = UtxoSet::new();
+        let cb = Transaction::coinbase(
+            vec![TxOutput::native(100, miner.address())],
+            b"cb".to_vec(),
+        );
+        let op = OutPoint::new(cb.id(), 0);
+        apply_block_inner(
+            &mut utxo,
+            None,
+            &[cb],
+            100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        .unwrap();
+        assert!(utxo.get_entry(&op).unwrap().is_coinbase);
+
+        let spend = Transaction::signed(
+            &[(op, &miner)],
+            vec![TxOutput::native(90, alice.address())],
+            vec![],
+        );
+        // height 50 < 0+100 → immature
+        let err = apply_block_inner(
+            &mut utxo.clone(),
+            None,
+            &[spend.clone()],
+            0,
+            50,
+            50,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        .unwrap_err();
+        assert!(matches!(err, LedgerError::CoinbaseImmature { .. }));
+
+        // height 100 → mature
+        apply_block_inner(
+            &mut utxo,
+            None,
+            &[spend],
+            0,
+            100,
+            100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        .unwrap();
+        assert!(!utxo.contains(&op));
     }
 
     // ---- stake registry integration ----
