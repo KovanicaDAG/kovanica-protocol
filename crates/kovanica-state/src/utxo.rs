@@ -28,6 +28,11 @@ pub struct UtxoSet {
     /// locktime support). Every output in `map` has an entry here; the map is
     /// empty only for UTXO sets decoded from pre-v6 checkpoints.
     created_at: HashMap<OutPoint, u64>,
+    /// Whether each output was created by a coinbase (RFC-006 maturity).
+    /// Every output in `map` has an entry here; the map is empty only for
+    /// UTXO sets decoded from pre-v7 checkpoints (legacy data is
+    /// maturity-free — the network resets at RFC-006 activation).
+    coinbase_created: HashMap<OutPoint, bool>,
 }
 
 impl UtxoSet {
@@ -55,25 +60,44 @@ impl UtxoSet {
         self.created_at.get(outpoint).copied()
     }
 
+    /// Whether `outpoint` was created by a coinbase transaction (RFC-006
+    /// coinbase maturity). `None` only for outputs decoded from pre-v7
+    /// checkpoints — legacy data is maturity-free (the network resets at
+    /// RFC-006 activation), so a spend of such an output is not gated.
+    pub fn is_coinbase_created(&self, outpoint: &OutPoint) -> bool {
+        self.coinbase_created
+            .get(outpoint)
+            .copied()
+            .unwrap_or(false)
+    }
+
     /// Insert an output, returning any output previously stored at that outpoint.
     ///
     /// `created_at` is the block height at which the output was created (the
     /// creating block's own selected-chain height). Every output inserted this
     /// way gets a creation height; the map is empty only for UTXO sets decoded
     /// from pre-v6 checkpoints.
+    ///
+    /// `coinbase` records whether the output was created by a coinbase
+    /// transaction (RFC-006 maturity). Every output inserted this way gets a
+    /// flag; the map is empty only for UTXO sets decoded from pre-v7
+    /// checkpoints.
     pub fn insert(
         &mut self,
         outpoint: OutPoint,
         output: TxOutput,
         created_at: u64,
+        coinbase: bool,
     ) -> Option<TxOutput> {
         self.created_at.insert(outpoint, created_at);
+        self.coinbase_created.insert(outpoint, coinbase);
         self.map.insert(outpoint, output)
     }
 
     /// Remove and return the output at `outpoint`, if present.
     pub fn remove(&mut self, outpoint: &OutPoint) -> Option<TxOutput> {
         self.created_at.remove(outpoint);
+        self.coinbase_created.remove(outpoint);
         self.map.remove(outpoint)
     }
 
@@ -157,6 +181,12 @@ impl UtxoSet {
             // round-trip stays fail-closed on CSV spends.
             let created_at = self.created_at.get(op).copied().unwrap_or(u64::MAX);
             buf.extend_from_slice(&created_at.to_le_bytes());
+            // v7: coinbase flag (1 byte) — whether the output was created by a
+            // coinbase (RFC-006 maturity). Unknown flags (pre-v7 checkpoints)
+            // encode as 0 so a re-encode round-trip stays maturity-free.
+            buf.push(u8::from(
+                self.coinbase_created.get(op).copied().unwrap_or(false),
+            ));
         }
         buf
     }
@@ -169,8 +199,8 @@ impl UtxoSet {
             .map(|output| {
                 let asset = if output.asset_id.is_some() { 1 + 32 } else { 1 };
                 let stealth = if output.stealth.is_some() { 1 + 65 } else { 1 };
-                // +8 for the v6 creation height.
-                32 + 4 + 8 + 33 + asset + stealth + 8
+                // +8 for the v6 creation height, +1 for the v7 coinbase flag.
+                32 + 4 + 8 + 33 + asset + stealth + 8 + 1
             })
             .sum::<usize>()
     }
@@ -180,16 +210,21 @@ impl UtxoSet {
     /// v4: reads optional asset_id (32 bytes) after owner.
     /// v5: reads optional stealth extension (65 bytes) after the asset_id.
     /// v6: reads the per-output creation height (8 bytes) after the stealth flag.
+    /// v7: additionally reads the per-output coinbase flag (1 byte).
     ///
     /// Pre-v6 encodings decode with an **empty** `created_at` map — their
     /// outputs' ages are unknown, so relative-locktime spends of them fail
     /// closed ([`crate::ledger::LedgerError::UnknownOutputAge`]). Never default
     /// unknown ages to 0: that would silently disable the relative lock.
+    ///
+    /// Pre-v7 encodings decode with an **empty** `coinbase_created` map — their
+    /// outputs are maturity-free (the network resets at RFC-006 activation).
     pub fn decode(bytes: &mut &[u8], version: u16) -> Result<Self, UtxoDecodeError> {
         let mut reader = CheckpointReader::new(bytes);
         let count = reader.read_u64()? as usize;
         let mut map = HashMap::with_capacity(count);
         let mut created_at = HashMap::with_capacity(count);
+        let mut coinbase_created = HashMap::with_capacity(count);
         for _ in 0..count {
             let tx = TxId::from_bytes(reader.read_array::<32>()?);
             let index = reader.read_u32()?;
@@ -217,6 +252,10 @@ impl UtxoSet {
                 let created = reader.read_u64()?;
                 created_at.insert(op, created);
             }
+            if version >= 7 {
+                let coinbase = reader.read_u8()? != 0;
+                coinbase_created.insert(op, coinbase);
+            }
             map.insert(
                 op,
                 TxOutput {
@@ -228,7 +267,11 @@ impl UtxoSet {
             );
         }
         *bytes = &bytes[reader.pos..];
-        Ok(Self { map, created_at })
+        Ok(Self {
+            map,
+            created_at,
+            coinbase_created,
+        })
     }
 }
 
@@ -300,26 +343,29 @@ mod tests {
         let owner = KeyPair::from_u64(1).address();
         let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let mut set = UtxoSet::new();
-        set.insert(op, TxOutput::native(10, owner), 5);
+        set.insert(op, TxOutput::native(10, owner), 5, true);
         set.insert(
             OutPoint::new(TxId::from_bytes([2u8; 32]), 1),
             TxOutput::native(20, owner),
             7,
+            false,
         );
 
         let bytes = set.encode();
         let mut slice = &bytes[..];
-        let restored = UtxoSet::decode(&mut slice, 6).unwrap();
+        let restored = UtxoSet::decode(&mut slice, 7).unwrap();
 
         assert_eq!(restored.len(), 2);
         assert_eq!(restored.get(&op), Some(&TxOutput::native(10, owner)));
         assert_eq!(restored.total_value(), 30);
-        // v6 roundtrip preserves creation heights.
+        // v7 roundtrip preserves creation heights and coinbase flags.
         assert_eq!(restored.created_at_of(&op), Some(5));
         assert_eq!(
             restored.created_at_of(&OutPoint::new(TxId::from_bytes([2u8; 32]), 1)),
             Some(7)
         );
+        assert!(restored.is_coinbase_created(&op));
+        assert!(!restored.is_coinbase_created(&OutPoint::new(TxId::from_bytes([2u8; 32]), 1)));
     }
 
     #[test]
@@ -327,7 +373,7 @@ mod tests {
         let set = UtxoSet::new();
         let bytes = set.encode();
         let mut slice = &bytes[..];
-        let restored = UtxoSet::decode(&mut slice, 6).unwrap();
+        let restored = UtxoSet::decode(&mut slice, 7).unwrap();
         assert!(restored.is_empty());
     }
 
@@ -337,15 +383,17 @@ mod tests {
         let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let mut set = UtxoSet::new();
         assert!(set.is_empty());
-        set.insert(op, TxOutput::native(10, owner), 3);
+        set.insert(op, TxOutput::native(10, owner), 3, true);
         assert_eq!(set.get(&op), Some(&TxOutput::native(10, owner)));
         assert_eq!(set.balance(&owner), 10);
         assert_eq!(set.total_value(), 10);
         assert_eq!(set.created_at_of(&op), Some(3));
+        assert!(set.is_coinbase_created(&op));
         assert_eq!(set.remove(&op), Some(TxOutput::native(10, owner)));
         assert!(set.is_empty());
-        // remove also drops the creation height.
+        // remove also drops the creation height and coinbase flag.
         assert_eq!(set.created_at_of(&op), None);
+        assert!(!set.is_coinbase_created(&op));
     }
 
     #[test]
@@ -354,31 +402,34 @@ mod tests {
         let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let mut set = UtxoSet::new();
         assert_eq!(set.created_at_of(&op), None);
-        set.insert(op, TxOutput::native(10, owner), 42);
+        set.insert(op, TxOutput::native(10, owner), 42, false);
         assert_eq!(set.created_at_of(&op), Some(42));
         // Re-inserting replaces the height.
-        set.insert(op, TxOutput::native(11, owner), 43);
+        set.insert(op, TxOutput::native(11, owner), 43, true);
         assert_eq!(set.created_at_of(&op), Some(43));
+        assert!(set.is_coinbase_created(&op));
         assert_eq!(set.get(&op), Some(&TxOutput::native(11, owner)));
     }
 
     #[test]
-    fn encode_decode_v6_preserves_heights() {
+    fn encode_decode_v7_preserves_heights_and_coinbase_flags() {
         let owner = KeyPair::from_u64(1).address();
         let op1 = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let op2 = OutPoint::new(TxId::from_bytes([2u8; 32]), 1);
         let mut set = UtxoSet::new();
-        set.insert(op1, TxOutput::native(10, owner), 0);
-        set.insert(op2, TxOutput::native(20, owner), 100);
+        set.insert(op1, TxOutput::native(10, owner), 0, true);
+        set.insert(op2, TxOutput::native(20, owner), 100, false);
 
         let bytes = set.encode();
         assert_eq!(bytes.len(), set.encoded_len());
         let mut slice = &bytes[..];
-        let restored = UtxoSet::decode(&mut slice, 6).unwrap();
+        let restored = UtxoSet::decode(&mut slice, 7).unwrap();
         assert!(slice.is_empty(), "decode must consume the whole encoding");
         assert_eq!(restored, set);
         assert_eq!(restored.created_at_of(&op1), Some(0));
         assert_eq!(restored.created_at_of(&op2), Some(100));
+        assert!(restored.is_coinbase_created(&op1));
+        assert!(!restored.is_coinbase_created(&op2));
     }
 
     #[test]
@@ -386,15 +437,20 @@ mod tests {
         let owner = KeyPair::from_u64(1).address();
         let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
         let mut set = UtxoSet::new();
-        set.insert(op, TxOutput::native(10, owner), 42);
+        set.insert(op, TxOutput::native(10, owner), 42, true);
 
         let bytes = set.encode();
-        // A v5 reader stops before the trailing 8-byte creation heights.
+        // A v5 reader stops before the trailing 8-byte creation heights and
+        // the 1-byte v7 coinbase flag.
         let mut slice = &bytes[..];
         let v5 = UtxoSet::decode(&mut slice, 5).unwrap();
         assert_eq!(v5.get(&op), Some(&TxOutput::native(10, owner)));
         assert_eq!(v5.created_at_of(&op), None, "pre-v6 ages are unknown");
-        // The v5 reader leaves the 8 trailing bytes per output unconsumed.
-        assert_eq!(slice.len(), 8);
+        assert!(
+            !v5.is_coinbase_created(&op),
+            "pre-v7 flags are unknown (maturity-free)"
+        );
+        // The v5 reader leaves the 9 trailing bytes per output unconsumed.
+        assert_eq!(slice.len(), 9);
     }
 }

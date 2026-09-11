@@ -816,7 +816,7 @@ fn vault_csv_unknown_age() {
     let owner = generate_key(1);
     let op = OutPoint::new(TxId::from_bytes([1u8; 32]), 0);
     let mut set = UtxoSet::new();
-    set.insert(op, TxOutput::native(100, owner.address()), 5);
+    set.insert(op, TxOutput::native(100, owner.address()), 5, false);
 
     let bytes = set.encode();
     let mut slice = &bytes[..];

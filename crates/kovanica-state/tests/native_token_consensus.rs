@@ -9,7 +9,7 @@
 //! 6. Mixed native/asset blocks, parallel DAG asset conflicts.
 //! 7. Checkpoint/snapshot roundtrip with asset_id.
 
-use kovanica_dag::{Block, Dag};
+use kovanica_dag::{Block, BlockId, Dag};
 use kovanica_state::{
     apply_block, apply_dag, encode_block_payload, AssetId, HalvingSchedule, KeyPair, Ledger,
     LedgerError, LedgerInsertError, OutPoint, Transaction, TxInput, TxOutput, UtxoSet,
@@ -28,6 +28,18 @@ fn make_asset_id(seed: u64) -> AssetId {
     let mut bytes = [0u8; 32];
     bytes[0..8].copy_from_slice(&seed.to_le_bytes());
     AssetId::from_bytes(bytes)
+}
+
+/// Mine `n` empty blocks on the selected tip, returning the final tip.
+/// RFC-006 coinbase maturity: mined coinbases need `COINBASE_MATURITY` (100)
+/// blocks before they are spendable, so tests that spend a mined coinbase
+/// advance the chain first.
+fn mine_blocks(ledger: &mut Ledger, n: u64) -> BlockId {
+    let mut tip = ledger.dag().selected_tip();
+    for _ in 0..n {
+        tip = ledger.insert(vec![tip], 1, 0, 0, &[]).unwrap();
+    }
+    tip
 }
 
 // =========================================================================
@@ -497,6 +509,10 @@ fn test_native_token_post_activation_output_allowed() {
         .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[coinbase])
         .unwrap();
 
+    // RFC-006 coinbase maturity: the asset coinbase (block 1) is spendable
+    // only after COINBASE_MATURITY (100) blocks.
+    mine_blocks(&mut ledger, 100);
+
     // Create asset output after activation by spending asset UTXO
     let spend = Transaction::signed(
         &[(asset_coin, &alice)],
@@ -505,7 +521,6 @@ fn test_native_token_post_activation_output_allowed() {
     );
 
     let res = ledger.insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[spend]);
-    eprintln!("Result: {:?}", res);
     assert!(res.is_ok());
     let utxo = ledger.state(&ledger.dag().selected_tip()).unwrap();
     assert_eq!(utxo.balance_of_asset(&bob.address(), Some(asset)), 900);
@@ -534,6 +549,10 @@ fn test_native_token_post_activation_spend_allowed() {
     ledger
         .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[coinbase])
         .unwrap();
+
+    // RFC-006 coinbase maturity: the asset coinbase is spendable only after
+    // COINBASE_MATURITY (100) blocks.
+    mine_blocks(&mut ledger, 100);
 
     // Spend asset after activation
     let spend = Transaction::signed(
@@ -584,7 +603,11 @@ fn test_native_token_activation_boundary_exact() {
         .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[coinbase])
         .unwrap(); // blue_score = 2
 
-    // At blue_score = 2, activation_score = 1, so 2 > 1 -> post-activation (allowed)
+    // RFC-006 coinbase maturity: the asset coinbase (block 1) is spendable
+    // only after COINBASE_MATURITY (100) blocks.
+    mine_blocks(&mut ledger, 100);
+
+    // At blue_score = 102, activation_score = 1, so 102 > 1 -> post-activation (allowed)
     // Spend the asset UTXO to create asset output (conservation per asset)
     let spend = Transaction::signed(
         &[(asset_coin, &alice)],
@@ -722,6 +745,10 @@ fn test_native_token_checkpoint_roundtrip() {
         )
         .unwrap();
 
+    // RFC-006 coinbase maturity: the asset coinbase is spendable only after
+    // COINBASE_MATURITY (100) blocks.
+    mine_blocks(&mut ledger, 100);
+
     // Transfer asset
     let coin = OutPoint::new(coinbase.id(), 0);
     let spend = Transaction::signed(
@@ -799,6 +826,10 @@ fn test_native_token_snapshot_roundtrip() {
         )
         .unwrap();
 
+    // RFC-006 coinbase maturity: the asset coinbase is spendable only after
+    // COINBASE_MATURITY (100) blocks.
+    mine_blocks(&mut ledger, 100);
+
     // Transfer asset
     let coin = OutPoint::new(coinbase.id(), 0);
     let spend = Transaction::signed(
@@ -861,6 +892,16 @@ fn test_native_token_apply_dag_with_assets() {
     let block2_id = block2.id();
     dag.insert(block2).unwrap();
 
+    // RFC-006 coinbase maturity: the asset coinbase (block2) is spendable
+    // only after COINBASE_MATURITY (100) blocks. Mine 100 empty DAG blocks
+    // between the coinbase and the spend.
+    let mut tip = block2_id;
+    for _ in 0..100u64 {
+        let empty = Block::new(vec![tip], 1, 0, 0, encode_block_payload(&[]));
+        tip = empty.id();
+        dag.insert(empty).unwrap();
+    }
+
     // Block with asset transfer
     let coin = OutPoint::new(coinbase.id(), 0);
     let spend = Transaction::signed(
@@ -868,7 +909,7 @@ fn test_native_token_apply_dag_with_assets() {
         vec![TxOutput::new(900, Some(asset), bob.address())],
         b"transfer".to_vec(),
     );
-    let block3 = Block::new(vec![block2_id], 1, 0, 0, encode_block_payload(&[spend]));
+    let block3 = Block::new(vec![tip], 1, 0, 0, encode_block_payload(&[spend]));
     dag.insert(block3).unwrap();
 
     // Apply DAG
