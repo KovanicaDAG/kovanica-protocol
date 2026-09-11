@@ -24,7 +24,9 @@ fn a_pooled_transfer_is_packed_into_a_block() {
     assert!(run(&mut node, "produce").starts_with("ok block "));
     assert_eq!(run(&mut node, "pending"), "ok 0");
     assert_eq!(bal(&mut node, 2), 400);
-    assert_eq!(bal(&mut node, 1), 1600); // 600 change + 1000 KVNC subsidy
+    // RFC-006 fee burn: the 1-atom fee is destroyed (coinbase claims subsidy +
+    // fees/4 = 1000), so actor 1 keeps only the 599 change.
+    assert_eq!(bal(&mut node, 1), 1599); // 599 change + 1000 KVNC subsidy
     assert_eq!(run(&mut node, "len"), "ok 2"); // genesis + produced block
 }
 
@@ -41,7 +43,9 @@ fn non_conflicting_entries_from_two_actors_pack_together() {
 
     assert!(run(&mut node, "produce").starts_with("ok block "));
     assert_eq!(run(&mut node, "pending"), "ok 0");
-    assert_eq!(bal(&mut node, 1), 1400); // 400 change + 1000 subsidy coinbase
+    // RFC-006 fee burn: the two 1-atom fees are destroyed (coinbase claims
+    // subsidy + fees/4 = 1000), so actor 1 keeps only the 398 change.
+    assert_eq!(bal(&mut node, 1), 1398); // 398 change + 1000 subsidy coinbase
     assert_eq!(bal(&mut node, 2), 399); // 500 - 100 - 1 fee
     assert_eq!(bal(&mut node, 3), 100);
     assert_eq!(bal(&mut node, 4), 100);

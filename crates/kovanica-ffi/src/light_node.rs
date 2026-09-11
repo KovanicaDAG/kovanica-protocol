@@ -363,6 +363,7 @@ impl LightNode {
             .utxos_of(&addr)?
             .into_iter()
             .filter(|(op, _)| !node.outpoint_is_frozen(op).unwrap_or(true))
+            .filter(|(op, _)| node.is_spendable_outpoint(op).unwrap_or(true))
             .collect();
 
         // Exact-size coin already available → skip the split.
@@ -463,6 +464,7 @@ impl LightNode {
             .utxos_of(&addr)?
             .into_iter()
             .filter(|(op, _)| !node.outpoint_is_frozen(op).unwrap_or(true))
+            .filter(|(op, _)| node.is_spendable_outpoint(op).unwrap_or(true))
             .collect();
 
         let exact = candidates.iter().find(|(_, v)| *v == amount).copied();

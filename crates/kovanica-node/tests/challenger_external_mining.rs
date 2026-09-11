@@ -426,9 +426,14 @@ fn test_empirical_mempool_packing_and_utxo_eviction() {
     let new_sender_bal = node_after.balance(&sender_addr).unwrap();
     let new_recipient_bal = node_after.balance(&recipient_addr).unwrap();
 
+    // RFC-006 fee burn: the coinbase allowance is subsidy + fees/4 (3/4 of
+    // collected fees are destroyed). The sender pays the full fee and the
+    // founder/miner coinbase claims subsidy + fees/4, so the net change is
+    // -transfer - fee + subsidy + fees/4 = -transfer + subsidy - 3*fees/4.
     assert_eq!(
         new_sender_bal,
         initial_sender_bal - (transfer_amount as u128) + (200 * ATOM as u128)
+            - (3 * fees / 4) as u128
     );
     assert_eq!(
         new_recipient_bal,

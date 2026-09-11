@@ -17,10 +17,10 @@ use kovanica_dag::{vrf_keypair_from_seed, vrf_prove};
 use kovanica_state::multisig::{verify_threshold_signatures, MultisigScript};
 use kovanica_state::stake::{Freeze, UNBOND_MATURITY, UNBOND_PREFIX};
 use kovanica_state::{
-    apply_block, decode_block_payload, encode_block_payload, verify, Address, AssetId,
-    HalvingSchedule, HtlcScript, HybridConfig, KeyPair, Ledger, LedgerError, LedgerInsertError,
-    LedgerStore, OutPoint, Sig, StakedVrf, StealthAddress, Transaction, TxId, TxInput, TxOutput,
-    UtxoSet, DEFAULT_HALVING_ERA,
+    apply_block, apply_block_at, decode_block_payload, encode_block_payload, verify, Address,
+    AssetId, HalvingSchedule, HtlcScript, HybridConfig, KeyPair, Ledger, LedgerError,
+    LedgerInsertError, LedgerStore, OutPoint, Sig, StakedVrf, StealthAddress, Transaction, TxId,
+    TxInput, TxOutput, UtxoSet, VaultScript, COINBASE_MATURITY, DEFAULT_HALVING_ERA,
 };
 
 use crate::mempool_v2::{MempoolConfig, MempoolV2};
@@ -100,6 +100,9 @@ pub enum NodeError {
     Multisig(&'static str),
     /// An HTLC template failed to construct (invalid key or duplicate keys).
     Htlc(&'static str),
+    /// An RFC-006 treasury vesting configuration was invalid (bad placeholder
+    /// keys, or a tranche unlock height overflowing `u32`).
+    Treasury(&'static str),
     /// Not enough valid partial signatures were supplied to reach the threshold.
     InsufficientMultisigSignatures { have: usize, need: u8 },
     /// A multisig operation expected a single input but the transaction has more.
@@ -138,6 +141,7 @@ impl core::fmt::Display for NodeError {
             }
             NodeError::Multisig(msg) => write!(f, "multisig error: {msg}"),
             NodeError::Htlc(msg) => write!(f, "htlc error: {msg}"),
+            NodeError::Treasury(msg) => write!(f, "treasury config invalid: {msg}"),
             NodeError::InsufficientMultisigSignatures { have, need } => {
                 write!(f, "insufficient multisig signatures: have {have}, need {need}")
             }
@@ -437,10 +441,99 @@ pub struct Node {
     stealth_counter: std::sync::atomic::AtomicU64,
 }
 
-/// Blocks per subsidy-halving era. Issuance is `cap >> (height / HALVING_ERA)`.
-pub const HALVING_ERA: u64 = 500_000;
+/// Blocks per subsidy era. RFC-006 smooth emission decays the subsidy by ×3/4
+/// per era (Monero/Kaspa-style) instead of halving; the era length matches
+/// [`kovanica_state::DEFAULT_HALVING_ERA`].
+pub const HALVING_ERA: u64 = 2_000_000;
 /// Floor: `max(1, subsidy / 500_000)`. On the 200 KVNC testnet that is 0.0004 KVNC.
 pub const MIN_FEE_DIVISOR: u64 = 500_000;
+/// 1 KVNC = 10^8 base units (atoms).
+const ATOM: u64 = 100_000_000;
+
+/// RFC-006 §5 treasury vesting configuration.
+///
+/// When enabled, the genesis coinbase emits the founder premine **plus**
+/// `tranches` vault outputs (RFC-005 composition — zero new consensus rules),
+/// each locking `tranche_amount` behind an absolute-time vault that unlocks at
+/// height `k × tranche_interval` for `k = 1..=tranches`. The vault's CLAIM
+/// path (beneficiary) is how a vested tranche is drawn; the RECOVER path
+/// (owner) is the pre-vesting clawback / redirect control.
+///
+/// Reference protocol: RFC-005 vault composition (CLTV-style absolute time
+/// locks) — the same primitive shipped for user escrow, reused here for
+/// treasury vesting. Keys are **placeholders** derived deterministically from
+/// documented labels (see [`TreasuryConfig::placeholder_beneficiary_pk`] /
+/// [`TreasuryConfig::placeholder_owner_pk`]); a real key ceremony must replace
+/// them before mainnet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreasuryConfig {
+    /// Value locked in each tranche (atoms).
+    pub tranche_amount: u64,
+    /// Number of tranches. `0` disables the treasury (genesis emits only the
+    /// founder premine — the pre-RFC-006 behaviour).
+    pub tranches: u32,
+    /// Blocks between tranche unlocks. Tranche `k` unlocks at height
+    /// `k × tranche_interval` (1 year ≈ 31_536_000 blocks at 1 BPS; 10 years
+    /// ≈ 315M < u32::MAX).
+    pub tranche_interval: u32,
+    /// Treasury beneficiary public key — the vault CLAIM path, valid only
+    /// after the tranche's lock expires. This is how a vested tranche is drawn.
+    pub beneficiary_pk: [u8; 32],
+    /// Treasury owner public key — the vault RECOVER path, valid only strictly
+    /// before expiry. This is the pre-vesting clawback / redirect control.
+    pub owner_pk: [u8; 32],
+}
+
+impl TreasuryConfig {
+    /// A disabled treasury: zero tranches, zero amounts. The genesis coinbase
+    /// then emits only the founder premine (the pre-RFC-006 behaviour).
+    pub const fn disabled() -> Self {
+        Self {
+            tranche_amount: 0,
+            tranches: 0,
+            tranche_interval: 0,
+            beneficiary_pk: [0u8; 32],
+            owner_pk: [0u8; 32],
+        }
+    }
+
+    /// Whether the treasury is enabled (at least one tranche).
+    pub const fn is_enabled(&self) -> bool {
+        self.tranches > 0
+    }
+
+    /// The RFC-006 §5 mainnet treasury: 10 tranches of 1M KVNC, unlocking at
+    /// 1-year intervals (31_536_000 blocks at 1 BPS). Keys are deterministic
+    /// placeholders pending a real key ceremony.
+    pub fn mainnet() -> Self {
+        Self {
+            tranche_amount: 1_000_000 * ATOM,
+            tranches: 10,
+            tranche_interval: 31_536_000,
+            beneficiary_pk: Self::placeholder_beneficiary_pk(),
+            owner_pk: Self::placeholder_owner_pk(),
+        }
+    }
+
+    /// Deterministic **placeholder** beneficiary public key: the Ed25519
+    /// public key derived from `BLAKE3(b"kovanica-treasury-beneficiary-placeholder")`
+    /// as a seed. Deriving through [`KeyPair::from_seed`] guarantees a valid
+    /// curve point (a raw BLAKE3 digest would only be a valid Ed25519 point
+    /// half the time). **Placeholder only** — replace with a real key before
+    /// mainnet.
+    pub fn placeholder_beneficiary_pk() -> [u8; 32] {
+        let seed = *blake3::hash(b"kovanica-treasury-beneficiary-placeholder").as_bytes();
+        *KeyPair::from_seed(seed).address().payload()
+    }
+
+    /// Deterministic **placeholder** owner public key: the Ed25519 public key
+    /// derived from `BLAKE3(b"kovanica-treasury-owner-placeholder")` as a
+    /// seed. **Placeholder only** — replace with a real key before mainnet.
+    pub fn placeholder_owner_pk() -> [u8; 32] {
+        let seed = *blake3::hash(b"kovanica-treasury-owner-placeholder").as_bytes();
+        *KeyPair::from_seed(seed).address().payload()
+    }
+}
 
 impl Default for Node {
     fn default() -> Self {
@@ -649,12 +742,66 @@ impl Node {
         finality_depth: u64,
         payload_pruning_depth: u64,
     ) -> Result<(BlockId, Address), NodeError> {
+        self.genesis_with_finality_and_treasury(
+            k,
+            subsidy,
+            amount,
+            founder_seed,
+            finality_depth,
+            payload_pruning_depth,
+            None,
+        )
+    }
+
+    /// Like [`Node::genesis_with_finality`], but the genesis coinbase may also
+    /// emit RFC-006 §5 treasury vesting tranches (RFC-005 vault composition).
+    ///
+    /// When `treasury` is `Some` and enabled, the genesis coinbase mints the
+    /// founder premine output (as today) **plus** `tranches` vault outputs,
+    /// each locking `tranche_amount` behind a `VaultScript` with
+    /// `relative_delay = 0` and `absolute_time = k × tranche_interval` for
+    /// `k = 1..=tranches`. The vault's CLAIM path (beneficiary) draws a vested
+    /// tranche; the RECOVER path (owner) is the pre-vesting clawback control.
+    ///
+    /// The genesis `native_minted` counter (RFC-006 supply cap) is the sum of
+    /// every native output in the genesis coinbase, so it automatically becomes
+    /// `premine + tranches × tranche_amount` — no ledger change needed.
+    ///
+    /// Note: the genesis coinbase is still subject to the `apply_coinbase`
+    /// subsidy cap (`claimed_native <= subsidy + fees/4`), so `subsidy` must
+    /// cover the premine plus the treasury when the treasury is enabled. The
+    /// mainnet profile is dormant pending RFC review; un-dormanting it requires
+    /// either a genesis subsidy covering the initial allocation or a genesis
+    /// exemption in `apply_coinbase` (RFC-006 follow-up).
+    #[allow(clippy::too_many_arguments)] // mirrors genesis_with_finality + one treasury param
+    pub fn genesis_with_finality_and_treasury(
+        &mut self,
+        k: u16,
+        subsidy: u64,
+        amount: u64,
+        founder_seed: u64,
+        finality_depth: u64,
+        payload_pruning_depth: u64,
+        treasury: Option<TreasuryConfig>,
+    ) -> Result<(BlockId, Address), NodeError> {
         if self.ledger.is_some() {
             return Err(NodeError::AlreadyInitialized);
         }
         let founder = Self::address(founder_seed);
-        let coinbase =
-            Transaction::coinbase(vec![TxOutput::native(amount, founder)], b"genesis".to_vec());
+        let mut outputs = vec![TxOutput::native(amount, founder)];
+        if let Some(t) = treasury {
+            if t.is_enabled() {
+                for k_idx in 1..=t.tranches {
+                    let unlock = k_idx
+                        .checked_mul(t.tranche_interval)
+                        .ok_or(NodeError::Treasury("tranche unlock height overflows u32"))?;
+                    let script = VaultScript::new(t.beneficiary_pk, t.owner_pk, 0, unlock)
+                        .map_err(|e| NodeError::Treasury(e.as_str()))?;
+                    outputs.push(TxOutput::new(t.tranche_amount, None, script.address()));
+                }
+            }
+        }
+        let coinbase = Transaction::coinbase(outputs, b"genesis".to_vec());
         let schedule = HalvingSchedule::new(subsidy, DEFAULT_HALVING_ERA);
         let ledger = if finality_depth == u64::MAX && payload_pruning_depth == u64::MAX {
             Ledger::new(k, schedule, &[coinbase]).map_err(NodeError::Ledger)?
@@ -758,13 +905,19 @@ impl Node {
     }
 
     /// Compute the subsidy at a given height (height 0 = genesis).
-    /// `cap` is the genesis subsidy. Halving era is `HALVING_ERA` (500_000 blocks).
+    /// `cap` is the genesis subsidy. RFC-006 smooth emission: each era
+    /// multiplies the subsidy by 3/4 (truncated to atoms), and the curve is
+    /// exhausted after 256 eras.
     pub fn issuance_at(cap: u64, height: u64) -> u64 {
         let era = height / HALVING_ERA;
-        if era >= 63 {
+        if era >= 256 {
             0
         } else {
-            cap >> era
+            let mut s = cap;
+            for _ in 0..era {
+                s = s * 3 / 4;
+            }
+            s
         }
     }
 
@@ -1120,9 +1273,15 @@ impl Node {
             .checked_add(fee)
             .ok_or(NodeError::InsufficientFunds)?;
         let state = self.ledger()?.ledger_state();
+        // RFC-006 coinbase maturity: skip coinbase outputs that are not yet
+        // spendable at the next block's height (Bitcoin's COINBASE_MATURITY
+        // analogue). The next block's height is the selected tip's height + 1;
+        // blue score equals height on the selected chain.
+        let next_height = self.ledger()?.tip_blue_score() + 1;
         let mut owned: Vec<(OutPoint, u64)> = state
             .iter()
             .filter(|(_, out)| out.owner == from && out.asset_id == asset_id)
+            .filter(|(op, _)| is_spendable_in(&state, op, next_height))
             .map(|(op, out)| (*op, out.value))
             .collect();
         owned.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -1174,6 +1333,15 @@ impl Node {
             tx.attach_signature(i, sig);
         }
         self.submit_tx(tx)
+    }
+
+    /// Whether `outpoint` is spendable at the next block's height under the
+    /// RFC-006 coinbase-maturity rule (Bitcoin's `COINBASE_MATURITY` analogue).
+    /// Genesis coinbases and non-coinbase outputs are always spendable.
+    pub fn is_spendable_outpoint(&self, outpoint: &OutPoint) -> Result<bool, NodeError> {
+        let state = self.ledger()?.ledger_state();
+        let next_height = self.ledger()?.tip_blue_score() + 1;
+        Ok(is_spendable_in(&state, outpoint, next_height))
     }
 
     /// Unspent outputs owned by `owner`.
@@ -1449,6 +1617,15 @@ impl Node {
     /// The spendable balance locked to an HTLC template's address in the
     /// current full ledger state.
     pub fn balance_of_htlc(&self, script: &HtlcScript) -> u64 {
+        let addr = script.address();
+        self.balance(&addr).unwrap_or(0) as u64
+    }
+
+    /// The spendable balance locked to an RFC-005 vault template's address in
+    /// the current full ledger state. For a treasury tranche this is the
+    /// un-drawn tranche value (the vault's full `tranche_amount` until the
+    /// beneficiary claims it).
+    pub fn balance_of_vault(&self, script: &VaultScript) -> u64 {
         let addr = script.address();
         self.balance(&addr).unwrap_or(0) as u64
     }
@@ -1781,18 +1958,30 @@ impl Node {
             return Ok(None);
         }
 
-        let (subsidy, mut working, original) = {
+        let (subsidy, mut working, original, next_height) = {
             let ledger = self.ledger.as_ref().expect("checked above");
             (
                 ledger.subsidy(),
                 ledger.ledger_state(),
                 ledger.ledger_state(),
+                // The block being produced extends the selected chain, so its
+                // height is the selected tip's height + 1 (blue score equals
+                // height on the selected chain). RFC-006 coinbase maturity is
+                // enforced against this real height via `apply_block_at`.
+                ledger.tip_blue_score() + 1,
             )
         };
         let mut selected = Vec::new();
         let mut selected_ids = Vec::new();
         for tx in self.mempool.ordered_pending() {
-            if apply_block(&mut working, std::slice::from_ref(&tx), subsidy).is_ok() {
+            if apply_block_at(
+                &mut working,
+                std::slice::from_ref(&tx),
+                subsidy,
+                next_height,
+            )
+            .is_ok()
+            {
                 selected_ids.push(tx.id());
                 selected.push(tx);
             }
@@ -1987,7 +2176,9 @@ impl Node {
             return Vec::new();
         };
         let subsidy = self.issuance().unwrap_or(0);
-        let total = subsidy.saturating_add(extra_fees);
+        // RFC-006 fee burn (EIP-1559-style): 3/4 of collected fees are
+        // destroyed, 1/4 is credited to the coinbase allowance.
+        let total = subsidy.saturating_add(extra_fees / 4);
         if total == 0 {
             return Vec::new();
         }
@@ -2888,6 +3079,22 @@ fn keypair_from_hex_secret(secret_hex: &str) -> Result<KeyPair, NodeError> {
     let bytes = <[u8; 32]>::try_from(raw.as_slice())
         .map_err(|_| NodeError::Multisig("secret must be exactly 32 bytes hex"))?;
     Ok(KeyPair::from_seed(bytes))
+}
+
+/// Whether `op` is spendable at `height` under the RFC-006 coinbase-maturity
+/// rule (Bitcoin's `COINBASE_MATURITY` analogue): a coinbase output is
+/// spendable only at `created_at + COINBASE_MATURITY`; genesis coinbases
+/// (`created_at == 0`, the founder premine) are exempt. Unknown provenance
+/// (pre-v7 checkpoint state) fails open — legacy data is maturity-free.
+fn is_spendable_in(state: &UtxoSet, op: &OutPoint, height: u64) -> bool {
+    if !state.is_coinbase_created(op) {
+        return true;
+    }
+    match state.created_at_of(op) {
+        Some(0) => true,
+        Some(created_at) => height >= created_at.saturating_add(COINBASE_MATURITY),
+        None => true,
+    }
 }
 
 fn fee_of(state: &UtxoSet, tx: &Transaction) -> u64 {

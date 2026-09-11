@@ -103,8 +103,12 @@ fn rebonding_skips_frozen_coins_and_refills_from_coinbase() {
     assert_eq!(node.total_stake().unwrap(), 1000);
 
     // Unfrozen funds are exhausted — but this node is also the miner, and the
-    // sizing/bond flow's own blocks pay founder coinbase, so a third bond is
-    // funded from freshly mined coins while frozen outputs stay untouched.
+    // sizing/bond flow's own blocks pay founder coinbase. RFC-006 coinbase
+    // maturity (COINBASE_MATURITY = 100) means those freshly mined coins are
+    // spendable only after 100 blocks, so advance the chain first.
+    for _ in 0..100 {
+        node.produce_empty_block().unwrap();
+    }
     node.bond_stake(1, 500).unwrap();
     assert_eq!(node.total_stake().unwrap(), 1500);
 

@@ -243,7 +243,9 @@ fn test_challenger_2_full_mining_lifecycle_and_consensus() {
         recipient_bal_after,
         recipient_bal_before + (transfer_atoms as u128)
     );
-    assert_eq!(miner_bal_after, (subsidy + fees) as u128);
+    // RFC-006 fee burn: the coinbase allowance is subsidy + fees/4 (3/4 of
+    // collected fees are destroyed).
+    assert_eq!(miner_bal_after, (subsidy + fees / 4) as u128);
 
     // =========================================================================
     // STEP 6: Verify rejection of invalid nonces & duplicate submission idempotency

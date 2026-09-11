@@ -28,7 +28,7 @@ use crate::net::{
     decode_records, encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first,
     sync_headers_first,
 };
-use crate::node::{BlockRecord, Node, WalletDirection, HALVING_ERA};
+use crate::node::{BlockRecord, Node, TreasuryConfig, WalletDirection, HALVING_ERA};
 use crate::p2p::Mesh;
 
 const UI: &str = include_str!("explorer.html");
@@ -75,8 +75,12 @@ struct NetworkProfile {
     /// Payload pruning depth: blocks more than this many blue score below the
     /// tip have their payloads evicted. `u64::MAX` disables payload pruning.
     payload_pruning_depth: u64,
-    /// Dormant placeholder: genesis parameters are TBD and the profile refuses
-    /// to boot unless explicitly overridden.
+    /// RFC-006 §5 treasury vesting config for the genesis coinbase (RFC-005
+    /// vault composition). Disabled on testnet; 10 × 1M KVNC on mainnet.
+    treasury: TreasuryConfig,
+    /// Dormant placeholder: the profile refuses to boot unless explicitly
+    /// overridden. Mainnet stays dormant pending RFC review even though its
+    /// RFC-006 genesis parameters are now specified.
     dormant: bool,
 }
 
@@ -91,24 +95,26 @@ impl NetworkProfile {
             founder_seed: FOUNDER_SEED,
             finality_depth: TESTNET_FINALITY_DEPTH,
             payload_pruning_depth: TESTNET_PAYLOAD_PRUNING_DEPTH,
+            treasury: TreasuryConfig::disabled(),
             dormant: false,
         }
     }
 
-    /// The mainnet profile — **DORMANT**. Final genesis parameters are TBD and
-    /// must be decided by the protocol owners before launch; this placeholder
-    /// exists so the profile plumbing (network id, data-dir isolation, faucet
-    /// gating) is in place without inventing consensus values. Do not fill in
-    /// numbers here — that is a consensus decision, not an implementation one.
+    /// The mainnet profile — **DORMANT**. RFC-006 §6 specifies the genesis
+    /// parameters (10 KVNC subsidy, 0.2M KVNC premine, 10 × 1M KVNC treasury,
+    /// k = 3, finality 100, pruning 1000), but the profile still refuses to
+    /// boot: it un-dormants only after RFC review. The treasury keys are
+    /// deterministic placeholders pending a real key ceremony.
     fn mainnet() -> Self {
         Self {
             id: "kovanica-mainnet",
-            genesis_k: 0,             // TBD — do not invent
-            genesis_subsidy: 0,       // TBD — do not invent
-            genesis_premine: 0,       // TBD — do not invent
-            founder_seed: 0,          // TBD — do not invent
-            finality_depth: 0,        // TBD — do not invent
-            payload_pruning_depth: 0, // TBD — do not invent
+            genesis_k: 3,
+            genesis_subsidy: 10 * ATOM,
+            genesis_premine: 200_000 * ATOM,
+            founder_seed: FOUNDER_SEED,
+            finality_depth: TESTNET_FINALITY_DEPTH,
+            payload_pruning_depth: TESTNET_PAYLOAD_PRUNING_DEPTH,
+            treasury: TreasuryConfig::mainnet(),
             dormant: true,
         }
     }
@@ -699,13 +705,14 @@ fn line_mesh() -> Mesh {
 fn genesis_node() -> Node {
     let profile = network_profile();
     let mut node = Node::new();
-    node.genesis_with_finality(
+    node.genesis_with_finality_and_treasury(
         profile.genesis_k,
         profile.genesis_subsidy,
         profile.genesis_premine,
         profile.founder_seed,
         profile.finality_depth,
         profile.payload_pruning_depth,
+        Some(profile.treasury),
     )
     .expect("genesis");
     // Hybrid PoW + staked-VRF admission (A2 uplink): opt-in via
@@ -3306,9 +3313,13 @@ mod tests {
                 .unwrap(),
             ATOM.into()
         );
+        // RFC-006 fee burn: the founder pays the full fee and the coinbase
+        // claims subsidy + fees/4, so the net is premine - ATOM - fee +
+        // subsidy + fees/4 = premine - ATOM + subsidy - 3*fee/4.
+        let fee = (GENESIS_SUBSIDY / 500_000).max(1);
         assert_eq!(
             n.balance(&founder).unwrap(),
-            u128::from(GENESIS_PREMINE - ATOM + GENESIS_SUBSIDY)
+            u128::from(GENESIS_PREMINE - ATOM + GENESIS_SUBSIDY) - u128::from(3 * fee / 4)
         );
     }
 
@@ -3353,7 +3364,11 @@ mod tests {
         app.mining = false;
         let from = KeyPair::from_u64(1);
         let to = KeyPair::from_u64(9);
-        app.mesh.produce_empty("alpha").unwrap();
+        // RFC-006 coinbase maturity: the freshly-mined coinbase is spendable
+        // only after COINBASE_MATURITY (100) blocks, so advance the chain.
+        for _ in 0..100 {
+            app.mesh.produce_empty("alpha").unwrap();
+        }
         let prepared = app
             .mesh
             .node("alpha")
@@ -3362,7 +3377,7 @@ mod tests {
             .unwrap();
         assert!(
             prepared.tx.inputs().len() >= 2,
-            "50 KVNC + fee needs two 50-KVNC coinbases"
+            "200 KVNC + fee needs two 200-KVNC coinbases"
         );
         let sig = from.sign(&prepared.sighash);
         app.mesh
@@ -3397,10 +3412,20 @@ mod tests {
 
     #[test]
     fn issuance_halves_each_era() {
+        // RFC-006 smooth emission: ×3/4 per era (Monero/Kaspa-style), not a
+        // halving. Era length is HALVING_ERA (2M blocks).
         assert_eq!(Node::issuance_at(200 * ATOM, 0), 200 * ATOM);
-        assert_eq!(Node::issuance_at(200 * ATOM, 499_999), 200 * ATOM);
-        assert_eq!(Node::issuance_at(200 * ATOM, 500_000), 100 * ATOM);
-        assert_eq!(Node::issuance_at(200 * ATOM, 1_000_000), (200 * ATOM) >> 2);
+        assert_eq!(Node::issuance_at(200 * ATOM, HALVING_ERA - 1), 200 * ATOM);
+        assert_eq!(
+            Node::issuance_at(200 * ATOM, HALVING_ERA),
+            (200 * ATOM) * 3 / 4
+        );
+        assert_eq!(
+            Node::issuance_at(200 * ATOM, 2 * HALVING_ERA),
+            (200 * ATOM) * 3 * 3 / 16
+        );
+        // The curve terminates after 256 eras.
+        assert_eq!(Node::issuance_at(200 * ATOM, 256 * HALVING_ERA), 0);
     }
 
     #[test]
@@ -3638,19 +3663,36 @@ mod tests {
 
     #[test]
     fn mainnet_profile_is_a_dormant_placeholder() {
-        // The mainnet profile exists for plumbing (id, data-dir isolation,
-        // faucet gating) but its genesis parameters are TBD — never invented.
+        // RFC-006 §6: mainnet genesis parameters are now specified (10 KVNC
+        // subsidy, 0.2M KVNC premine, 10 × 1M KVNC treasury, k = 3, finality
+        // 100, pruning 1000) but the profile stays DORMANT — it un-dormants
+        // only after RFC review.
         let profile = NetworkProfile::mainnet();
         assert_eq!(profile.id, "kovanica-mainnet");
         assert!(profile.dormant, "mainnet must stay dormant");
-        assert_eq!(profile.genesis_k, 0, "mainnet k is TBD");
-        assert_eq!(profile.genesis_subsidy, 0, "mainnet subsidy is TBD");
-        assert_eq!(profile.genesis_premine, 0, "mainnet premine is TBD");
-        assert_eq!(profile.finality_depth, 0, "mainnet finality depth is TBD");
-        assert_eq!(
-            profile.payload_pruning_depth, 0,
-            "mainnet payload pruning depth is TBD"
-        );
+        assert_eq!(profile.genesis_k, 3);
+        assert_eq!(profile.genesis_subsidy, 10 * ATOM);
+        assert_eq!(profile.genesis_premine, 200_000 * ATOM);
+        assert_eq!(profile.founder_seed, FOUNDER_SEED);
+        assert_eq!(profile.finality_depth, TESTNET_FINALITY_DEPTH);
+        assert_eq!(profile.payload_pruning_depth, TESTNET_PAYLOAD_PRUNING_DEPTH);
+        // Treasury: 10 tranches of 1M KVNC at 1-year intervals.
+        assert!(profile.treasury.is_enabled());
+        assert_eq!(profile.treasury.tranches, 10);
+        assert_eq!(profile.treasury.tranche_amount, 1_000_000 * ATOM);
+        assert_eq!(profile.treasury.tranche_interval, 31_536_000);
+        assert_ne!(profile.treasury.beneficiary_pk, [0u8; 32]);
+        assert_ne!(profile.treasury.owner_pk, [0u8; 32]);
+    }
+
+    #[test]
+    fn testnet_profile_has_no_treasury() {
+        // RFC-006 §5: the testnet genesis is unchanged apart from the already
+        // landed emission-curve change — no treasury tranches.
+        let profile = NetworkProfile::testnet();
+        assert!(!profile.treasury.is_enabled());
+        assert_eq!(profile.treasury.tranches, 0);
+        assert_eq!(profile.treasury.tranche_amount, 0);
     }
 
     #[test]

@@ -39,10 +39,13 @@ fn bond(n: &mut Node, funder: &KeyPair, vrf_pk: &[u8; 32], value: u64) {
         .utxos_of(&funder.address())
         .unwrap()
         .into_iter()
+        // RFC-006 coinbase maturity: skip immature coinbases (the founder
+        // premine is exempt, but mined coinbases need COINBASE_MATURITY).
         .filter(|(op, _)| !n.outpoint_is_frozen(op).unwrap())
+        .filter(|(op, _)| n.is_spendable_outpoint(op).unwrap())
         .max_by_key(|(_, v)| *v)
         .map(|(op, _)| op)
-        .expect("an unfrozen funding coin");
+        .expect("an unfrozen, spendable funding coin");
 
     let source = if utxo_value(n, funder, &coin) == value {
         coin
