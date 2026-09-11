@@ -86,7 +86,7 @@ index 55c0261..8d87b06 100644
              ));
          }
      }
-@@ -2516,11 +2539,14 @@ fn history_json(
+@@ -2516,10 +2539,13 @@ fn history_json(
          .skip(offset as usize)
          .take(limit as usize)
          .collect();
@@ -105,7 +105,8 @@ index 55c0261..8d87b06 100644
          total
      ))
  }
-@@ -2538,7 +2564,8 @@ fn utxos_json(
+@@ -2538,26 +2564,29 @@ fn utxos_json(
+         .unwrap_or_else(|| app.selected.clone());
      let n = app.mesh.node(&node).ok_or("unknown node")?;
      let bal = n.balance(&addr).map_err(|e| e.to_string())?;
 +    let balances = n.balances_map_of(&addr).map_err(|e| e.to_string())?;
@@ -144,33 +145,37 @@ index 55c0261..8d87b06 100644
  }
 
 diff --git a/crates/kovanica-node/src/node.rs b/crates/kovanica-node/src/node.rs
-index 0000000..1111111 100644
+index 631f223..6fb454a 100644
 --- a/crates/kovanica-node/src/node.rs
 +++ b/crates/kovanica-node/src/node.rs
-@@ -169,6 +169,52 @@
+@@ -168,6 +168,38 @@ pub struct Sent {
+ 
+ /// An unsigned transfer ready for a wallet to sign.
+ #[derive(Clone, Debug)]
++
 +/// Wire form of an asset id for HTTP JSON.
-+/// Native KVNC (`None`) → `\"KVNC\"`. Other assets → lowercase hex.
++/// Native KVNC (`None`) → `"KVNC"`. Other assets → lowercase hex.
 +pub fn asset_id_to_wire(asset_id: Option<AssetId>) -> String {
 +    match asset_id {
-+        None => \"KVNC\".to_string(),
-+        Some(id) if id.is_native() => \"KVNC\".to_string(),
++        None => "KVNC".to_string(),
++        Some(id) if id.is_native() => "KVNC".to_string(),
 +        Some(id) => id.to_hex(),
 +    }
 +}
 +
 +/// Parse wire `asset_id` query/body value into ledger form.
-+/// `\"KVNC\"`, empty, or missing → `None` (native). Else 32-byte hex → `Some(AssetId)`.
++/// `"KVNC"`, empty, or missing → `None` (native). Else 32-byte hex → `Some(AssetId)`.
 +pub fn asset_id_from_wire(s: Option<&str>) -> Result<Option<AssetId>, String> {
 +    let Some(raw) = s.map(str::trim).filter(|x| !x.is_empty()) else {
 +        return Ok(None);
 +    };
-+    if raw.eq_ignore_ascii_case(\"KVNC\") {
++    if raw.eq_ignore_ascii_case("KVNC") {
 +        return Ok(None);
 +    }
-+    let bytes = hex::decode(raw).map_err(|_| \"asset_id is not hex\".to_string())?;
++    let bytes = hex::decode(raw).map_err(|_| "asset_id is not hex".to_string())?;
 +    let arr: [u8; 32] = bytes
 +        .try_into()
-+        .map_err(|_| \"asset_id must be 32 bytes (64 hex chars) or KVNC\".to_string())?;
++        .map_err(|_| "asset_id must be 32 bytes (64 hex chars) or KVNC".to_string())?;
 +    let id = AssetId::from_bytes(arr);
 +    if id.is_native() {
 +        Ok(None)
@@ -179,4 +184,42 @@ index 0000000..1111111 100644
 +    }
 +}
 +
- // ... plus utxos_detailed_of + balances_map_of after utxos_of (see full patch in PR body)
+ pub struct Prepared {
+     /// The unsigned transaction (zeroed signatures).
+     pub tx: Transaction,
+@@ -1206,6 +1238,35 @@ impl Node {
+         Ok(rows)
+     }
+ 
++    /// Unspent outputs owned by `owner`, including `asset_id` (KVP-102 HTTP).
++    pub fn utxos_detailed_of(
++        &self,
++        owner: &Address,
++    ) -> Result<Vec<(OutPoint, u64, Option<AssetId>)>, NodeError> {
++        let mut rows: Vec<(OutPoint, u64, Option<AssetId>)> = self
++            .ledger()?
++            .ledger_state()
++            .iter()
++            .filter(|(_, o)| &o.owner == owner)
++            .map(|(op, o)| (*op, o.value, o.asset_id))
++            .collect();
++        rows.sort_by_key(|row| row.0);
++        Ok(rows)
++    }
++
++    /// Spendable balances grouped by wire asset id (`"KVNC"` or hex).
++    pub fn balances_map_of(
++        &self,
++        owner: &Address,
++    ) -> Result<std::collections::BTreeMap<String, u128>, NodeError> {
++        let mut map = std::collections::BTreeMap::new();
++        for (_, value, asset_id) in self.utxos_detailed_of(owner)? {
++            let key = asset_id_to_wire(asset_id);
++            *map.entry(key).or_insert(0u128) += value as u128;
++        }
++        Ok(map)
++    }
++
+     /// Send `amount` from an explicit keypair to an arbitrary address
+     /// **immediately**, as a new block built on the current tips. The
+     /// seed-based [`Node::send_to`] is a thin wrapper over this — wallets that
