@@ -1,10 +1,12 @@
-# KVNC tokenomics (code-aligned)
+# KVNC tokenomics (RFC-006)
 
-Numbers below match the reference implementation constants used by the node and
-the web app (`web/src/lib/api/contract.ts` and `kovanica-state` / `kovanica-node`).
-If code and this doc diverge, **code wins** — update this file in the same change.
+Numbers match the RFC-006 reference implementation in `kovanica-state` and
+`kovanica-node`. If code and this doc diverge, **code wins**.
 
-**Network:** `kovanica-testnet` (mainnet not launched).
+**Network:** `kovanica-testnet` (mainnet profile filled but dormant).
+
+> **Activation note:** Switching a live network to RFC-006 is a consensus fork
+> and requires a **testnet reset**.
 
 ---
 
@@ -19,34 +21,42 @@ If code and this doc diverge, **code wins** — update this file in the same cha
 
 ---
 
-## Issuance (subsidy)
+## Emission (smooth geometric curve)
 
 | Parameter | Value |
 |-----------|--------|
-| Initial subsidy | **200 KVNC** per coinbase (`SUBSIDY = 200 * ATOM`) |
-| Halving era | every **500_000** blocks (`HALVING_ERA`) |
-| Floor | subsidy does not fall below **1 atom** in the web helper `subsidyAt` |
-
-Era formula (web / docs convention):
+| Genesis subsidy \(s_0\) | **10 KVNC** per block |
+| Era length \(E\) | **2_000_000** blocks |
+| Decay \(\alpha\) | **3/4** per era (integer floor) |
+| Curve total | **80_000_000 KVNC** |
 
 ```text
-era = floor(height / 500_000)
-subsidy ≈ max(1 atom, 200 KVNC / 2^era)
+era = floor(height / 2_000_000)
+s(era) = floor(s(era-1) * 3/4)   with s(0) = 10 KVNC
 ```
 
-Coinbase may also carry **KVP-102** asset outputs for distribution; the subsidy
-*limit* applies to **native KVNC** outputs only (see KVP-102 / RFC-002).
+---
 
-### Founder / bootstrap (testnet constants)
+## Hard cap & distribution
+
+| Component | Amount | Mechanism |
+|-----------|--------|-----------|
+| Founder premine | 0.2M KVNC | Genesis coinbase (P2PK) |
+| Treasury | 10M KVNC | 10 × 1M RFC-005 vaults at genesis |
+| Curve emission | 80M KVNC | Block subsidies |
+| **MAX_SUPPLY** | **90.2M KVNC** | Enforced via `native_minted` |
+
+Treasury tranche *k* (1..=10) unlocks at height `k * 31_536_000`.
+Owner keys are **placeholders** (`TREASURY_SEED_BASE + k`) until ceremony.
+
+---
+
+## Coinbase maturity
 
 | Parameter | Value |
 |-----------|--------|
-| `FOUNDER_AMOUNT` | 200 KVNC |
-| `FOUNDER_SEED` | `1` (deterministic test actor in some demos) |
-
-These are **implementation constants** for testnet/genesis helpers—not a promise
-of mainnet allocation. Mainnet allocation, if any, must be specified separately
-before launch.
+| `COINBASE_MATURITY` | **100** blocks |
+| Error | `LedgerError::CoinbaseImmature` |
 
 ---
 
@@ -54,36 +64,22 @@ before launch.
 
 | Parameter | Value |
 |-----------|--------|
-| Minimum fee | **10_000 atoms** (`MIN_FEE`) |
-| Fee asset | **KVNC only** |
-| Fee effect | burned / not paid to a random third party as “token tax” in the KVP-102 sense — native in − native out |
-
-KVP-102 asset transfers still require enough **native** KVNC to cover the fee.
+| Floor | `max(1, subsidy / 500_000)` atoms per byte |
+| Producer share | **25%** (`fee / 4`) |
+| Burned | **75%** |
 
 ---
 
-## KVNC vs KVP-102
+## Supply metrics
 
-| | **KVNC** | **KVP-102 asset** |
-|--|----------|-------------------|
-| Role | Native coin | Ledger multi-asset standard |
-| `asset_id` on output | none / native | 32-byte id |
-| Pays fees | yes | no |
-| Mint in regular tx | via coinbase subsidy rules | coinbase only (no user mint) |
-| Burn | fee path + explicit under-pay | allowed (in &gt; out) |
+| Metric | Definition |
+|--------|------------|
+| `total` / `native_minted` | cumulative minted |
+| `circulating` | tip UTXO native total (approx.) |
+| `burned` | cumulative 75% fee burn |
+| `max_supply` | `MAX_SUPPLY` |
 
-**One line:** *KVNC is native; other assets are KVP-102 (RFC-002).*
-
----
-
-## Supply
-
-There is **no fixed hard cap** encoded as a single constant in the web contract
-file: supply is the cumulative result of coinbase subsidies (and any founder
-mint paths) minus burns. Explorers expose running **supply** from node state.
-
-For mainnet, publish an explicit long-term schedule if it differs from testnet
-constants.
+Exposed via `Ledger::supply()` and HTTP snapshot JSON fields.
 
 ---
 
@@ -92,12 +88,12 @@ constants.
 | Parameter | Value |
 |-----------|--------|
 | GHOSTDAG **k** | 3 |
-| PoW | real, opt-in at DAG/node policy |
+| PoW | real, opt-in |
 
 ---
 
 ## References
 
-- [KVP-102-NativeTokens.md](./KVP-102-NativeTokens.md)
-- [RFC-002-NativeTokens.md](./RFC-002-NativeTokens.md)
-- `web/src/lib/api/contract.ts` — `ATOM`, `SUBSIDY`, `HALVING_ERA`, `MIN_FEE`
+- `crates/kovanica-state/src/ledger.rs`
+- `crates/kovanica-node/src/explorer.rs` — `NetworkProfile`
+- RFC-005 `VaultScript`
