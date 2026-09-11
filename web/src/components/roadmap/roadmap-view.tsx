@@ -57,8 +57,8 @@ const SURFACE: Item[] = [
   {
     id: "web-assets",
     title: "Web KVP-102 UX",
-    status: "active",
-    blurb: "AssetPicker + explorer badges ready; full picker needs node asset_id in HTTP API.",
+    status: "done",
+    blurb: "AssetPicker + explorer badges; utxos/history/prepare expose asset_id + balances map.",
   },
   {
     id: "android-ios",
@@ -84,8 +84,8 @@ const NEXT: Item[] = [
   {
     id: "asset-http",
     title: "Node HTTP asset_id (KVP-102)",
-    status: "next",
-    blurb: "Expose asset_id on utxos/history/prepare so the web picker shows real KVP-102 assets.",
+    status: "done",
+    blurb: "asset_id on /api/utxos, /api/history, /api/prepare; balances map + wire KVNC/hex helpers.",
   },
   {
     id: "mainnet",

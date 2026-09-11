@@ -100,7 +100,7 @@ Configurable via `Ledger::set_native_token_activation_score`. RFC-002 §6.
 |-------|------------------|
 | Node | `send_*_asset`, `prepare_transfer_asset`, `balance_of_asset` |
 | FFI | `send_asset`, `send_from_asset`, `balance_of_asset`, `asset_id_hex` on history |
-| Web | AssetPicker + explorer badges (full lists need `asset_id` on HTTP utxos) |
+| Web | AssetPicker + explorer badges (HTTP utxos/history/prepare expose asset_id) |
 | Checkpoint | UTXO set **v4** (asset flag + id) |
 
 `balance(owner)` remains **native KVNC only**; use `balance_of_asset` for
@@ -121,7 +121,7 @@ KVP-102 units.
 
 - Tag-convention **mint/burn authority** (policy-bound mint beyond coinbase).
 - Optional richer multi-asset-per-output encoding (current: one asset per output).
-- HTTP API: expose `asset_id` on `/api/utxos`, history, and prepare for wallets.
+- HTTP API: `asset_id` on `/api/utxos`, `/api/history`, `/api/prepare` (wire form `KVNC` or 64-hex).
 
 ---
 
