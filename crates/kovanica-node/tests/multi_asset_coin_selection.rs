@@ -56,7 +56,10 @@ fn native_prepare_ignores_custom_asset_utxos() {
         .collect();
     owned.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
     let total: u64 = owned.iter().map(|(_, v)| *v).sum();
-    assert_eq!(total, 5_000, "native selection must not include 9000 custom");
+    assert_eq!(
+        total, 5_000,
+        "native selection must not include 9000 custom"
+    );
     assert!(total >= need);
 
     let mut owned_c: Vec<(OutPoint, u64)> = utxo

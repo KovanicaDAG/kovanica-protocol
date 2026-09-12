@@ -381,9 +381,12 @@ impl LightNode {
                     .find(|(op, _v)| *op == funder)
                     .map(|(_, v)| *v - amount)
                     .unwrap_or(0);
+                let fee = node.min_fee();
                 let mut outputs = vec![TxOutput::native(amount, addr)];
-                if rest > 0 {
-                    outputs.push(TxOutput::native(rest, addr));
+                if rest > fee {
+                    outputs.push(TxOutput::native(rest - fee, addr));
+                } else if rest == fee {
+                    // exact: fee is paid, no change
                 }
                 let mut split =
                     Transaction::unsigned(std::slice::from_ref(&funder), outputs, Vec::new());
@@ -480,9 +483,12 @@ impl LightNode {
                     .find(|(op, _v)| *op == funder)
                     .map(|(_, v)| *v - amount)
                     .unwrap_or(0);
+                let fee = node.min_fee();
                 let mut outputs = vec![TxOutput::native(amount, addr)];
-                if rest > 0 {
-                    outputs.push(TxOutput::native(rest, addr));
+                if rest > fee {
+                    outputs.push(TxOutput::native(rest - fee, addr));
+                } else if rest == fee {
+                    // exact: fee is paid, no change
                 }
                 let mut split =
                     Transaction::unsigned(std::slice::from_ref(&funder), outputs, Vec::new());

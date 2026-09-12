@@ -90,7 +90,7 @@ function DocsBody() {
         <dl className="mt-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
           <Fact k="Token" v="KVNC · 8 decimals" />
           <Fact k="Atom" v={`${ATOM.toLocaleString()} / KVNC`} />
-          <Fact k="Subsidy" v={`${SUBSIDY / ATOM} KVNC, half / ${HALVING_ERA}`} />
+          <Fact k="Subsidy" v={`${SUBSIDY / ATOM} KVNC, era / ${HALVING_ERA.toLocaleString()} blocks`} />
           <Fact k="Min fee" v={`${MIN_FEE} atoms (burned)`} />
           <Fact k="GHOSTDAG k" v={String(K)} />
           <Fact k="P2P" v="TCP :9000 · seed.kovanica.online:9000" />

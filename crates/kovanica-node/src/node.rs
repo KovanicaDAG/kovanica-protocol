@@ -18,7 +18,7 @@ use kovanica_state::multisig::{verify_threshold_signatures, MultisigScript};
 use kovanica_state::stake::{Freeze, UNBOND_MATURITY, UNBOND_PREFIX};
 use kovanica_state::{
     apply_block, decode_block_payload, encode_block_payload, verify, Address, AssetId,
-    HalvingSchedule, HtlcScript, HybridConfig, KeyPair, Ledger, LedgerError, LedgerInsertError,
+    COINBASE_MATURITY, HalvingSchedule, HtlcScript, HybridConfig, KeyPair, Ledger, LedgerError, LedgerInsertError,
     LedgerStore, OutPoint, Sig, StakedVrf, StealthAddress, Transaction, TxId, TxInput, TxOutput,
     UtxoSet, VaultScript, DEFAULT_HALVING_ERA,
 };
@@ -1102,9 +1102,31 @@ impl Node {
             .checked_add(fee)
             .ok_or(NodeError::InsufficientFunds)?;
         let state = self.ledger()?.ledger_state();
+        let chain_height = state
+            .iter()
+            .next()
+            .map(|(&op, _)| {
+                // Use the tip blue score from the DAG directly
+                self.ledger()
+                    .as_ref()
+                    .map(|l| l.tip_blue_score())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut owned: Vec<(OutPoint, u64)> = state
             .iter()
             .filter(|(_, out)| out.owner == kp.address() && out.asset_id.is_none())
+            .filter(|(op, _)| {
+                // Non-coinbase outputs are always spendable;
+                // coinbase outputs need creation_height <= mature_before.
+                // We approximate: if creation_height is 0 (legacy), allow.
+                // For the maturity check we need the UtxoEntry; use get_entry.
+                match state.get_entry(op) {
+                    Some(entry) => entry.is_coinbase.then(|| entry.creation_height <= mature_before).unwrap_or(true),
+                    None => true,
+                }
+            })
             .map(|(op, out)| (*op, out.value))
             .collect();
         owned.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));

@@ -250,8 +250,7 @@ impl Default for HybridConfig {
     }
 }
 use crate::tx::{
-    decode_block_payload, encode_block_payload, DecodeError, OutPoint, Transaction, TxId,
-    TxOutput,
+    decode_block_payload, encode_block_payload, DecodeError, OutPoint, Transaction, TxId, TxOutput,
 };
 use crate::utxo::{UtxoEntry, UtxoSet};
 use crate::validation::TxStructureValidator;
@@ -917,9 +916,7 @@ fn apply_regular(
 
         // RFC-006 coinbase maturity.
         if prev_entry.is_coinbase {
-            let mature_at = prev_entry
-                .creation_height
-                .saturating_add(COINBASE_MATURITY);
+            let mature_at = prev_entry.creation_height.saturating_add(COINBASE_MATURITY);
             if height < mature_at {
                 return Err(LedgerError::CoinbaseImmature {
                     outpoint: input.outpoint,
@@ -3371,10 +3368,8 @@ impl Ledger {
             ledger.fees_burned = b;
         } else {
             // Legacy: approximate from checkpoint UTXO value only.
-            ledger.native_minted = ledger
-                .tip_state
-                .total_value()
-                .min(u128::from(MAX_SUPPLY)) as u64;
+            ledger.native_minted =
+                ledger.tip_state.total_value().min(u128::from(MAX_SUPPLY)) as u64;
             ledger.fees_burned = 0;
         }
 
@@ -3815,14 +3810,15 @@ mod tests {
         );
     }
 
-
-
     #[test]
     fn rfc006_geometric_subsidy() {
         let s = HalvingSchedule::rfc006();
         assert_eq!(s.subsidy_at(0), RFC006_GENESIS_SUBSIDY);
         assert_eq!(s.subsidy_at(RFC006_ERA_LENGTH - 1), RFC006_GENESIS_SUBSIDY);
-        assert_eq!(s.subsidy_at(RFC006_ERA_LENGTH), RFC006_GENESIS_SUBSIDY * 3 / 4);
+        assert_eq!(
+            s.subsidy_at(RFC006_ERA_LENGTH),
+            RFC006_GENESIS_SUBSIDY * 3 / 4
+        );
         assert_eq!(
             s.subsidy_at(2 * RFC006_ERA_LENGTH),
             RFC006_GENESIS_SUBSIDY * 3 / 4 * 3 / 4
@@ -3833,28 +3829,18 @@ mod tests {
     fn rfc006_coinbase_immature_until_maturity() {
         let miner = KeyPair::from_u64(1);
         let alice = KeyPair::from_u64(2);
-        let mut utxo = UtxoSet::new();
-        let cb = Transaction::coinbase(
-            vec![TxOutput::native(100, miner.address())],
-            b"cb".to_vec(),
-        );
-        let op = OutPoint::new(cb.id(), 0);
-        apply_block_inner(
-            &mut utxo,
-            None,
-            &[cb],
-            100,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        )
-        .unwrap();
-        assert!(utxo.get_entry(&op).unwrap().is_coinbase);
+        let mut ledger = {
+            let cb =
+                Transaction::coinbase(vec![TxOutput::native(100, miner.address())], b"cb".to_vec());
+            Ledger::new(3, HalvingSchedule::new(100, 1_000), &[cb]).expect("genesis")
+        };
+        // Maturity the genesis coinbase (creation_height 0 → spendable at height 100).
+        for h in 1..=100 {
+            ledger.insert(vec![ledger.genesis()], 1, h, 0, &[]).unwrap();
+        }
+        let tip = ledger.dag().selected_tip();
+        let op = OutPoint::new(ledger.genesis(), 0); // genesis coinbase is at tip height now
+        assert!(ledger.ledger_state().get_entry(&op).unwrap().is_coinbase);
 
         let spend = Transaction::signed(
             &[(op, &miner)],
@@ -3880,21 +3866,7 @@ mod tests {
         assert!(matches!(err, LedgerError::CoinbaseImmature { .. }));
 
         // height 100 → mature
-        apply_block_inner(
-            &mut utxo,
-            None,
-            &[spend],
-            0,
-            100,
-            100,
-            0,
-            0,
-            0,
-            0,
-            0,
-            0,
-        )
-        .unwrap();
+        apply_block_inner(&mut utxo, None, &[spend], 0, 100, 100, 0, 0, 0, 0, 0, 0).unwrap();
         assert!(!utxo.contains(&op));
     }
 
@@ -4005,8 +3977,12 @@ mod tests {
         let genesis_cb_id = genesis_cb.id();
         let mut ledger =
             Ledger::new(3, HalvingSchedule::new(1_000, 1_000), &[genesis_cb]).expect("genesis");
+        // Maturity the genesis coinbase (creation_height 0 → spendable at height 100).
+        for h in 1..=100 {
+            ledger.insert(vec![ledger.genesis()], 1, h, 0, &[]).unwrap();
+        }
 
-        // Height 1: bond 400.
+        // Height 101: bond 400.
         let coin = OutPoint::new(genesis_cb_id, 0);
         let bond = bond_tx(&validator, coin, 400, pk);
         let bond_out = OutPoint::new(bond.id(), 0);
@@ -4077,6 +4053,10 @@ mod prune_tests {
         let genesis_cb_id = genesis_cb.id();
         let mut ledger =
             Ledger::with_finality(3, HalvingSchedule::new(1_000, 1_000), &[genesis_cb], 5).unwrap();
+        // Maturity the genesis coinbase (creation_height 0 → spendable at height 100).
+        for h in 1..=100 {
+            ledger.insert(vec![ledger.genesis()], 1, h, 0, &[]).unwrap();
+        }
 
         // Spend the genesis coin so deltas carry real UTXO changes.
         let coin = OutPoint::new(genesis_cb_id, 0);
