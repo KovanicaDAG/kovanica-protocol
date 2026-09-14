@@ -16,11 +16,14 @@ export const NETWORK_PROXIES: Record<PublicSource, string> = {
 export const TOKEN = "KVNC";
 export const ATOM = 100_000_000;
 export const DECIMALS = 8;
-export const SUBSIDY = 200 * ATOM;
-export const FOUNDER_AMOUNT = 200 * ATOM;
+export const SUBSIDY = 10 * ATOM;
+export const FOUNDER_AMOUNT = 200_000 * ATOM;
 export const FOUNDER_SEED = 1;
-export const HALVING_ERA = 500_000;
+export const HALVING_ERA = 2_000_000;
+export const MAX_SUPPLY = 90_200_000 * ATOM;
 // Mirrors the node: min_fee = max(subsidy / 500_000, 1) atoms.
+// RFC-006: subsidy = 10 KVNC → min_fee = max(10/500000 * 10^8, 1) = 2000 atoms.
+// Note: 500_000 here is the fee-floor divider, not HALVING_ERA (2_000_000).
 export const MIN_FEE = Math.max(Math.floor(SUBSIDY / 500_000), 1);
 export const K = 3;
 export const TREASURY = "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc";
