@@ -18,6 +18,9 @@ import { Route as NetworkRouteImport } from './routes/network'
 import { Route as PoolRouteImport } from './routes/pool'
 import { Route as RoadmapRouteImport } from './routes/roadmap'
 import { Route as WalletRouteImport } from './routes/wallet'
+import { Route as StealthRouteImport } from './routes/stealth'
+import { Route as HtlcRouteImport } from './routes/htlc'
+import { Route as VaultsRouteImport } from './routes/vaults'
 import { Route as ApiSplatRouteImport } from './routes/api/$'
 
 const IndexRoute = IndexRouteImport.update({
@@ -65,6 +68,21 @@ const WalletRoute = WalletRouteImport.update({
   path: '/wallet',
   getParentRoute: () => rootRouteImport,
 } as any)
+const StealthRoute = StealthRouteImport.update({
+  id: '/stealth',
+  path: '/stealth',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const HtlcRoute = HtlcRouteImport.update({
+  id: '/htlc',
+  path: '/htlc',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VaultsRoute = VaultsRouteImport.update({
+  id: '/vaults',
+  path: '/vaults',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
@@ -81,6 +99,9 @@ export interface FileRoutesByFullPath {
   '/pool': typeof PoolRoute
   '/roadmap': typeof RoadmapRoute
   '/wallet': typeof WalletRoute
+  '/stealth': typeof StealthRoute
+  '/htlc': typeof HtlcRoute
+  '/vaults': typeof VaultsRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesByTo {
@@ -93,6 +114,9 @@ export interface FileRoutesByTo {
   '/pool': typeof PoolRoute
   '/roadmap': typeof RoadmapRoute
   '/wallet': typeof WalletRoute
+  '/stealth': typeof StealthRoute
+  '/htlc': typeof HtlcRoute
+  '/vaults': typeof VaultsRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesById {
@@ -106,6 +130,9 @@ export interface FileRoutesById {
   '/pool': typeof PoolRoute
   '/roadmap': typeof RoadmapRoute
   '/wallet': typeof WalletRoute
+  '/stealth': typeof StealthRoute
+  '/htlc': typeof HtlcRoute
+  '/vaults': typeof VaultsRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRouteTypes {
@@ -120,6 +147,9 @@ export interface FileRouteTypes {
     | '/pool'
     | '/roadmap'
     | '/wallet'
+    | '/stealth'
+    | '/htlc'
+    | '/vaults'
     | '/api/$'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -132,6 +162,9 @@ export interface FileRouteTypes {
     | '/pool'
     | '/roadmap'
     | '/wallet'
+    | '/stealth'
+    | '/htlc'
+    | '/vaults'
     | '/api/$'
   id:
     | '__root__'
@@ -144,6 +177,9 @@ export interface FileRouteTypes {
     | '/pool'
     | '/roadmap'
     | '/wallet'
+    | '/stealth'
+    | '/htlc'
+    | '/vaults'
     | '/api/$'
   fileRoutesById: FileRoutesById
 }
@@ -157,6 +193,9 @@ export interface RootRouteChildren {
   PoolRoute: typeof PoolRoute
   RoadmapRoute: typeof RoadmapRoute
   WalletRoute: typeof WalletRoute
+  StealthRoute: typeof StealthRoute
+  HtlcRoute: typeof HtlcRoute
+  VaultsRoute: typeof VaultsRoute
   ApiSplatRoute: typeof ApiSplatRoute
 }
 
@@ -225,6 +264,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WalletRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/stealth': {
+      id: '/stealth'
+      path: '/stealth'
+      fullPath: '/stealth'
+      preLoaderRoute: typeof StealthRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/htlc': {
+      id: '/htlc'
+      path: '/htlc'
+      fullPath: '/htlc'
+      preLoaderRoute: typeof HtlcRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/vaults': {
+      id: '/vaults'
+      path: '/vaults'
+      fullPath: '/vaults'
+      preLoaderRoute: typeof VaultsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/$': {
       id: '/api/$'
       path: '/api/$'
@@ -245,6 +305,9 @@ const rootRouteChildren: RootRouteChildren = {
   PoolRoute: PoolRoute,
   RoadmapRoute: RoadmapRoute,
   WalletRoute: WalletRoute,
+  StealthRoute: StealthRoute,
+  HtlcRoute: HtlcRoute,
+  VaultsRoute: VaultsRoute,
   ApiSplatRoute: ApiSplatRoute,
 }
 export const routeTree = rootRouteImport
