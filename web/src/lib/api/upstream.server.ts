@@ -7,9 +7,17 @@ import {
 
 const TIMEOUT_MS = 8000;
 
-/** Base URL for a public network's upstream node. */
+/**
+ * Base URL for a public network's upstream node.
+ * Empty string means the network is not open — callers must not fall back to
+ * another network (Devin: mainnet must not silently hit testnet).
+ */
 export function networkProxy(source: PublicSource): string {
-  return NETWORK_PROXIES[source] || LIVE_EXPLORER;
+  const configured = NETWORK_PROXIES[source];
+  if (configured !== undefined && configured !== "") return configured;
+  // testnet always has a live explorer; mainnet stays empty until launch
+  if (source === "testnet") return LIVE_EXPLORER;
+  return "";
 }
 
 export async function fetchUpstream(
@@ -20,6 +28,12 @@ export async function fetchUpstream(
   body?: string,
 ): Promise<Response> {
   const base = networkProxy(source);
+  if (!base) {
+    return new Response(
+      source === "mainnet" ? "mainnet launching soon" : "upstream not configured",
+      { status: 503 },
+    );
+  }
   const url = `${base}${path}${search}`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);

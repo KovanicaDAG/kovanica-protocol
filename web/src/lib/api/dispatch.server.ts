@@ -62,11 +62,18 @@ function sourceOf(req: Request): ApiSource {
   return "testnet";
 }
 
+/** First path segment after /api/ (legacy single-segment actions). */
 function action(pathname: string): string {
   const rest = pathname.replace(/^\/api\/?/, "").replace(/\/$/, "");
   return rest.split("/")[0] ?? "";
 }
 
+/** Full path after /api/ so nested routes like htlc/create survive proxying. */
+function apiRest(pathname: string): string {
+  return pathname.replace(/^\/api\/?/, "").replace(/\/$/, "");
+}
+
+const NESTED_PROTOCOL = new Set(["multisig", "stealth", "htlc", "vault"]);
 
 async function proxyLocalNode(req: Request, url: URL): Promise<Response> {
   const target = `http://127.0.0.1:8080${url.pathname}${url.search}`;
@@ -83,11 +90,13 @@ async function proxyLocalNode(req: Request, url: URL): Promise<Response> {
     return text(`local node unreachable: ${msg}`, 502);
   }
 }
+
 export async function dispatchApi(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return withCors(new Response(null, { status: 204 }));
 
   const url = new URL(req.url);
   const name = action(url.pathname);
+  const rest = apiRest(url.pathname);
   const q = url.searchParams;
   const method = req.method.toUpperCase();
 
@@ -100,19 +109,24 @@ export async function dispatchApi(req: Request): Promise<Response> {
   const source = sourceOf(req);
 
   if (isPublicSource(source)) {
-    // mine / mining / miner proxy to the node's operator console; only the
-    // chain-wipe `reset` stays locked on the shared network.
     if (name === "reset") {
       return text("not on public node", 403);
     }
-    if (source === "mainnet" && !networkProxy(source)) {
-      return text("mainnet launching soon", 503);
+    if (!networkProxy(source)) {
+      return text(
+        source === "mainnet" ? "mainnet launching soon" : "upstream not configured",
+        503,
+      );
     }
     const body = method === "POST" ? await req.text() : undefined;
-    return withCors(await fetchUpstream(`/api/${name}`, method, url.search, source, body));
+    // Preserve nested paths: /api/htlc/create → upstream /api/htlc/create
+    return withCors(await fetchUpstream(`/api/${rest}`, method, url.search, source, body));
   }
 
   if (method === "GET") {
+    if (NESTED_PROTOCOL.has(name)) {
+      return proxyLocalNode(req, url);
+    }
     switch (name) {
       case "head":
         return json(localHead());
@@ -141,6 +155,10 @@ export async function dispatchApi(req: Request): Promise<Response> {
   }
 
   if (method === "POST") {
+    if (NESTED_PROTOCOL.has(name)) {
+      // Multisig / stealth / htlc / vault live on the Rust node.
+      return proxyLocalNode(req, url);
+    }
     switch (name) {
       case "prepare":
         return okOrErr(localPrepare(q.get("from"), q.get("to"), q.get("amount")));
@@ -162,10 +180,6 @@ export async function dispatchApi(req: Request): Promise<Response> {
         return json(localReset());
       case "origin":
         return okOrErr(localOrigin(q.get("iso3")));
-      case "multisig":
-        // Multisig is implemented by the Rust node; proxy a local dev node
-        // running on the default explorer port (127.0.0.1:8080).
-        return proxyLocalNode(req, url);
       default:
         return text("unknown action " + name, 400);
     }
