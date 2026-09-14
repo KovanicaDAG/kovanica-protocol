@@ -19,6 +19,7 @@ export type StealthScanHit = {
   outpoint: { tx: string; index: number };
   value: number;
   address: string;
+  /** Present only after local ECDH with the scan private key — never from the server. */
   oneTimePrivkeyHex?: string;
 };
 
@@ -69,19 +70,31 @@ export async function deriveOnetimeAddress(
   };
 }
 
+/**
+ * Stealth scan must not send scan_privkey to any remote.
+ * Private keys stay in the browser; use a local node or offline ECDH tool.
+ * Optional view_tag-only probe hits a public filter endpoint (no secrets).
+ */
 export async function scanStealthOutputs(
-  scanPrivkeyHex: string,
+  _scanPrivkeyHex: string,
   viewTag?: string,
 ): Promise<StealthScanHit[]> {
-  const key = scanPrivkeyHex.trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(key)) {
-    throw new Error("Scan private key must be 64-char hex");
+  void _scanPrivkeyHex;
+  // Never POST scan_privkey_hex — that would let the explorer identify all payments.
+  if (viewTag?.trim()) {
+    try {
+      const res = (await apiPostJson("/api/stealth/probe", {
+        view_tag: viewTag.trim().toLowerCase(),
+      })) as { candidates?: StealthScanHit[] };
+      return res.candidates ?? [];
+    } catch {
+      // probe may not exist yet
+    }
   }
-  const res = (await apiPostJson("/api/stealth/scan", {
-    scan_privkey_hex: key,
-    view_tag: viewTag?.trim() || undefined,
-  })) as { hits: StealthScanHit[] };
-  return res.hits ?? [];
+  throw new Error(
+    "Stealth scan is client-side only — the scan private key never leaves this browser. " +
+      "Run a local node or offline ECDH against published ephemerals; do not paste the key into a public API.",
+  );
 }
 
 export async function prepareStealthSpend(

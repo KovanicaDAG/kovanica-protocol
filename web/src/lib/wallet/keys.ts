@@ -31,7 +31,6 @@ export async function createMnemonic(): Promise<string> {
   return entropyToMnemonic(entropy, words);
 }
 
-/** PBKDF2-derived 64-byte seed from a BIP39 mnemonic (matches Rust explorer.html). */
 export async function mnemonicToSeed(mnemonic: string): Promise<Uint8Array> {
   const enc = new TextEncoder();
   const key = await crypto.subtle.importKey(
@@ -49,17 +48,14 @@ export function normalizeMnemonic(phrase: string): string {
   return phrase.normalize("NFKD").trim().toLowerCase().split(/\s+/).join(" ");
 }
 
-/** 32-byte ed25519 seed — same domain the address is derived from. */
 export function seedFromMnemonic(mnemonic: string, index = 0): Uint8Array {
   return sha256(utf8ToBytes(`${normalizeMnemonic(mnemonic)}|${index}|${DOMAIN}`));
 }
 
-/** Address is the ed25519 public key (64 hex). Matches live `Address` bytes. */
 export async function addressFromMnemonic(mnemonic: string, index = 0): Promise<string> {
   return bytesToHex(ed.getPublicKey(seedFromMnemonic(mnemonic, index)));
 }
 
-/** Sign prepare's sighash bytes. Returns 128 hex (64-byte ed25519 sig). */
 export async function signSighash(mnemonic: string, index: number, sighashHex: string): Promise<string> {
   const hex = sighashHex.trim().toLowerCase();
   if (!/^[0-9a-f]+$/.test(hex) || hex.length % 2 !== 0) throw new Error("bad sighash");
@@ -67,8 +63,21 @@ export async function signSighash(mnemonic: string, index: number, sighashHex: s
   return bytesToHex(sig);
 }
 
+/**
+ * Sign a prepare sighash with a raw 32-byte Ed25519 seed (64 hex).
+ * Used for stealth one-time keys and other non-mnemonic owners.
+ */
+export async function signSighashWithSeedHex(seedHex: string, sighashHex: string): Promise<string> {
+  const seed = seedHex.trim().toLowerCase();
+  const hex = sighashHex.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(seed)) throw new Error("seed must be 64-char hex (32 bytes)");
+  if (!/^[0-9a-f]+$/.test(hex) || hex.length % 2 !== 0) throw new Error("bad sighash");
+  const sig = ed.sign(hexToBytes(hex), hexToBytes(seed));
+  return bytesToHex(sig);
+}
+
 export async function importMnemonic(phrase: string): Promise<string> {
-  const words = phrase.trim().toLowerCase().split(/\\s+/);
+  const words = phrase.trim().toLowerCase().split(/\s+/);
   if (words.length !== 12 && words.length !== 24) throw new Error("Need 12 or 24 words");
   const list = await loadWordlist();
   for (const w of words) {
@@ -77,7 +86,6 @@ export async function importMnemonic(phrase: string): Promise<string> {
   return words.join(" ");
 }
 
-/** BIP44 seed derivation: HMAC-SHA512 chain from the 32-byte ed25519 seed. */
 export async function bip44Seed(
   seed64: Uint8Array,
   coinType: number,
@@ -134,7 +142,6 @@ export async function bip44Seed(
   return hmac.slice(0, 32);
 }
 
-/** Derive Ed25519 JWK + address from a 32-byte seed. */
 export async function keysFromSeed32(seed32: Uint8Array) {
   const pkcs8 = ed25519Pkcs8(seed32);
   const priv = await crypto.subtle.importKey(

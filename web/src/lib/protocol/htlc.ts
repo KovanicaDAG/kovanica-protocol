@@ -61,33 +61,46 @@ export async function createHtlc(params: {
   };
 }
 
+/**
+ * Redeem requires the receiver's signing secret so the node can authorize the spend.
+ * Omitting it would either reject every request or allow any observer to redirect funds.
+ */
 export async function redeemHtlc(params: {
   outpointTx: string;
   outpointIndex: number;
   preimageHex: string;
-  receiverSecretHex?: string;
+  receiverSecretHex: string;
 }): Promise<HtlcRedeemResult> {
   const preimage = params.preimageHex.trim().toLowerCase();
+  const secret = params.receiverSecretHex.trim().toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(preimage)) {
     throw new Error("Preimage must be 64-char hex");
+  }
+  if (!/^[0-9a-f]{64}$/.test(secret)) {
+    throw new Error("Receiver secret (32-byte seed hex) is required to authorize redeem");
   }
   const res = (await apiPostJson("/api/htlc/redeem", {
     outpoint: { tx: params.outpointTx.trim(), index: params.outpointIndex },
     preimage_hex: preimage,
-    receiver_secret_hex: params.receiverSecretHex?.trim().toLowerCase() || undefined,
+    receiver_secret_hex: secret,
   })) as { tx_id_hex: string; preimage_hex: string };
 
   return { txIdHex: res.tx_id_hex, preimageHex: res.preimage_hex };
 }
 
+/** Refund requires the original sender's signing secret. */
 export async function refundHtlc(params: {
   outpointTx: string;
   outpointIndex: number;
-  senderSecretHex?: string;
+  senderSecretHex: string;
 }): Promise<HtlcRefundResult> {
+  const secret = params.senderSecretHex.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(secret)) {
+    throw new Error("Sender secret (32-byte seed hex) is required to authorize refund");
+  }
   const res = (await apiPostJson("/api/htlc/refund", {
     outpoint: { tx: params.outpointTx.trim(), index: params.outpointIndex },
-    sender_secret_hex: params.senderSecretHex?.trim().toLowerCase() || undefined,
+    sender_secret_hex: secret,
   })) as { tx_id_hex: string };
 
   return { txIdHex: res.tx_id_hex };
