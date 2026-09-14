@@ -19,11 +19,19 @@
 | Chain data (seed1) | `/root/kovanica-data` (`KOVANICA_DATA`) | **outside the git tree** so runtime writes never dirty it |
 | Soak logs | `/root/kovanica-data/soak/` | `testnet-measure.py`, 24h runs |
 
-Current network: genesis `596874eac2d08723b12fc3cac8f891493139200da4818594c6632b3fe4d0048f`
-(the 9a live-sync spike genesis; unchanged since that gate). The 2026-08-24
-runbook still listed `76cc019d…` — that hash is stale after the later reset.
-The pre-reset chain (genesis `27d5f750…`, 127 blocks) was lost on 2026-08-24 —
-its data dir was inside a directory that got deleted while the old process held it.
+Current network: genesis `9565fc20cb465eec0198a65c07da6b825e4211c4060d581a2c7dac6c96bafc97`
+(RFC-006 chain; verified against `GET /api/head` 2026-09-14). RFC-006
+parameters: genesis subsidy **10 KVNC**, era **2 000 000** blocks, per-era
+decay **×3/4** (geometric, total ≈80M), **MAX_SUPPLY 90.2M KVNC**, coinbase
+maturity **100 blocks**, fee split **75% burned / 25% producer**, treasury
+**10 × 1M KVNC** vault tranches in genesis (tranche k unlocks at
+`k × 31 536 000` blocks; placeholder keys are testnet-only and publicly
+derivable by design — production must pass a real secret seed via key
+ceremony). The pre-RFC-006 chain (genesis `596874eac2…`, subsidy 200 KVNC)
+was reset at RFC-006 activation; the 2026-08-24 runbook still listed
+`76cc019d…` — that hash is stale after the later reset. The pre-reset chain
+(genesis `27d5f750…`, 127 blocks) was lost on 2026-08-24 — its data dir was
+inside a directory that got deleted while the old process held it.
 
 ## 2. Deploy pipelines
 
@@ -101,6 +109,10 @@ verifies genesis match against seed1.
   rejects them and the whole file fails to load). 15 alerts + 9 recording rules.
 - `kovanica_peer_count` samples peers that answered the last sync round
   (`live_peers`), refreshed every ~5 s in the explorer idle tick.
+- ⚠️ The soak snapshots below (2026-08-24 → 09-03) are **pre-RFC-006**:
+  they describe the old chain (genesis `596874eac2…`, subsidy 200 KVNC/block,
+  premine 200 KVNC). The RFC-006 chain reset the genesis to `9565fc20…` and
+  the parameters above; re-baseline the soak numbers against the new chain.
 - **Baseline (2026-08-24 16:20 UTC):** height seed=448 / seed3=447,
   peer_count 2/2 both, mempool 0, orphans 0, blue_score≈height, no reorgs.
 - **Soak snapshot (2026-08-31 ~09:10 UTC)** — public explorer API
