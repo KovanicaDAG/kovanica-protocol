@@ -3364,14 +3364,18 @@ mod tests {
         app.mesh.pool("alpha", 1, ATOM, 2).unwrap();
         app.mesh.produce("alpha").unwrap();
         let n = app.mesh.node("alpha").unwrap();
+        let fee = n.min_fee();
         assert_eq!(
             n.balance(&kovanica_state::KeyPair::from_u64(2).address())
                 .unwrap(),
             ATOM.into()
         );
+        // RFC-006: the 100 maturity blocks minted 100 subsidies to the founder,
+        // the spend pays ATOM + fee from the premine, and the produced block
+        // mints one more subsidy plus the producer's fee share (fees/4).
         assert_eq!(
             n.balance(&founder).unwrap(),
-            u128::from(GENESIS_PREMINE - ATOM + GENESIS_SUBSIDY)
+            u128::from(GENESIS_PREMINE - ATOM + 101 * GENESIS_SUBSIDY - 3 * fee / 4)
         );
     }
 
@@ -3389,6 +3393,15 @@ mod tests {
         let from = KeyPair::from_u64(1);
         let to = KeyPair::from_u64(9);
         app.mesh.produce_empty("alpha").unwrap();
+        // Send the premine away so the founder's only UTXOs are subsidy
+        // coinbases — the 20T premine alone would cover a 1-subsidy transfer
+        // with a single input. (amount = premine - fee so the premine exactly
+        // covers amount + fee.)
+        let fee = app.mesh.node("alpha").unwrap().min_fee();
+        // Dump the premine to a third actor (seed 8) so `to` (seed 9) only
+        // receives the transfer under test.
+        app.mesh.pool("alpha", 1, GENESIS_PREMINE - fee, 8).unwrap();
+        app.mesh.produce("alpha").unwrap();
         let prepared = app
             .mesh
             .node("alpha")
@@ -3397,7 +3410,7 @@ mod tests {
             .unwrap();
         assert!(
             prepared.tx.inputs().len() >= 2,
-            "50 KVNC + fee needs two 50-KVNC coinbases"
+            "10 KVNC + fee needs two 10-KVNC coinbases"
         );
         let sig = from.sign(&prepared.sighash);
         app.mesh
@@ -3824,14 +3837,17 @@ mod tests {
         // Bond the founder's whole coin to the validator key on alpha.
         // The founder's genesis coinbase was matured above (100 empty blocks).
         let founder = KeyPair::from_u64(1);
+        // Bond the founder's largest UTXO (the 20T premine, creation_height 0
+        // and always mature) — `.first()` is outpoint-ordered and may pick a
+        // recently-mined subsidy coinbase that is still immature.
         let (coin, value) = app
             .mesh
             .node("alpha")
             .unwrap()
             .utxos_of(&founder.address())
             .unwrap()
-            .first()
-            .map(|(op, v)| (*op, *v))
+            .into_iter()
+            .max_by_key(|(_, v)| *v)
             .unwrap();
         let bond = Transaction::signed(
             &[(coin, &founder)],
@@ -3924,14 +3940,17 @@ mod tests {
             .unwrap()
             .set_validator_seed(validator_seed);
         let founder = KeyPair::from_u64(1);
+        // Bond the founder's largest UTXO (the 20T premine, creation_height 0
+        // and always mature) — `.first()` is outpoint-ordered and may pick a
+        // recently-mined subsidy coinbase that is still immature.
         let (coin, value) = app
             .mesh
             .node("alpha")
             .unwrap()
             .utxos_of(&founder.address())
             .unwrap()
-            .first()
-            .map(|(op, v)| (*op, *v))
+            .into_iter()
+            .max_by_key(|(_, v)| *v)
             .unwrap();
         let bond = Transaction::signed(
             &[(coin, &founder)],

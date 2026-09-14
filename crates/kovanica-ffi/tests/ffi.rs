@@ -362,7 +362,8 @@ fn garbage_light_sync_is_rejected_not_panicked_on() {
 #[test]
 fn history_over_ffi_matches_utxo_semantics() {
     let node = fresh();
-    mature(&node);
+    // Genesis coinbase is exempt from maturity (creation_height == 0), so it
+    // can be spent immediately without mining 100 blocks.
     node.send(1, 400, 2).unwrap();
 
     let founder_hex = kovanica_node::Node::address(1).to_hex();
@@ -472,7 +473,8 @@ fn bond_and_unbond_from_secret_spend_wallet_funds() {
 #[test]
 fn send_to_script_v2_and_stealth_over_ffi() {
     let node = fresh();
-    mature(&node);
+    // Genesis coinbase is exempt from maturity (creation_height == 0), so it
+    // can be spent immediately without mining 100 blocks.
 
     // The deterministic founder actor (seed 1) is funded by genesis (1000).
     // Its Ed25519 secret is the little-endian encoding of 1 padded to 32 bytes.

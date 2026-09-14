@@ -359,8 +359,11 @@ impl LightNode {
 
         // Source coin selection over UNFROZEN coins only (frozen value moves
         // exclusively through unbond transactions).
+        // Spendable coins only: `spendable_utxos_of` respects RFC-006
+        // coinbase maturity, so a freshly-mined subsidy coinbase is never
+        // chosen over an older (mature) funding coin.
         let candidates: Vec<(OutPoint, u64)> = node
-            .utxos_of(&addr)?
+            .spendable_utxos_of(&addr)?
             .into_iter()
             .filter(|(op, _)| !node.outpoint_is_frozen(op).unwrap_or(true))
             .collect();
@@ -462,8 +465,11 @@ impl LightNode {
             .map(|pk| *pk.as_bytes())
             .ok_or_else(|| invalid("call set_validator_seed before bonding"))?;
 
+        // Spendable coins only: `spendable_utxos_of` respects RFC-006
+        // coinbase maturity, so a freshly-mined subsidy coinbase is never
+        // chosen over an older (mature) funding coin.
         let candidates: Vec<(OutPoint, u64)> = node
-            .utxos_of(&addr)?
+            .spendable_utxos_of(&addr)?
             .into_iter()
             .filter(|(op, _)| !node.outpoint_is_frozen(op).unwrap_or(true))
             .collect();
