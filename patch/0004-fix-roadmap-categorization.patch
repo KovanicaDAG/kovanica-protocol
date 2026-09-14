@@ -1,0 +1,63 @@
+From 96310d18ea23ae04163656902a0dd1943c9c63a9 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sat, 12 Sep 2026 05:36:04 +0000
+Subject: [PATCH] fix(web): move Node HTTP asset_id (KVP-102) out of Next up
+ into Clients & surface
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Verified against the actual node source before moving anything:
+- /api/utxos, /api/history, and /api/prepare (the match-arm dispatch
+  around "prepare" => {...} in explorer.rs) all already emit/accept
+  asset_id — confirmed by reading the handler code directly, not by
+  trusting the status field.
+- Commit e942229 (PR #106, api/kvp-102-http-surface) says explicitly
+  in its own message: "Roadmap: mark Web KVP-102 UX and Node HTTP
+  asset_id as shipped." The done/SHIPPED status was intentional and
+  correct — the item was just left under the Next up heading when
+  its status flipped, instead of being moved up next to its sibling
+  entry (Web KVP-102 UX, which was already in Clients & surface).
+
+Moved it to sit directly below Web KVP-102 UX (same backend/frontend
+pair of the same KVP-102 delivery). Next up now correctly holds only
+the two items that are actually still next: token staking & mainnet
+readiness. Shipped/queued counts in the page header are unaffected
+since the item was already counted as done.
+---
+ web/src/components/roadmap/roadmap-view.tsx | 12 ++++++------
+ 1 file changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/web/src/components/roadmap/roadmap-view.tsx b/web/src/components/roadmap/roadmap-view.tsx
+index d33f81c..01c9e80 100644
+--- a/web/src/components/roadmap/roadmap-view.tsx
++++ b/web/src/components/roadmap/roadmap-view.tsx
+@@ -60,6 +60,12 @@ const SURFACE: Item[] = [
+     status: "done",
+     blurb: "AssetPicker + explorer badges; utxos/history/prepare expose asset_id + balances map.",
+   },
++  {
++    id: "asset-http",
++    title: "Node HTTP asset_id (KVP-102)",
++    status: "done",
++    blurb: "asset_id on /api/utxos, /api/history, /api/prepare; balances map + wire KVNC/hex helpers.",
++  },
+   {
+     id: "android-ios",
+     title: "Android APK + iOS IPA",
+@@ -81,12 +87,6 @@ const NEXT: Item[] = [
+     status: "next",
+     blurb: "Extend the stake registry to native-token assets (KVP-102) so bonds can be denominated in any issued token.",
+   },
+-  {
+-    id: "asset-http",
+-    title: "Node HTTP asset_id (KVP-102)",
+-    status: "done",
+-    blurb: "asset_id on /api/utxos, /api/history, /api/prepare; balances map + wire KVNC/hex helpers.",
+-  },
+   {
+     id: "mainnet",
+     title: "Mainnet readiness",
+-- 
+2.43.0
+

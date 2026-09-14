@@ -1,0 +1,111 @@
+From ce3d2f03826807846366cf9c961b30ed69b2d1d6 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Fri, 11 Sep 2026 22:30:35 +0000
+Subject: [PATCH] fix(web): mobile nav overlap, toast position, multisig tab
+ labels, pool overflow, explorer stat grid
+
+- Shell: root container was min-h-dvh (grows with content) instead of a
+  fixed viewport height, so the bottom-padding reserved for the mobile
+  nav never actually applied on document-scroll pages. Changed to
+  h-dvh overflow-hidden with the content wrapper as the real scroll
+  container (overflow-y-auto). Fixes bottom-nav covering content on
+  Home, Explorer, Docs, Pool, Roadmap, and the invisible world map on
+  the Map page (same root cause).
+- Toaster: top-center position collided with the sticky header on
+  Network page toasts; added offset/mobileOffset below the header.
+- Multisig tab switcher: labels were hidden below sm breakpoint,
+  leaving three unlabeled icons on mobile. Always show labels.
+- Pool: stratum URL overflowed its card on mobile (flex-1 child with
+  no min-w-0). Added min-w-0.
+- Explorer stat grid: lg:grid-cols-9 left a dangling row for 15 stat
+  items; corrected to grid-cols-5 (15 = 5x3, no remainder).
+
+Verified with tsc --noEmit and eslint on touched files; screenshot-
+checked all 9 routes at desktop and mobile viewports before and after.
+---
+ web/src/components/explorer/explorer-view.tsx | 2 +-
+ web/src/components/layout/shell.tsx           | 4 ++--
+ web/src/components/wallet/multisig-view.tsx   | 4 ++--
+ web/src/routes/__root.tsx                     | 2 ++
+ web/src/routes/pool.tsx                       | 2 +-
+ 5 files changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/web/src/components/explorer/explorer-view.tsx b/web/src/components/explorer/explorer-view.tsx
+index 9babf66..9723207 100644
+--- a/web/src/components/explorer/explorer-view.tsx
++++ b/web/src/components/explorer/explorer-view.tsx
+@@ -86,7 +86,7 @@ export function ExplorerView() {
+         </div>
+       </div>
+ 
+-      <dl className="grid grid-cols-3 border-b border-border bg-border md:grid-cols-6 lg:grid-cols-9">
++      <dl className="grid grid-cols-3 border-b border-border bg-border md:grid-cols-5 lg:grid-cols-5">
+         <Stat label="Blocks" value={String(n?.blocks ?? "—")} />
+         <Stat label="Tips" value={String(n?.tips.length ?? "—")} />
+         <Stat label="Blue score" value={String(n?.blue_score ?? "—")} />
+diff --git a/web/src/components/layout/shell.tsx b/web/src/components/layout/shell.tsx
+index d9801cf..2ca0527 100644
+--- a/web/src/components/layout/shell.tsx
++++ b/web/src/components/layout/shell.tsx
+@@ -20,7 +20,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
+   const roadmapOn = pathname === "/roadmap" || pathname.startsWith("/roadmap/");
+ 
+   return (
+-    <div className="flex min-h-dvh flex-col bg-bg text-fg">
++    <div className="flex h-dvh flex-col overflow-hidden bg-bg text-fg">
+       <header className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-bg/95 px-4 backdrop-blur-sm md:h-16 md:px-6">
+         <Link to="/" className="flex min-w-0 items-baseline gap-2">
+           <span className="font-display text-xl tracking-tight text-fg italic md:text-2xl">
+@@ -101,7 +101,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
+         </div>
+       </header>
+ 
+-      <div className="flex min-h-0 flex-1 flex-col pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-0">
++      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto pb-[calc(4.25rem+env(safe-area-inset-bottom))] md:pb-0">
+         {children}
+       </div>
+ 
+diff --git a/web/src/components/wallet/multisig-view.tsx b/web/src/components/wallet/multisig-view.tsx
+index e1ce184..c7f409a 100644
+--- a/web/src/components/wallet/multisig-view.tsx
++++ b/web/src/components/wallet/multisig-view.tsx
+@@ -68,8 +68,8 @@ export function MultisigView() {
+                 on ? "bg-surface-2 text-gold shadow-border" : "text-muted hover:text-fg",
+               )}
+             >
+-              <Icon className="size-4" />
+-              <span className="hidden sm:inline">{t.label}</span>
++              <Icon className="size-4 shrink-0" />
++              <span className="truncate">{t.label}</span>
+             </button>
+           );
+         })}
+diff --git a/web/src/routes/__root.tsx b/web/src/routes/__root.tsx
+index 6eb02a8..785ec8a 100644
+--- a/web/src/routes/__root.tsx
++++ b/web/src/routes/__root.tsx
+@@ -44,6 +44,8 @@ export const Route = createRootRoute({
+           <Toaster
+             theme="dark"
+             position="top-center"
++            offset={{ top: "4.5rem" }}
++            mobileOffset={{ top: "4rem" }}
+             toastOptions={{
+               className: "font-[family-name:var(--font-sans)]",
+             }}
+diff --git a/web/src/routes/pool.tsx b/web/src/routes/pool.tsx
+index 112b435..a8e26a7 100644
+--- a/web/src/routes/pool.tsx
++++ b/web/src/routes/pool.tsx
+@@ -52,7 +52,7 @@ function PoolPage() {
+             <h2 className="text-xl font-semibold text-fg">Connect your miner</h2>
+           </div>
+           <div className="rounded-md bg-surface-2 p-4 flex flex-col md:flex-row items-center gap-4">
+-            <code className="text-green-400 font-mono text-sm md:text-lg flex-1 overflow-x-auto">
++            <code className="text-green-400 font-mono text-sm md:text-lg flex-1 min-w-0 overflow-x-auto">
+               stratum+tcp://pool.kovanica.online:3333
+             </code>
+           </div>
+-- 
+2.43.0
+

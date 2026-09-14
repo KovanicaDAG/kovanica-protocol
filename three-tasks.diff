@@ -1,0 +1,180 @@
+diff --git a/TESTNET.md b/TESTNET.md
+index 061c2a8..f8bee65 100644
+--- a/TESTNET.md
++++ b/TESTNET.md
+@@ -41,6 +41,20 @@ peer address clones should dial. The seed dials its sibling seeds
+   (2026-08-24) — endpoint, rate-limit store, and `KOVANICA_TAP` are gone.
+ - Wallet `prepare` / `submit` stays open: you sign in the browser; the node never sees the seed.
+ 
++## Metrics
++
++RFC-006 supply is scraped as Prometheus gauges (updated on every accepted
++block, mined or received) alongside `GET /api/head`'s `subsidy` /
++`native_minted` / `total` / `circulating` / `burned` / `max_supply` fields:
++
++| Metric | Meaning |
++| --- | --- |
++| `kovanica_supply_total` | Total KVNC issued so far (atoms) |
++| `kovanica_supply_circulating` | Issued minus locked/immature (atoms) |
++| `kovanica_supply_burned` | Cumulative burned (atoms) |
++| `kovanica_supply_max` | RFC-006 hard cap (atoms) |
++| `kovanica_supply_subsidy` | Current block subsidy (atoms) |
++
+ ## Run
+ 
+ See [README.md](./README.md).
+diff --git a/crates/kovanica-node/src/explorer.rs b/crates/kovanica-node/src/explorer.rs
+index a3dfad6..6e0d381 100644
+--- a/crates/kovanica-node/src/explorer.rs
++++ b/crates/kovanica-node/src/explorer.rs
+@@ -14,8 +14,8 @@ use std::time::Duration;
+ 
+ use kovanica_dag::{Block, BlockId};
+ use kovanica_state::{
+-    decode_block_payload, encode_block_payload, Address, HybridConfig, OutPoint, Transaction, TxId,
+-    TxOutput,
++    decode_block_payload, encode_block_payload, Address, HybridConfig, OutPoint, SupplyMetrics,
++    Transaction, TxId, TxOutput,
+ };
+ 
+ use crate::dht::{NodeId, PeerContact, RoutingTable};
+@@ -1266,21 +1266,36 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()>
+     }
+     if method == "GET" && path == "/api/head" {
+         if let Some(n) = app.mesh.node(&app.selected) {
+-            let genesis = n
+-                .ledger()
+-                .ok()
++            let ledger = n.ledger().ok();
++            let genesis = ledger
++                .as_ref()
+                 .map(|l| l.genesis().to_string())
+                 .unwrap_or_default();
+             let tip = n.selected_tip().map(|t| t.to_string()).unwrap_or_default();
+             let blocks = n.block_count().unwrap_or(0);
++            let min_fee = n.min_fee();
++            let (subsidy, supply) = match &ledger {
++                Some(l) => {
++                    // height of tip ≈ blocks-1 (genesis is height 0)
++                    let height = blocks.saturating_sub(1);
++                    (l.subsidy_at(height), l.supply())
++                }
++                None => (0u64, SupplyMetrics::default()),
++            };
+             let body = format!(
+-                "{{\"network\":{},\"genesis\":{},\"tip\":{},\"blocks\":{},\"min_fee\":{},\"atom\":{}}}",
++                "{{\"network\":{},\"genesis\":{},\"tip\":{},\"blocks\":{},\"min_fee\":{},\"atom\":{},\"subsidy\":{},\"native_minted\":{},\"total\":{},\"circulating\":{},\"burned\":{},\"max_supply\":{}}}",
+                 jstr(network_profile().id),
+                 jstr(&genesis),
+                 jstr(&tip),
+                 blocks,
+-                n.min_fee(),
+-                ATOM
++                min_fee,
++                ATOM,
++                subsidy,
++                supply.total,
++                supply.total,
++                supply.circulating,
++                supply.burned,
++                supply.max_supply,
+             );
+             return respond(&mut stream, 200, "application/json", body.as_bytes());
+         }
+diff --git a/crates/kovanica-node/src/metrics.rs b/crates/kovanica-node/src/metrics.rs
+index d53a169..71f535d 100644
+--- a/crates/kovanica-node/src/metrics.rs
++++ b/crates/kovanica-node/src/metrics.rs
+@@ -155,6 +155,13 @@ pub mod names {
+     pub const BLOCK_VALIDATION_DURATION_SECONDS: &str =
+         "kovanica_block_validation_duration_seconds";
+     pub const BLOCK_REJECTED_TOTAL: &str = "kovanica_block_rejected_total";
++
++    // RFC-006 supply
++    pub const SUPPLY_TOTAL: &str = "kovanica_supply_total";
++    pub const SUPPLY_CIRCULATING: &str = "kovanica_supply_circulating";
++    pub const SUPPLY_BURNED: &str = "kovanica_supply_burned";
++    pub const SUPPLY_MAX: &str = "kovanica_supply_max";
++    pub const SUPPLY_SUBSIDY: &str = "kovanica_supply_subsidy";
+     pub const TX_VALIDATION_DURATION_SECONDS: &str = "kovanica_tx_validation_duration_seconds";
+     pub const TX_REJECTED_TOTAL: &str = "kovanica_tx_rejected_total";
+ }
+@@ -321,6 +328,18 @@ pub fn record_tx_validation(duration: Duration, rejected: bool) {
+     }
+ }
+ 
++/// Publish RFC-006 supply metrics ([`kovanica_state::SupplyMetrics`]) and the
++/// current block subsidy to Prometheus. Call on every accepted block (mined
++/// or observed) so `kovanica_supply_*` tracks the selected chain live,
++/// mirroring the same values already exposed over `GET /api/head`.
++pub fn set_supply_metrics(total: u64, circulating: u64, burned: u64, max_supply: u64, subsidy: u64) {
++    gauge!(names::SUPPLY_TOTAL).set(total as f64);
++    gauge!(names::SUPPLY_CIRCULATING).set(circulating as f64);
++    gauge!(names::SUPPLY_BURNED).set(burned as f64);
++    gauge!(names::SUPPLY_MAX).set(max_supply as f64);
++    gauge!(names::SUPPLY_SUBSIDY).set(subsidy as f64);
++}
++
+ /// A timer guard that records a histogram on drop.
+ pub struct TimerGuard {
+     name: &'static str,
+diff --git a/crates/kovanica-node/src/node.rs b/crates/kovanica-node/src/node.rs
+index ae003d4..3ba3970 100644
+--- a/crates/kovanica-node/src/node.rs
++++ b/crates/kovanica-node/src/node.rs
+@@ -26,7 +26,7 @@ use kovanica_state::{
+ use crate::mempool_v2::{MempoolConfig, MempoolV2};
+ use crate::metrics::{
+     record_block_observed, record_block_produced, record_mempool_evicted, record_mempool_promoted,
+-    set_mempool_counts,
++    set_mempool_counts, set_supply_metrics,
+ };
+ 
+ /// How far ahead of the local wall clock a received block's timestamp may sit
+@@ -2946,6 +2946,22 @@ impl Node {
+             self.mempool.len_orphans(),
+             self.mempool.total_bytes(),
+         );
++        // RFC-006 supply gauges, kept live on every accepted block (mined or
++        // received) alongside the height/blue-score gauges above. `score`
++        // (blue score) stands in for height here, matching this function's
++        // existing convention and the same approximation `GET /api/head`
++        // uses (`blocks.saturating_sub(1)`).
++        if let Some(l) = self.ledger.as_ref() {
++            let supply = l.supply();
++            let subsidy = l.subsidy_at(score);
++            set_supply_metrics(
++                supply.total,
++                supply.circulating,
++                supply.burned,
++                supply.max_supply,
++                subsidy,
++            );
++        }
+         self.pending.push(id);
+     }
+ 
+diff --git a/web/src/components/landing/home.tsx b/web/src/components/landing/home.tsx
+index a0c9311..c8c415f 100644
+--- a/web/src/components/landing/home.tsx
++++ b/web/src/components/landing/home.tsx
+@@ -1,5 +1,5 @@
+ import { Link } from "@tanstack/react-router";
+-import { Activity, Bot, Compass, Map, Route, Users, Wallet } from "lucide-react";
++import { Activity, Bot, Compass, Map, Pickaxe, Route, Users, Wallet } from "lucide-react";
+ import { Button } from "@/components/ui/button";
+ import { WalletDownloads } from "@/components/wallet/wallet-downloads";
+ import { LIVE_KOVI } from "@/lib/api/contract";
+@@ -78,6 +78,12 @@ export function HomeLanding() {
+           title="Network"
+           body="Live head, peers, PoW, subsidy, finality and bootstrap seeds for the selected source."
+         />
++        <ProductCard
++          to="/pool"
++          icon={Pickaxe}
++          title="Pool"
++          body="Stratum connection details, hashrate and shares for mining the testnet."
++        />
+         <ProductCard
+           to="/roadmap"
+           icon={Route}

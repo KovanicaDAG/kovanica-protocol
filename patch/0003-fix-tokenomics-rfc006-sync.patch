@@ -1,0 +1,191 @@
+From 9ebce4477ba6bac30eaf7b6cb9244cbf38a1cfd1 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sat, 12 Sep 2026 05:26:54 +0000
+Subject: [PATCH] fix(web): sync frontend tokenomics constants to RFC-006
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Frontend (contract.ts, types.ts, engine.ts) still implemented the
+pre-RFC-006 model: 200 KVNC subsidy, binary halving every 500,000
+blocks, no supply cap. The node and TESTNET-RFC006.md have shipped
+the real model for a while: 10 KVNC genesis subsidy, geometric decay
+(alpha=3/4) every 2,000,000 blocks, 90.2M KVNC hard cap. Docs page
+and generated /api/spec text were showing the stale numbers to users.
+
+- contract.ts: SUBSIDY 200->10 KVNC, added ERA_LENGTH (2M, replaces
+  HALVING_ERA as the canonical name; HALVING_ERA kept as a deprecated
+  alias so existing call sites don't need to change in this same
+  commit), added MAX_SUPPLY (90.2M) and DECAY_ALPHA_NUM/DEN (3/4).
+  Also fixed FOUNDER_AMOUNT: was 200 KVNC, should be 200,000 KVNC
+  (0.2M founder premine per RFC-006) — a separate, previously-missed
+  bug (3 zeros short), caught while auditing every constant against
+  the doc instead of just the one everyone was looking at.
+- types.ts: removed its own independent SUBSIDY/ATOM/K definitions
+  (a second, drifted source of truth) in favor of re-exporting the
+  same values from contract.ts, so the two can't diverge again.
+- engine.ts subsidyAt(): replaced `subsidy / 2^era` (binary halving)
+  with the actual RFC-006 geometric decay (`s = floor(s*3/4)` per
+  era, capped at 256 eras same as the node) — this was a different
+  formula, not just a wrong number.
+- spec.ts / docs.tsx: "Premine" was reading SUBSIDY (block reward)
+  instead of FOUNDER_AMOUNT + TREASURY_AMOUNT (actual premine) —
+  wrong field, independent of the value bug. Added Max supply as a
+  visible fact on both. Verified subsidyAt(0/2M/4M) against hand
+  calculation (10 / 7.5 / 5.625 KVNC) and confirmed generated
+  /api/spec text now matches TESTNET-RFC006.md verbatim.
+
+Scope note: ApiHead/ApiBootstrap types and the local mock node still
+don't expose native_minted/circulating/burned/max_supply fields from
+the live node's /api/head response — no UI currently reads them, so
+that's a separate follow-up, not folded into this fix.
+
+Verified with tsc --noEmit and eslint (0 errors/warnings on touched
+files).
+---
+ web/src/lib/api/contract.ts  | 15 ++++++++++++---
+ web/src/lib/api/spec.ts      | 10 +++++++---
+ web/src/lib/ledger/engine.ts | 14 ++++++++++----
+ web/src/lib/ledger/types.ts  |  7 +++----
+ web/src/routes/docs.tsx      |  6 ++++--
+ 5 files changed, 36 insertions(+), 16 deletions(-)
+
+diff --git a/web/src/lib/api/contract.ts b/web/src/lib/api/contract.ts
+index 61ed7a3..b05696a 100644
+--- a/web/src/lib/api/contract.ts
++++ b/web/src/lib/api/contract.ts
+@@ -16,10 +16,19 @@ export const NETWORK_PROXIES: Record<PublicSource, string> = {
+ export const TOKEN = "KVNC";
+ export const ATOM = 100_000_000;
+ export const DECIMALS = 8;
+-export const SUBSIDY = 200 * ATOM;
+-export const FOUNDER_AMOUNT = 200 * ATOM;
++// RFC-006: genesis subsidy 10 KVNC/block, geometric decay (alpha = 3/4) every
++// ERA_LENGTH blocks, capped growth via MAX_SUPPLY. Mirrors node's subsidy_at().
++export const SUBSIDY = 10 * ATOM;
++export const DECAY_ALPHA_NUM = 3;
++export const DECAY_ALPHA_DEN = 4;
++export const ERA_LENGTH = 2_000_000;
++/** @deprecated use ERA_LENGTH (kept for any remaining external references) */
++export const HALVING_ERA = ERA_LENGTH;
++export const MAX_SUPPLY = 90_200_000 * ATOM;
++// RFC-006 premine: 0.2M KVNC founder + 10M KVNC treasury vaults.
++export const FOUNDER_AMOUNT = 200_000 * ATOM;
+ export const FOUNDER_SEED = 1;
+-export const HALVING_ERA = 500_000;
++export const TREASURY_AMOUNT = 10_000_000 * ATOM;
+ // Mirrors the node: min_fee = max(subsidy / 500_000, 1) atoms.
+ export const MIN_FEE = Math.max(Math.floor(SUBSIDY / 500_000), 1);
+ export const K = 3;
+diff --git a/web/src/lib/api/spec.ts b/web/src/lib/api/spec.ts
+index 3bd3a3e..dab5990 100644
+--- a/web/src/lib/api/spec.ts
++++ b/web/src/lib/api/spec.ts
+@@ -1,15 +1,18 @@
+ import {
+   ATOM,
+-  HALVING_ERA,
++  ERA_LENGTH,
++  FOUNDER_AMOUNT,
+   K,
+   LIVE_EXPLORER,
+   LIVE_MAP,
+   LIVE_SITE,
+   LIVE_WALLET,
++  MAX_SUPPLY,
+   MIN_FEE,
+   NETWORK_ID,
+   SUBSIDY,
+   TOKEN,
++  TREASURY_AMOUNT,
+ } from "./contract";
+ 
+ export const SPEC_TEXT = `# ${NETWORK_ID}
+@@ -24,8 +27,9 @@ Engine is the Rust node; this app speaks the same HTTP contract.
+ | Map | ${LIVE_MAP} |
+ | Site | ${LIVE_SITE} |
+ | Network | \`${NETWORK_ID}\` |
+-| Premine | ${SUBSIDY / ATOM} KVNC (founder / treasury) |
+-| Subsidy cap | ${SUBSIDY / ATOM} KVNC / block, halves every ${HALVING_ERA} blocks |
++| Premine | ${FOUNDER_AMOUNT / ATOM} KVNC (founder) + ${TREASURY_AMOUNT / ATOM} KVNC (treasury vaults) |
++| Subsidy | ${SUBSIDY / ATOM} KVNC / block at genesis, geometric decay (alpha=3/4) every ${ERA_LENGTH} blocks |
++| Max supply | ${MAX_SUPPLY / ATOM} KVNC hard cap |
+ | Min fee | ${MIN_FEE} atoms (${MIN_FEE / ATOM} KVNC) — burned |
+ | k | ${K} (GHOSTDAG) |
+ | Atom | 1 KVNC = 10^8 atoms |
+diff --git a/web/src/lib/ledger/engine.ts b/web/src/lib/ledger/engine.ts
+index e655991..d3cd9e3 100644
+--- a/web/src/lib/ledger/engine.ts
++++ b/web/src/lib/ledger/engine.ts
+@@ -1,6 +1,6 @@
+ import { hashHex } from "./hash";
+-import { HALVING_ERA } from "../api/contract";
+-import { ATOM, K, SUBSIDY, type Block, type Colour, type Tx } from "./types";
++import { DECAY_ALPHA_DEN, DECAY_ALPHA_NUM, ERA_LENGTH } from "../api/contract";
++import { K, SUBSIDY, type Block, type Colour, type Tx } from "./types";
+ 
+ const TREASURY = "cecc1507dc1ddd7295951c290888f095adb9044d1b73d696e6df065d683bd4fc";
+ 
+@@ -147,9 +147,15 @@ function heaviest(blocks: Block[], ids: string[]): string {
+   return selectedTip(candidates);
+ }
+ 
++// RFC-006: geometric decay, subsidy *= (3/4) per ERA_LENGTH-block era.
++// Capped at 256 eras (mirrors the node) so the loop can't run unbounded.
+ export function subsidyAt(height: number): number {
+-  const era = Math.floor(height / HALVING_ERA);
+-  return Math.max(ATOM, SUBSIDY / 2 ** era);
++  const era = Math.min(Math.floor(height / ERA_LENGTH), 256);
++  let s = SUBSIDY;
++  for (let i = 0; i < era; i++) {
++    s = Math.floor((s * DECAY_ALPHA_NUM) / DECAY_ALPHA_DEN);
++  }
++  return Math.max(0, s);
+ }
+ 
+ export function supplyOf(blocks: Block[]): number {
+diff --git a/web/src/lib/ledger/types.ts b/web/src/lib/ledger/types.ts
+index ae9d12f..690ee55 100644
+--- a/web/src/lib/ledger/types.ts
++++ b/web/src/lib/ledger/types.ts
+@@ -72,8 +72,7 @@ export type HistoryRow = {
+   kind: "faucet" | "send" | "coinbase";
+ };
+ 
+-export const ATOM = 100_000_000;
+-export const DECIMALS = 8;
+-export const SUBSIDY = 200 * ATOM;
++import { ATOM, K, SUBSIDY } from "../api/contract";
++
+ export const NETWORK = "kovanica-testnet";
+-export const K = 3;
++export { ATOM, K, SUBSIDY };
+diff --git a/web/src/routes/docs.tsx b/web/src/routes/docs.tsx
+index d9dac6c..788ab5b 100644
+--- a/web/src/routes/docs.tsx
++++ b/web/src/routes/docs.tsx
+@@ -5,9 +5,10 @@ import { SourceSwitch } from "@/components/layout/source-switch";
+ import { api } from "@/lib/api/client";
+ import {
+   ATOM,
+-  HALVING_ERA,
++  ERA_LENGTH,
+   K,
+   LIVE_EXPLORER,
++  MAX_SUPPLY,
+   MIN_FEE,
+   NETWORK_ID,
+   SUBSIDY,
+@@ -90,7 +91,8 @@ function DocsBody() {
+         <dl className="mt-3 grid grid-cols-2 gap-3 text-sm md:grid-cols-3">
+           <Fact k="Token" v="KVNC · 8 decimals" />
+           <Fact k="Atom" v={`${ATOM.toLocaleString()} / KVNC`} />
+-          <Fact k="Subsidy" v={`${SUBSIDY / ATOM} KVNC, half / ${HALVING_ERA}`} />
++          <Fact k="Subsidy" v={`${SUBSIDY / ATOM} KVNC/block, ×3/4 every ${ERA_LENGTH.toLocaleString()} blocks`} />
++          <Fact k="Max supply" v={`${(MAX_SUPPLY / ATOM).toLocaleString()} KVNC hard cap`} />
+           <Fact k="Min fee" v={`${MIN_FEE} atoms (burned)`} />
+           <Fact k="GHOSTDAG k" v={String(K)} />
+           <Fact k="P2P" v="TCP :9000 · seed.kovanica.online:9000" />
+-- 
+2.43.0
+

@@ -1,0 +1,43 @@
+[1mdiff --git a/crates/kovanica-node/src/explorer.rs b/crates/kovanica-node/src/explorer.rs[m
+[1mindex 960fc5d..d9c1116 100644[m
+[1m--- a/crates/kovanica-node/src/explorer.rs[m
+[1m+++ b/crates/kovanica-node/src/explorer.rs[m
+[36m@@ -22,7 +22,7 @@[m [muse crate::dht::{NodeId, PeerContact, RoutingTable};[m
+ use crate::dns_seed::{DnsSeedConfig, DnsSeedResolver};[m
+ use crate::metrics::{[m
+     init_metrics, record_explorer_http_request, render_prometheus, set_explorer_ws_clients,[m
+[31m-    set_peer_count,[m
+[32m+[m[32m    set_peer_count, set_supply_metrics,[m
+ };[m
+ use crate::net::{[m
+     decode_records, encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first,[m
+[36m@@ -187,6 +187,18 @@[m [mpub fn serve(addr: impl ToSocketAddrs) -> std::io::Result<()> {[m
+                 // metrics listener serves fresh values between scrapes.[m
+                 if app.ticks % 125 == 0 {[m
+                     set_peer_count(app.live_peers.len());[m
+[32m+[m[32m                    if let Some(n) = app.mesh.node(&app.selected) {[m
+[32m+[m[32m                        if let Ok(ledger) = n.ledger() {[m
+[32m+[m[32m                            let s = ledger.supply();[m
+[32m+[m[32m                            set_supply_metrics([m
+[32m+[m[32m                                s.total,[m
+[32m+[m[32m                                s.circulating,[m
+[32m+[m[32m                                s.burned,[m
+[32m+[m[32m                                s.max_supply,[m
+[32m+[m[32m                                ledger.subsidy(),[m
+[32m+[m[32m                            );[m
+[32m+[m[32m                        }[m
+[32m+[m[32m                    }[m
+                 }[m
+                 app.ws_broadcast_state();[m
+                 thread::sleep(Duration::from_millis(40));[m
+[36m@@ -1277,8 +1289,8 @@[m [mpub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()>[m
+             let (subsidy, supply) = match &ledger {[m
+                 Some(l) => {[m
+                     // height of tip ≈ blocks-1 (genesis is height 0)[m
+[31m-                    let height = blocks.saturating_sub(1);[m
+[31m-                    (l.subsidy_at(height), l.supply())[m
+[32m+[m[32m                    let _height = blocks.saturating_sub(1);[m
+[32m+[m[32m                    (l.subsidy(), l.supply())[m
+                 }[m
+                 None => (0u64, SupplyMetrics::default()),[m
+             };[m
