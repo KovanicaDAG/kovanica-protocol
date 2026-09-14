@@ -1,5 +1,11 @@
 import { useApiSource, setApiSource } from "@/lib/api/client";
 
+/**
+ * Network switcher in the header.
+ * Mainnet button is now labelled "Mainnet" (no "· soon").
+ * It remains selectable; when mainnet proxy is empty the app shows a clear
+ * "mainnet not open yet" state via the existing client / dispatch path.
+ */
 export function SourceSwitch({ compact = false }: { compact?: boolean }) {
   const source = useApiSource();
   const active = source === "mainnet" ? "Mainnet" : "Testnet";
@@ -23,19 +29,28 @@ export function SourceSwitch({ compact = false }: { compact?: boolean }) {
     >
       <button
         type="button"
-        aria-pressed="true"
+        aria-pressed={source === "testnet"}
         onClick={() => setApiSource("testnet")}
-        className="h-8 cursor-pointer rounded-sm bg-bg px-2.5 font-mono text-[10px] tracking-wide text-fg uppercase transition-colors duration-150"
+        className={
+          source === "testnet"
+            ? "h-8 cursor-pointer rounded-sm bg-bg px-2.5 font-mono text-[10px] tracking-wide text-fg uppercase transition-colors duration-150"
+            : "h-8 cursor-pointer rounded-sm px-2.5 font-mono text-[10px] tracking-wide text-muted uppercase transition-colors duration-150 hover:text-fg"
+        }
       >
         Testnet
       </button>
       <button
         type="button"
-        disabled
-        title="Launching soon"
-        className="h-8 cursor-default px-2.5 font-mono text-[10px] tracking-wide text-muted uppercase"
+        aria-pressed={source === "mainnet"}
+        onClick={() => setApiSource("mainnet")}
+        title="Mainnet"
+        className={
+          source === "mainnet"
+            ? "h-8 cursor-pointer rounded-sm bg-bg px-2.5 font-mono text-[10px] tracking-wide text-fg uppercase transition-colors duration-150"
+            : "h-8 cursor-pointer rounded-sm px-2.5 font-mono text-[10px] tracking-wide text-muted uppercase transition-colors duration-150 hover:text-fg"
+        }
       >
-        Mainnet · soon
+        Mainnet
       </button>
     </div>
   );
