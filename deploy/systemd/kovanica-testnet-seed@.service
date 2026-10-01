@@ -1,0 +1,31 @@
+[Unit]
+Description=Kovanica testnet validator (seed%i)
+Documentation=https://github.com/KovanicaDAG/kovanica-protocol
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root
+
+# Non-secret network configuration. Install to /etc/kovanica/ at mode 0600.
+EnvironmentFile=/etc/kovanica/testnet-seed%i.env
+
+# Public authority set. Identical on every node; they must all agree.
+# Contains only 64-hex public keys and the threshold — never a secret.
+EnvironmentFile=/etc/kovanica/testnet-authorities.conf
+
+# This seed's signing key. Mode 0600, never committed, never inlined here.
+EnvironmentFile=/etc/kovanica/testnet-authority-%i.env
+
+# The HTTP address is a CLI argument, not an env var. Loopback only.
+ExecStart=/usr/local/bin/kovanica-node explorer 127.0.0.1:3001
+
+Restart=always
+RestartSec=30
+LimitNOFILE=65536
+MemoryMax=6G
+
+[Install]
+WantedBy=multi-user.target
