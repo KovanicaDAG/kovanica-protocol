@@ -187,6 +187,85 @@ else
   bad "testnet and mainnet both bind P2P port $tn_p — they cannot run on the same host"
 fi
 
+# Same collision class, one layer down: metrics. Each host runs BOTH networks,
+# and a metrics bind failure is NON-FATAL (metrics.rs logs to stderr and the
+# node keeps running), so sharing a port silently leaves one network
+# unscrapeable while every health check still reports the node as up.
+tn_m="$(grep -h '^[[:space:]]*KOVANICA_METRICS_LISTEN=' "$REPO_ROOT"/deploy/testnet/configs/seed*.env | head -1 | cut -d= -f2- | tr -d ' \t\r')"
+mn_m="$(grep -h '^[[:space:]]*KOVANICA_METRICS_LISTEN=' "$REPO_ROOT"/deploy/mainnet/configs/seed*.env | head -1 | cut -d= -f2- | tr -d ' \t\r')"
+if [[ -n "$tn_m" && -n "$mn_m" && "$tn_m" == "$mn_m" ]]; then
+  bad "testnet and mainnet both bind metrics $tn_m — one network silently loses its metrics"
+else
+  ok "metrics ports distinct per network (testnet $tn_m, mainnet $mn_m)"
+fi
+
+# Metrics must never be world-reachable, same rule as the explorer port.
+for f in "$REPO_ROOT"/deploy/*/configs/seed*.env; do
+  m="$(grep -E '^[[:space:]]*KOVANICA_METRICS_LISTEN=' "$f" | head -1 | cut -d= -f2- | tr -d ' \t\r')"
+  case "$m" in
+    off|none|0|"") continue ;;
+    127.0.0.1:*|localhost:*) ;;
+    *) bad "${f#"$REPO_ROOT"/}: KOVANICA_METRICS_LISTEN=$m — must be loopback, `off`, or empty" ;;
+  esac
+done
+
+# Each unit's writable-path grant must actually match the KOVANICA_DATA its
+# config sets. ProtectSystem=strict + a mismatched ReadWritePaths makes the
+# ledger read-only and the node cannot open it -- and that failure looks like
+# a corrupt chain, not a permissions bug.
+for net in testnet mainnet; do
+  unit="$REPO_ROOT/deploy/systemd/kovanica-${net}-seed@.service"
+  rwp="$(grep -E '^[[:space:]]*ReadWritePaths=' "$unit" | head -1 | cut -d= -f2- | tr -d ' \t\r')"
+  if [[ -z "$rwp" ]]; then
+    bad "${unit#"$REPO_ROOT"/}: no ReadWritePaths — ProtectSystem=strict would make the data dir read-only"
+    continue
+  fi
+  for f in "$REPO_ROOT"/deploy/$net/configs/seed*.env; do
+    data="$(grep -E '^[[:space:]]*KOVANICA_DATA=' "$f" | head -1 | cut -d= -f2- | tr -d ' \t\r')"
+    # Expand the unit's %i using the seed index taken from the filename.
+    idx="$(basename "$f" .env | sed -E 's/^seed//')"
+    resolved="${rwp//%i/$idx}"
+    if [[ "$resolved" == "$data" ]]; then
+      ok "${unit#"$REPO_ROOT"/}: ReadWritePaths resolves to ${f#"$REPO_ROOT"/} data dir"
+    else
+      bad "${unit#"$REPO_ROOT"/}: ReadWritePaths expands to $resolved but ${f#"$REPO_ROOT"/} sets KOVANICA_DATA=$data"
+    fi
+  done
+done
+
+# Memory ceiling must be enforceable: both networks run per host, so the two
+# instances share one machine. Two ceilings larger than the smallest seed's RAM
+# caps nothing and just lets the OOM killer take out both nodes and the host.
+mem_max_total_kb=0
+for unit in "$REPO_ROOT"/deploy/systemd/*seed@.service; do
+  mm="$(grep -E '^[[:space:]]*MemoryMax=' "$unit" | head -1 | cut -d= -f2- | tr -d ' \t\r')"
+  case "$mm" in
+    *G) kb=$(( ${mm%G} * 1024 * 1024 )) ;;
+    *M) kb=$(( ${mm%M} * 1024 )) ;;
+    "")  bad "${unit#"$REPO_ROOT"/}: no MemoryMax — a runaway node can OOM its host"; continue ;;
+    *)   continue ;; # bytes/infinity: not comparable here
+  esac
+  ok "${unit#"$REPO_ROOT"/}: MemoryMax=$mm"
+  mem_max_total_kb=$(( mem_max_total_kb + kb ))
+done
+if (( mem_max_total_kb > 0 )); then
+  SMALLEST_SEED_MB=7808   # seed2/seed3 measured ~7940MB total, minus OS headroom
+  if (( mem_max_total_kb / 1024 > SMALLEST_SEED_MB )); then
+    bad "MemoryMax across both units totals $(( mem_max_total_kb / 1024 ))MB against ${SMALLEST_SEED_MB}MB on the smallest seed — unenforceable"
+  else
+    ok "MemoryMax totals $(( mem_max_total_kb / 1024 ))MB, within the ${SMALLEST_SEED_MB}MB smallest seed"
+  fi
+fi
+
+# A network-facing process holding root with no sandbox is a blast radius
+# problem, not a style one. Require the core set rather than any one directive.
+for unit in "$REPO_ROOT"/deploy/systemd/*seed@.service; do
+  for d in NoNewPrivileges ProtectSystem ProtectHome PrivateTmp; do
+    grep -qE "^[[:space:]]*${d}=(yes|strict|true)" "$unit" \
+      || bad "${unit#"$REPO_ROOT"/}: missing hardening ${d}=yes"
+  done
+done
+
 # Data dirs must be distinct, or a reset on one wipes the other.
 dirs="$(grep -h '^[[:space:]]*KOVANICA_DATA=' "$REPO_ROOT"/deploy/*/configs/seed*.env | cut -d= -f2- | tr -d ' \t\r' | sort | uniq -d)"
 [[ -n "$dirs" ]] && bad "duplicate KOVANICA_DATA across seeds: $dirs" || ok "every seed has its own data directory"

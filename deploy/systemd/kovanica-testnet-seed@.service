@@ -25,7 +25,40 @@ ExecStart=/usr/local/bin/kovanica-node explorer 127.0.0.1:3001
 Restart=always
 RestartSec=30
 LimitNOFILE=65536
-MemoryMax=6G
+
+# Memory ceiling sized for the SMALLEST seed host (seed2/seed3: ~7.8 GB total)
+# running BOTH networks, so two instances of this unit share one machine.
+# The previous 6G was unenforceable: 2 x 6G = 12G against 7.8G of RAM, which
+# caps nothing and just lets the OOM killer take out both nodes and the OS.
+# 3G per instance leaves headroom for two plus the rest of the host.
+MemoryMax=3G
+MemoryAccounting=yes
+
+# --- sandboxing ------------------------------------------------------------
+# The node needs: its chain data dir, and read access to the binary and config.
+# It does NOT need to write /usr, /etc, /bin, or the user's home. Networking is
+# required (P2P + loopback explorer + metrics), so AF_INET/AF_INET6 stay.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+# %i is the seed index (1/2/3), so this resolves to
+# /var/lib/kovanica-testnet-seed{1,2,3} — the exact KOVANICA_DATA in the
+# matching deploy/testnet/configs/seed%i.env. It must stay network-prefixed:
+# a bare /var/lib/kovanica-%i would point at /var/lib/kovanica-1, which is
+# not the data dir, and ProtectSystem=strict would then make the dir
+# read-only and the node would fail to open its ledger.
+ReadWritePaths=/var/lib/kovanica-testnet-seed%i
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target
