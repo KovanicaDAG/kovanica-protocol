@@ -19,7 +19,26 @@ reinstall:
 
 Both VPSs were reimaged, so their SSH host keys were regenerated and their
 root passwords from the previous image no longer authenticate. Deploy keys
-must be re-installed before remote work on either host.
+were re-installed afterwards.
+
+### Credential mapping
+
+The reinstall crossed the credentials over. Verified by logging in to each
+host on 2026-10-01:
+
+| Host | Hostname | Password that works | Local identity |
+|---|---|---|---|
+| seed2 `76.13.250.65` | `srv1991525` | the *seed3* password | `id_rsa` |
+| seed3 `187.7.27.139` | `srv2013143` | the *seed2* password | `id_rsa` |
+
+Pair the password with the **hostname**, not the IP. Password auth is
+succeeding only because of this swap; assuming IP-to-password alignment will
+fail with `Permission denied`.
+
+`authorized_keys` on both hosts was reduced to four entries. The vault sync
+key (`kovanica-vault-sync`), the GitHub bot key and the AWS seed3 key were
+removed — they are not needed on a public-facing seed and should not be
+reachable from one.
 
 ## 2) Ports
 
