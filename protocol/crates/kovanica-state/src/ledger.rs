@@ -1704,7 +1704,10 @@ impl core::fmt::Display for LedgerInsertError {
             LedgerInsertError::Dag(e) => write!(f, "dag rejected block: {e}"),
             LedgerInsertError::State(e) => write!(f, "invalid block state: {e}"),
             LedgerInsertError::Payload(e) => write!(f, "block payload undecodable: {e}"),
-            LedgerInsertError::Finality { parent_score, finality_score } => {
+            LedgerInsertError::Finality {
+                parent_score,
+                finality_score,
+            } => {
                 write!(
                     f,
                     "finality violation: selected parent blue score {parent_score} < finality {finality_score}"
@@ -2620,7 +2623,7 @@ impl Ledger {
         // reconstruction succeeds.
         let mut state = self
             .reconstruct_state(&sp)
-            .ok_or_else(|| LedgerInsertError::MissingParentDelta)?;
+            .ok_or(LedgerInsertError::MissingParentDelta)?;
         let state_pre = state.clone();
         // RFC-006: the cumulative native minted in this block's view. Starts at
         // the selected parent's cumulative total (block_minted is cumulative),
