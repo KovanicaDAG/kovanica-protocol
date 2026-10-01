@@ -8,8 +8,18 @@ time. Consensus is PoA-only on both.
 | Seed | Host / IP | OS | RAM |
 |---|---|---|---|
 | seed1 | 145.223.116.178 | Ubuntu 24.04 | 16GB |
-| seed2 | 76.13.250.65 | Fedora | 8GB |
-| seed3 | 187.7.27.139 | Ubuntu | 8GB |
+| seed2 | 76.13.250.65 | Ubuntu 24.04 | 8GB |
+| seed3 | 187.7.27.139 | Debian 13 | 8GB |
+
+OS versions read from each host's SSH banner on 2026-10-01, after the
+reinstall:
+
+- seed2 → `SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13.19` (Ubuntu 24.04 noble)
+- seed3 → `SSH-2.0-OpenSSH_10.0p2 Debian-7+deb13u4` (Debian 13 trixie)
+
+Both VPSs were reimaged, so their SSH host keys were regenerated and their
+root passwords from the previous image no longer authenticate. Deploy keys
+must be re-installed before remote work on either host.
 
 ## 2) Ports
 
