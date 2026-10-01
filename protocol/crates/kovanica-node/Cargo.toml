@@ -1,0 +1,51 @@
+[package]
+name = "kovanica-node"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Runnable node for the Kovanica Protocol: a line RPC over an in-memory Ledger with snapshot persistence."
+
+[dependencies]
+kovanica-dag = { path = "../kovanica-dag" }
+kovanica-state = { path = "../kovanica-state" }
+kovanica-types = { path = "../../../sdk/crates/kovanica-types" }
+# Genesis keys come from the shared wallet crate, not from the CLI. Depending on
+# the CLI here used to drag ratatui/crossterm/tokio into the node for a single
+# `Wallet` type.
+kovanica-wallet = { path = "../kovanica-wallet" }
+hex.workspace = true
+blake3.workspace = true
+socket2.workspace = true
+base64.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bincode.workspace = true
+rand.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+arbitrary.workspace = true
+proptest.workspace = true
+ed25519-dalek.workspace = true
+getrandom.workspace = true
+
+[dev-dependencies]
+libfuzzer-sys.workspace = true
+criterion.workspace = true
+
+[[bench]]
+name = "node_hot_paths"
+harness = false
+
+[features]
+# Enabled by `cargo fuzz` (via --cfg fuzzing builds) and for fuzz-target compilation.
+fuzzing = []
+
+[lints.rust]
+unsafe_code = "forbid"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }

@@ -1,0 +1,28 @@
+android/.gradle/
+android/build/
+android/*/build/
+android/local.properties
+android/.idea/
+android/*.iml
+android/captures/
+android/.cxx/
+android/.kotlin/
+ios/build/
+ios/DerivedData/
+ios/Pods/
+
+# JS/Tauri consoles (console/kovanica, console/enterprise, console/shared):
+# installed dependencies and Vite build output are never committed. Keep this
+# unanchored so a newly added console inherits the rules without an edit here.
+# `node_modules` has no trailing slash because console/shared/node_modules is a
+# symlink, and the slash form would not match it.
+node_modules
+dist/
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log

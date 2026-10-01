@@ -1,0 +1,67 @@
+# Why a custom config instead of gitleaks' default rules
+# ---------------------------------------------------
+# Measured against this repo on 2026-09-26, the stock config reported
+# **9 findings, none of them real**, and **missed the actual incident**: three
+# PoA authority signing secrets sitting in tracked files
+# (`protocol/TESTNET_AUTHORITY_KEYS.md`, `protocol/docs/TESTNET_AUTHORITY_KEYS.md`,
+# `protocol/docs/TESTNET_RESET_PROCEDURE.md` and two vault-mirror copies).
+#
+# Every stock finding was `generic-api-key` firing on 64-hex strings inside
+# ordinary Ed25519 prose (`SPEC-INDEX.md`, `MASTER-ROADMAP.md`) and on
+# `web/site/src/lib/auth/preview.ts`. So the defaults are simultaneously too
+# noisy to read and too blind for this codebase's actual secret shape.
+#
+# A gate that reports nine false positives a run and misses the real leak is
+# worse than no gate: it teaches everyone to ignore it. This config targets
+# the shapes that are unambiguously secret here.
+#
+# TO MAKE A FINDING BLOCKING: delete `continue-on-error` from both jobs in
+# `.github/workflows/secret-scan.yml`. Do not silence findings with a
+# `.gitleaksignore` — that is how the next secret gets committed.
+
+title = "Kovanica secret scan — targeted at real credential shapes"
+
+[extend]
+# Inherit gitleaks' high-confidence provider keys (AWS, GitHub, Stripe, …)
+# so a real third-party credential is still caught. This replaces only the
+# generic/entropy heuristics, which are what misfired.
+useDefault = true
+extendSkip = ""
+
+[[rules]]
+id = "kovanica-authority-signing-key"
+description = "A PoA authority Ed25519 signing secret pasted into a file. These must live only in mode-0600 files on the operator's own host, never in a repo."
+regex = '''(?i)KOVANICA_AUTHORITY_KEY\s*=\s*["']?[0-9a-f]{64}["']?'''
+keywords = ["kovanica_authority_key"]
+
+[[rules]]
+id = "kovanica-authority-key-assignment"
+description = "An authority key under any spelling, including shell-style and YAML forms. Catches `AUTHORITY_KEY=<hex>` in a systemd unit committed to git."
+regex = '''(?i)\bAUTHORITY_KEY\s*[=:]\s*["']?[0-9a-f]{64}["']?'''
+keywords = ["authority_key"]
+
+[[rules]]
+id = "kovanica-bip39-mnemonic"
+description = "A BIP-39 mnemonic seed phrase. Kovanica wallets are BIP-39; a phrase in a repo is a total loss of every derived key."
+regex = '''(?i)\b(mnemonic|seed[ _-]?phrase)\b\s*[:=]\s*["']?[a-z]+(\s+[a-z]+){11,23}["']?'''
+keywords = ["mnemonic", "seed phrase"]
+
+[[rules]]
+id = "kovanica-wallet-private-key"
+description = "A wallet secret exported to a variable or file — `KOVANICA_*_KEY`, `*_MNEMONIC`, `*_PRIVKEY`, or a bare 64-hex assignment to a key-ish name."
+regex = '''(?i)\b(KOVANICA_[A-Z_]*(MNEMONIC|PRIV[A-Z_]*KEY|SECRET)|[A-Z_]*(MNEMONIC|PRIVKEY|PRIVATE_KEY))\s*[:=]\s*["']?[0-9a-f]{64}["']?'''
+keywords = ["mnemonic", "privkey", "private_key"]
+
+# --- Override, not delete, the noisy default ---------------------------------
+# gitleaks' `generic-api-key` is an entropy heuristic: it fired on 8 ordinary
+# Ed25519 prose lines in SPEC-INDEX.md / MASTER-ROADMAP.md ("keys, <hex>",
+# "key handling, <hex>") while ALSO being the rule that caught a real hardcoded
+# `PREVIEW_CLIENT_SECRET` in web/site/src/lib/auth/preview.ts. Rather than
+# allowlist those 8 paths — a path-wide allowlist is exactly what hides the next
+# secret — the rule is re-declared here under the same id with a stricter,
+# assignment-shaped regex. Prose stops matching; real assignments still do.
+[[rules]]
+id = "generic-api-key"
+description = "A credential assigned to a name, rather than any high-entropy string in prose."
+regex = '''(?i)\b[A-Z0-9_]*(?:CLIENT_?SECRET|API_?KEY|ACCESS_?TOKEN|AUTH_?TOKEN|SECRET_?KEY|PRIVATE_?KEY|PRIVKEY)[A-Z0-9_]*\s*[:=]\s*["'][^"'\s]{16,}["']'''
+keywords = ["secret", "apikey", "api_key", "token", "privatekey", "private_key"]

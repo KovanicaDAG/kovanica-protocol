@@ -1,0 +1,18 @@
+[package]
+name = "kovanica-node-bin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Kovanica node binary - thin packaging surface over protocol crates"
+
+[[bin]]
+name = "kovanica-node"
+path = "src/main.rs"
+
+[dependencies]
+kovanica-node = { path = "../../protocol/crates/kovanica-node" }
+
+[lints.rust]
+unsafe_code = "forbid"

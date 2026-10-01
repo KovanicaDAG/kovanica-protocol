@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Kovanica Node</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: #0d1117;
+        color: #e6edf3;
+        min-height: 100vh;
+      }
+      #app { padding: 24px; max-width: 1200px; margin: 0 auto; }
+      header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #30363d; }
+      h1 { font-size: 1.5rem; font-weight: 600; }
+      .status-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+      .card {
+        background: #161b22;
+        border: 1px solid #30363d;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 24px;
+      }
+      .card h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; margin-bottom: 12px; }
+      .value { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.875rem; word-break: break-all; }
+      .value.ok { color: #3fb950; }
+      .value.warn { color: #d29922; }
+      .value.err { color: #f85149; }
+      .value.sm { margin-top: 8px; font-size: 0.75rem; color: #8b949e; }
+      .btn {
+        background: #238636;
+        border: none;
+        border-radius: 6px;
+        color: white;
+        padding: 10px 20px;
+        font-size: 0.875rem;
+        font-weight: 500;
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .btn:hover { background: #2ea043; }
+      .btn:disabled { background: #30363d; color: #8b949e; cursor: not-allowed; }
+      .btn-secondary { background: #21262d; color: #e6edf3; }
+      .btn-secondary:hover { background: #30363d; }
+      .actions { display: flex; gap: 12px; margin-bottom: 24px; }
+      .actions.sm { gap: 8px; margin: 8px 0; }
+      .events { background: #161b22; border: 1px solid #30363d; border-radius: 8px; max-height: 400px; overflow-y: auto; }
+      .event { padding: 8px 16px; border-bottom: 1px solid #21262d; font-family: 'SF Mono', monospace; font-size: 0.75rem; }
+      .event:last-child { border-bottom: none; }
+      .event-type { color: #79c0ff; font-weight: 500; }
+      .event-time { color: #8b949e; }
+      .event-data { color: #e6edf3; margin-left: 8px; }
+      .loading { text-align: center; color: #8b949e; padding: 48px; }
+      .wallet-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px; }
+      .wallet-col label { display: block; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; margin: 8px 0 4px; }
+      .wallet-col input, .wallet-col textarea {
+        width: 100%;
+        background: #0d1117;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        color: #e6edf3;
+        padding: 8px 10px;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+        font-size: 0.8rem;
+        resize: vertical;
+      }
+      .wallet-col input:focus, .wallet-col textarea:focus { outline: none; border-color: #58a6ff; }
+      .list { max-height: 180px; overflow-y: auto; font-family: 'SF Mono', monospace; font-size: 0.75rem; }
+      .list-item { padding: 6px 8px; border-bottom: 1px solid #21262d; word-break: break-all; color: #e6edf3; }
+      .list-item:last-child { border-bottom: none; }
+      .dir-received { color: #3fb950; }
+      .dir-sent { color: #d29922; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>Kovanica Node</h1>
+        <span id="network-badge" class="value warn">Initializing...</span>
+      </header>
+
+      <div class="actions">
+        <button id="produce-btn" class="btn" disabled>Produce Block</button>
+        <button id="status-btn" class="btn" disabled>Refresh Status</button>
+      </div>
+
+      <div class="status-grid">
+        <div class="card">
+          <h3>Genesis</h3>
+          <div id="genesis" class="value">—</div>
+        </div>
+        <div class="card">
+          <h3>Tip</h3>
+          <div id="tip" class="value">—</div>
+        </div>
+        <div class="card">
+          <h3>Blocks</h3>
+          <div id="blocks" class="value">0</div>
+        </div>
+        <div class="card">
+          <h3>Mempool</h3>
+          <div id="mempool" class="value">0</div>
+        </div>
+        <div class="card">
+          <h3>Peers</h3>
+          <div id="peers" class="value">0</div>
+        </div>
+        <div class="card">
+          <h3>Sync</h3>
+          <div id="sync" class="value">—</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Wallet</h3>
+        <div class="wallet-grid">
+          <div class="wallet-col">
+            <label>Mnemonic / BIP39 phrase</label>
+            <textarea id="mnemonic-input" rows="3" placeholder="12-word seed phrase…"></textarea>
+            <label>Passphrase (optional)</label>
+            <input id="passphrase-input" type="password" placeholder="BIP39 passphrase" />
+            <div class="actions sm">
+              <button id="create-wallet-btn" class="btn btn-secondary">Create</button>
+              <button id="unlock-wallet-btn" class="btn btn-secondary">Unlock</button>
+              <button id="lock-wallet-btn" class="btn btn-secondary">Lock</button>
+            </div>
+            <div class="value sm" id="wallet-fingerprint">no unlocked wallet</div>
+          </div>
+          <div class="wallet-col">
+            <label>Derived addresses</label>
+            <div id="address-list" class="list">
+              <div class="list-item">—</div>
+            </div>
+            <div class="actions sm">
+              <button id="addresses-btn" class="btn btn-secondary" disabled>Load addresses</button>
+            </div>
+          </div>
+          <div class="wallet-col">
+            <label>Query address</label>
+            <input id="addr-input" placeholder="kvnc…dag or hex" />
+            <div class="actions sm">
+              <button id="balance-btn" class="btn btn-secondary">Balance</button>
+              <button id="assets-btn" class="btn btn-secondary">Assets</button>
+              <button id="history-btn" class="btn btn-secondary">History</button>
+            </div>
+            <div class="value sm" id="wallet-balance">—</div>
+            <div id="wallet-assets" class="list" style="margin-top:8px;max-height:140px;"></div>
+            <div id="wallet-history" class="list" style="margin-top:8px;">
+              <div class="list-item">—</div>
+            </div>
+          </div>
+          <div class="wallet-col">
+            <label>Recipient address</label>
+            <input id="to-input" placeholder="kvnc…dag or hex" />
+            <label>Amount (KVNC)</label>
+            <input id="amount-input" type="number" min="0" step="0.00000001" placeholder="0.1" />
+            <div class="actions sm">
+              <button id="send-btn" class="btn" disabled>Send</button>
+            </div>
+            <div class="value sm" id="send-result">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Network</h3>
+        <div class="wallet-grid">
+          <div class="wallet-col">
+            <label>Listen address</label>
+            <input id="p2p-listen-input" value="0.0.0.0:9000" />
+            <label>Bootstrap peers (comma separated)</label>
+            <input id="p2p-peers-input" value="seed.kovanica.online:9000" />
+            <div class="actions sm">
+              <button id="p2p-start-btn" class="btn btn-secondary" disabled>Start P2P</button>
+              <button id="p2p-stop-btn" class="btn btn-secondary" disabled>Stop P2P</button>
+            </div>
+            <div class="value sm" id="p2p-status">real TCP sync (headers-first + full-dump) against configured peers</div>
+          </div>
+          <div class="wallet-col">
+            <label>SPV relay URL</label>
+            <input id="spv-url-input" value="https://explorer.kovanica.online" />
+            <div class="actions sm">
+              <button id="spv-sync-btn" class="btn btn-secondary" disabled>Light Sync</button>
+            </div>
+            <div class="value sm" id="spv-sync-status">—</div>
+          </div>
+          <div class="wallet-col">
+            <label>Watch address</label>
+            <input id="spv-addr-input" placeholder="kvnc…dag or hex" />
+            <div class="actions sm">
+              <button id="spv-match-btn" class="btn btn-secondary" disabled>Find Matching Blocks</button>
+            </div>
+            <div id="spv-match-list" class="list" style="margin-top:8px;">
+              <div class="list-item">—</div>
+            </div>
+          </div>
+          <div class="wallet-col">
+            <label>Block id (hex)</label>
+            <input id="spv-block-input" placeholder="32-byte hex" />
+            <label>Tx id (hex)</label>
+            <input id="spv-tx-input" placeholder="32-byte hex" />
+            <div class="actions sm">
+              <button id="spv-verify-btn" class="btn btn-secondary" disabled>Verify Inclusion Proof</button>
+            </div>
+            <div class="value sm" id="spv-verify-status">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Staking / Mining</h3>
+        <div class="wallet-grid">
+          <div class="wallet-col">
+            <label>Validator seed (32 bytes hex)</label>
+            <input id="validator-seed-input" placeholder="64 hex chars (or leave blank to keep current)" />
+            <div class="actions sm">
+              <button id="validator-seed-btn" class="btn btn-secondary" disabled>Set Validator</button>
+            </div>
+            <div class="value sm" id="validator-status">no validator identity set</div>
+            <label>Hybrid sortition rate</label>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input id="hybrid-rate-num" type="number" min="1" value="1" style="width:64px;" />
+              <span style="color:#8b949e;">/</span>
+              <input id="hybrid-rate-den" type="number" min="1" value="1" style="width:64px;" />
+              <label style="margin:0 6px 0 12px; text-transform:none;">retarget</label>
+              <input id="hybrid-retarget" type="checkbox" />
+            </div>
+            <div class="actions sm">
+              <button id="hybrid-btn" class="btn btn-secondary" disabled>Enable Hybrid</button>
+            </div>
+            <div class="value sm" id="hybrid-status">—</div>
+          </div>
+          <div class="wallet-col">
+            <label>Bond amount (KVNC)</label>
+            <input id="bond-amount-input" type="number" min="0" step="0.00000001" placeholder="100" />
+            <div class="actions sm">
+              <button id="bond-btn" class="btn btn-secondary" disabled>Bond Stake</button>
+              <button id="unbond-btn" class="btn btn-secondary" disabled>Unbond</button>
+            </div>
+            <div class="value sm" id="bond-result">requires an unlocked wallet + validator seed</div>
+          </div>
+          <div class="wallet-col">
+            <label>Mining cadence</label>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input id="mining-interval-input" type="number" min="1" value="5" style="width:64px;" />
+              <span style="color:#8b949e;">s</span>
+            </div>
+            <div class="actions sm">
+              <button id="mining-start-btn" class="btn btn-secondary" disabled>Start Mining</button>
+              <button id="mining-stop-btn" class="btn btn-secondary" disabled>Stop Mining</button>
+            </div>
+            <div class="value sm" id="mining-status">—</div>
+          </div>
+          <div class="wallet-col">
+            <label>Staking state</label>
+            <div class="list" style="max-height:220px;" id="staking-view">
+              <div class="list-item">—</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Operations</h3>
+        <div class="wallet-grid">
+          <div class="wallet-col">
+            <label>Whole-file snapshot</label>
+            <div class="actions sm">
+              <button id="snapshot-btn" class="btn btn-secondary" disabled>Save Snapshot</button>
+            </div>
+            <div class="value sm" id="snapshot-status">—</div>
+          </div>
+          <div class="wallet-col">
+            <label>Finality checkpoint</label>
+            <div class="actions sm">
+              <button id="checkpoint-btn" class="btn btn-secondary" disabled>Save Checkpoint</button>
+            </div>
+            <div class="value sm" id="checkpoint-status">—</div>
+          </div>
+          <div class="wallet-col">
+            <label>Lifecycle</label>
+            <div class="actions sm">
+              <button id="shutdown-btn" class="btn btn-secondary" disabled>Shutdown</button>
+            </div>
+            <div class="value sm" id="shutdown-status">stops the worker and exits the app</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Event Stream</h3>
+        <div id="events" class="events">
+          <div class="loading">Connecting to node worker...</div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/main.js"></script>
+  </body>
+</html>

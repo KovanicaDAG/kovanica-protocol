@@ -1,0 +1,43 @@
+[package]
+name = "kovanica-desktop"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KovanicaDAG/kovanica-protocol"
+rust-version = "1.75"
+description = "Kovanica Desktop Node App — embedded node core (Slice A: genesis-parity gate)"
+
+[features]
+default = []
+tauri = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-plugin-dialog", "dep:tauri-plugin-fs", "dep:tauri-plugin-opener"]
+
+# Standalone crate, deliberately NOT a member of the root workspace
+# (same precedent as android-light-node/ being its own build tree): the
+# Tauri shell and its system-webview dependencies join this project in later
+# slices without disturbing the protocol workspace gates.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+kovanica-dag = { path = "../crates/kovanica-dag" }
+kovanica-node = { path = "../crates/kovanica-node" }
+kovanica-state = { path = "../crates/kovanica-state" }
+ureq = "2"
+serde_json = "1"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }
+serde = { version = "1", features = ["derive"] }
+directories = "5"
+thiserror = "1"
+
+tauri = { version = "2", optional = true , features = [] }
+tauri-plugin-shell = { version = "2", optional = true }
+tauri-plugin-dialog = { version = "2", optional = true }
+tauri-plugin-fs = { version = "2", optional = true }
+tauri-plugin-opener = { version = "2", optional = true }
+bip39 = "2"
+keyring = "1"
+rand = { version = "0.9", features = ["std"] }
+blake3 = "1"
+hex = "0.4"

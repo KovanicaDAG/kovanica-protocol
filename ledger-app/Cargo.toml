@@ -1,0 +1,58 @@
+[package]
+name = "kovanica-ledger"
+version = "0.1.0"
+edition = "2021"
+description = "Kovanica Ledger App - Core logic in Rust (no_std)"
+authors = ["Kovanica Protocol Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KovanicaDAG/kovanica-ledger-app"
+keywords = ["ledger", "hardware-wallet", "ed25519", "bip32", "bip44"]
+categories = ["embedded", "cryptography", "hardware-support"]
+
+[lib]
+name = "kovanica_ledger"
+path = "src/rust/src/lib.rs"
+
+[dependencies]
+# Core dependencies for no_std
+heapless = { version = "0.8" }
+
+# Cryptography - Ed25519 using pure Rust crate (works for both std and no_std)
+ed25519 = { version = "2.0", default-features = false, features = ["alloc"] }
+
+# Ed25519-dalek for std builds (better performance, more features)
+ed25519-dalek = { version = "2.0", default-features = false, optional = true }
+
+# Hashing & HMAC for BIP-32
+sha2 = { version = "0.10", default-features = false }
+hmac = { version = "0.12", default-features = false }
+
+# Hex encoding
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
+
+# Serialization
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+postcard = { version = "1.0", default-features = false }  # no_std friendly
+
+# Hashing
+blake3 = { version = "1.5", default-features = false }
+
+# Zeroize for secure memory handling
+zeroize = { version = "1.7", default-features = false, features = ["zeroize_derive"] }
+
+[features]
+default = []
+std = ["ed25519-dalek/std"]
+no_std = []  # Use pure Rust ed25519 for no_std
+ledger_sdk = []  # For Ledger SDK integration
+
+[profile.release]
+opt-level = "z"  # Optimize for size
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 1
+debug = true

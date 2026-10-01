@@ -1,0 +1,46 @@
+name: Deploy Kovi
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-kovi.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy kovi.kovanica.online
+    runs-on: [self-hosted, kovi-deploy]
+    timeout-minutes: 50
+    steps:
+      - name: SSH bring-up
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USERNAME: ${{ secrets.VPS_USERNAME }}
+          VPS_PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          KEY="$(mktemp)"
+          printf '%s\n' "$VPS_PRIVATE_KEY" > "$KEY"
+          chmod 600 "$KEY"
+          trap 'rm -f "$KEY"' EXIT
+          ssh -i "$KEY" -p 2222 -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            "${VPS_USERNAME}@${VPS_HOST}" bash -s <<'REMOTE'
+          set -euo pipefail
+          cd /root/kovanica-protocol
+          git fetch origin main
+          git reset --hard origin/main
+          if [ ! -d /root/kovanica-agent ]; then
+            git clone https://github.com/KovanicaDAG/kovanica-agent.git /root/kovanica-agent
+          fi
+          cd /root/kovanica-agent
+          git fetch origin main
+          git reset --hard origin/main
+          chmod +x deploy/vps-up.sh
+          KOVANICA_PROTOCOL_ROOT=/root/kovanica-protocol bash deploy/vps-up.sh
+          curl -fsS http://127.0.0.1:13080/healthz
+          echo
+          echo "Kovi healthz ok"
+          REMOTE

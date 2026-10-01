@@ -1,0 +1,114 @@
+name: Web Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/web-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "kovanica-web git ref to deploy (branch, tag, or SHA)"
+        required: false
+        default: "main"
+
+concurrency:
+  group: vps-web-deploy
+  cancel-in-progress: false
+
+jobs:
+  build-web:
+    name: Build web app
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout kovanica-web
+        uses: actions/checkout@v4
+        with:
+          repository: KovanicaDAG/kovanica-web
+          ref: ${{ github.event.inputs.ref || 'main' }}
+          path: kovanica-web
+
+      - name: Prepare site/ build root
+        run: |
+          set -euo pipefail
+          if [ -d kovanica-web/site ]; then
+            mv kovanica-web/site site
+          else
+            mv kovanica-web site
+          fi
+          test -f site/package.json
+          ls -la site | head
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies
+        working-directory: site
+        run: npm install --no-fund --no-audit
+
+      - name: Typecheck
+        working-directory: site
+        run: npm run typecheck
+        continue-on-error: true
+
+      - name: Lint
+        working-directory: site
+        run: npm run lint
+        continue-on-error: true
+
+      - name: Build (node-server preset)
+        working-directory: site
+        run: npm run build:vps
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-web-output
+          path: site/.output/
+          include-hidden-files: true
+          retention-days: 7
+
+  deploy-web:
+    name: Deploy web to VPS
+    runs-on: ubuntu-24.04
+    needs: build-web
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch'
+    continue-on-error: true
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kovanica-web-output
+          path: web-output/
+
+      - name: Copy build to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_PRIVATE_KEY }}
+          port: 2222
+          source: "web-output/"
+          target: /root/
+
+      - name: Deploy web via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_PRIVATE_KEY }}
+          port: 2222
+          script: |
+            set -euo pipefail
+            mkdir -p /root/kovanica-web/.output
+            rsync -a --delete /root/web-output/ /root/kovanica-web/.output/
+            pm2 delete kovanica-web 2>/dev/null || true
+            cd /root/kovanica-web
+            HOST=127.0.0.1 PORT=3010 pm2 start .output/server/index.mjs --name kovanica-web
+            pm2 save
+            pm2 status kovanica-web || true

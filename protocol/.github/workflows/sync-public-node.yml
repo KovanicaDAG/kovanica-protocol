@@ -1,0 +1,255 @@
+name: sync-public-node
+
+# Mirror the public-facing subset of this monorepo into the public
+# KovanicaDAG/kovanica-node repo (the "clone this to run a node" entry point),
+# then ship prebuilt node binaries as a rolling release there so
+# scripts/install.sh can fetch one instead of compiling from source.
+#
+# Synced: crates/{kovanica-dag,kovanica-state,kovanica-node,kovanica-ffi},
+#         Cargo.lock, root Cargo.toml (filtered — see the sync step).
+#         kovanica-ffi joins deliberately: the generated Kotlin/Swift
+#         bindings ARE the public mobile integration surface, and the crate
+#         carries no server secrets. kovanica-cli stays excluded.
+# Never touched: everything else in the mirror (README.md, TESTNET.md,
+#         JOIN.md, scripts/install.*, .github/, deploy/) — those live only there.
+#
+# Release: tag v<workspace version> (e.g. v0.1.0), replaced in place on every
+#         run that mirrors new commits — one current release per version.
+# Assets: kovanica-node-{x86_64,aarch64}-{linux,macos}.tar.gz (static musl on
+#         Linux). Windows stays source-build only via install.ps1.
+#
+# Auth: needs NODE_PUBLIC_TOKEN (Contents read/write on kovanica-node) as a
+# secret on this repo.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  workflow_dispatch: {}
+
+concurrency:
+  group: sync-public-node
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      pushed: ${{ steps.push.outputs.pushed }}
+    steps:
+      # persist-credentials: false — keep the default GITHUB_TOKEN out of git
+      # config so it can never shadow the PAT on the mirror push below.
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check for NODE_PUBLIC_TOKEN
+        env:
+          HAS_TOKEN: ${{ secrets.NODE_PUBLIC_TOKEN != '' }}
+        run: |
+          if [ "$HAS_TOKEN" != "true" ]; then
+            echo "::error::NODE_PUBLIC_TOKEN secret is not set."
+            echo "Create a fine-grained PAT (KovanicaDAG/kovanica-node, Contents: Read and write)"
+            echo "and store it: gh secret set NODE_PUBLIC_TOKEN -R KovanicaDAG/kovanica-protocol"
+            exit 1
+          fi
+
+      - name: Checkout public mirror
+        uses: actions/checkout@v4
+        with:
+          repository: KovanicaDAG/kovanica-node
+          token: ${{ secrets.NODE_PUBLIC_TOKEN }}
+          path: public
+
+      - name: Sync workspace into the public mirror
+        run: |
+          set -euo pipefail
+          for c in kovanica-dag kovanica-state kovanica-node kovanica-ffi; do
+            mkdir -p "public/crates/$c"
+            # --delete drops files removed upstream; data/ and target/ are
+            # runtime-only and never published.
+            rsync -a --delete \
+              --exclude 'data/' --exclude 'target/' \
+              "crates/$c/" "public/crates/$c/"
+          done
+          cp Cargo.lock public/Cargo.lock
+
+          # Root manifest comes from here so there is one source of truth,
+          # but the public workspace keeps its own membership (no kovanica-cli)
+          # and points its repository URL at the mirror.
+          python3 - <<'EOF'
+          import pathlib, re
+
+          src = pathlib.Path("Cargo.toml").read_text()
+
+          def filter_members(m: re.Match) -> str:
+              kept = [
+                  x for x in re.findall(r'"([^"]+)"', m.group(1))
+                  if pathlib.Path("public", x, "Cargo.toml").exists()
+              ]
+              return "members = [" + ", ".join(f'"{x}"' for x in kept) + "]"
+
+          out = re.sub(r"members = \[(.*?)\]", filter_members, src, count=1, flags=re.S)
+          out = out.replace(
+              "repository = \"https://github.com/KovanicaDAG/kovanica-protocol\"",
+              "repository = \"https://github.com/KovanicaDAG/kovanica-node\"",
+          )
+          pathlib.Path("public/Cargo.toml").write_text(out)
+          EOF
+
+      - name: Commit & push if changed
+        id: push
+        working-directory: public
+        env:
+          SRC_SHA: ${{ github.sha }}
+          NODE_PUBLIC_TOKEN: ${{ secrets.NODE_PUBLIC_TOKEN }}
+        run: |
+          git config user.name "kovanica-sync-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "mirror already up to date with ${SRC_SHA}"
+            exit 0
+          fi
+          git commit -m "sync: mirror kovanica-protocol@${SRC_SHA:0:12}"
+          # Push explicitly with the PAT: strip any inherited Authorization
+          # header, then authenticate the remote URL directly.
+          git config --unset-all http.https://github.com/.extraheader || true
+          git remote set-url origin \
+            "https://x-access-token:${NODE_PUBLIC_TOKEN}@github.com/KovanicaDAG/kovanica-node.git"
+          git push
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+
+  # Prebuilt binaries for the mirror's install.sh — only when something was
+  # actually mirrored (or on a manual run). Built from THIS repo, which is the
+  # source of truth; the mirror gets them as release assets, not commits.
+  build:
+    needs: sync
+    if: needs.sync.outputs.pushed == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            asset: x86_64-linux
+            zigbuild: true   # zig provides the C toolchain ring needs for musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            asset: aarch64-linux
+            zigbuild: true   # cross via cargo-zigbuild; static, no glibc pinning
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: aarch64-macos
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: x86_64-macos
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: x86_64-windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install cargo-zigbuild (x86_64/aarch64 musl cross)
+        if: matrix.zigbuild
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      # cargo-zigbuild shells out to a zig compiler; the pip wheel is the
+      # officially suggested install and lands on PATH as `python3 -m ziglang`.
+      - name: Install zig (linker backend for zigbuild)
+        if: matrix.zigbuild
+        run: pip3 install ziglang
+
+      - name: Build release binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          if [ "${{ matrix.zigbuild }}" = "true" ]; then
+            cargo zigbuild --release --target "$TARGET" -p kovanica-node -p kovanica-cli
+          else
+            cargo build --release --target "$TARGET" -p kovanica-node -p kovanica-cli
+          fi
+
+      - name: Package
+        shell: bash
+        env:
+          ASSET: kovanica-node-${{ matrix.asset }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p dist
+          # The kovanica-cli package's binary is named `kovanica`
+          # (crates/kovanica-cli/Cargo.toml [[bin]]); copy it as kovanica-cli
+          # so the artifact keeps its documented name.
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/$TARGET/release/kovanica-node.exe" dist/
+            cp "target/$TARGET/release/kovanica.exe" dist/kovanica-cli.exe
+            tar -czf "$ASSET.tar.gz" -C dist kovanica-node.exe kovanica-cli.exe
+          else
+            cp "target/$TARGET/release/kovanica-node" dist/
+            cp "target/$TARGET/release/kovanica" dist/kovanica-cli
+            tar -czf "$ASSET.tar.gz" -C dist kovanica-node kovanica-cli
+          fi
+          sha256sum "$ASSET.tar.gz" > "$ASSET.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: |
+            kovanica-node-${{ matrix.asset }}.tar.gz
+            kovanica-node-${{ matrix.asset }}.tar.gz.sha256
+          retention-days: 3
+
+  publish:
+    needs: [sync, build]
+    if: needs.sync.outputs.pushed == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Read workspace version
+        run: |
+          VER="$(python3 - <<'EOF'
+          import re, pathlib
+          text = pathlib.Path("Cargo.toml").read_text()
+          block = re.search(r"\[workspace\.package\](.*?)(?:\n\[|\Z)", text, re.S).group(1)
+          print(re.search(r'^version\s*=\s*"([^"]+)"', block, re.M).group(1))
+          EOF
+          )"
+          echo "VER=$VER" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish rolling v${{ env.VER }} release to KovanicaDAG/kovanica-node
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ secrets.NODE_PUBLIC_TOKEN }}
+          SRC_SHA: ${{ github.sha }}
+        run: |
+          TAG="v${VER}"
+          gh release delete "$TAG" -R KovanicaDAG/kovanica-node --yes --cleanup-tag || true
+          gh release create "$TAG" ./*.tar.gz ./*.sha256 \
+            -R KovanicaDAG/kovanica-node \
+            --title "kovanica-node ${TAG}" \
+            --notes "Prebuilt node and cli binaries mirroring kovanica-protocol@${SRC_SHA:0:12}.
+          Linux builds are static (musl); macOS targets Apple Silicon and Intel; Windows targets x86_64.
+          Install: curl -sSfL https://raw.githubusercontent.com/KovanicaDAG/kovanica-node/main/scripts/install.sh | bash"

@@ -1,0 +1,70 @@
+# ============================================================================
+# Kovanica Protocol monorepo — never commit secrets or build output.
+# ============================================================================
+
+# Rust build output. Unanchored so it covers every workspace in the tree:
+# protocol/, node/, sdk/, ledger-app/, wallet/ each have their own target/.
+target/
+
+# JS dependencies. Unanchored (no trailing slash) on purpose: mobile/console/
+# shared/node_modules is a symlink into the enterprise workspace, and the
+# slash form would not match symlinked dirs.
+node_modules
+
+# Build output. Anchored forms for JS, plus the bare form for nested crates.
+/dist/
+dist/
+.output/
+.tanstack/
+.vercel/
+
+# Runtime chain data. Contains the founder premine key, operator wallet
+# (possibly a 12/24-word BIP-39 phrase), validator seeds, faucet ledgers and
+# peer ban state. All regenerable; set KOVANICA_DATA outside the checkout.
+crates/*/data/
+desktop-app/data/
+# Anchorless so it also covers protocol/data/ and any other nested crate —
+# a pattern with a slash is anchored to this file's directory, which silently
+# misses nested trees (this is what let protocol/data/alpha.snap get committed).
+**/data/*.snap
+*.log
+.dev.log
+
+# PoA authority private keys (mode 0600). authorities.conf next to these is
+# PUBLIC (64-hex pubkeys + threshold) and is deliberately tracked — every node
+# must agree on the set. Never add a secret to it.
+authority-keys/*.env
+mainnet-authority-keys/*.env
+deploy/*/data/
+deploy/*/keys/
+deploy/*/logs/
+deploy/*/seeds/*/keys/
+deploy/testnet/authority-keys/*.env
+deploy/mainnet/authority-keys/*.env
+
+# Local environment. *.example files are the documented exception.
+.env
+.env.*
+!.env.example
+
+# Obsidian vault: a generated projection of protocol/docs, synced separately
+# by scripts/build-vault.py. See .vault-managed.
+/vault/
+.obsidian/workspace*.json
+.obsidian/cache
+
+# Third-party reference checkout, not ours to version.
+/trezor-coin-def/
+
+# One-off local dev bootstrap scratch.
+# kovanica-clean-setup.sh deletes /root/.cargo and /root/.rustup, so keeping
+# these out of the repo avoids committing a footgun.
+/kovanica-clean-setup.sh
+/kovanica_dev_setup.sh
+/PRE-MIGRATION-LS.txt
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+*.iml

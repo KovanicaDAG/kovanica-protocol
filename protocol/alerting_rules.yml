@@ -1,0 +1,183 @@
+# Kovanica Node - Prometheus Alerting Rules
+#
+# These rules define alerting thresholds for production monitoring.
+# Import into Prometheus or Alertmanager configuration.
+
+groups:
+  - name: kovanica-node-alerts
+    interval: 30s
+    rules:
+      # Node health
+      - alert: KovanicaNodeDown
+        expr: up{job="kovanica-node"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kovanica node {{ $labels.instance }} is down"
+          description: "Node has been down for more than 1 minute."
+
+      # Block production
+      - alert: KovanicaNoBlocksProduced
+        expr: rate(kovanica_blocks_produced_total[5m]) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No blocks produced in last 10 minutes"
+          description: "Node {{ $labels.instance }} has not produced any blocks in the last 10 minutes."
+
+      - alert: KovanicaBlockProductionSlow
+        expr: rate(kovanica_blocks_produced_total[5m]) < 0.1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Block production rate below 0.1 blocks/sec"
+          description: "Block production rate is {{ $value | humanizeDuration }} blocks/sec."
+
+      # Peer connectivity
+      - alert: KovanicaLowPeerCount
+        expr: kovanica_peer_count < 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low peer count: {{ $value }}"
+          description: "Node {{ $labels.instance }} has only {{ $value }} peers connected."
+
+      - alert: KovanicaNoPeers
+        expr: kovanica_peer_count == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Node has zero peers"
+          description: "Node {{ $labels.instance }} is completely isolated from the network."
+
+      - alert: KovanicaPeerScoreLow
+        expr: kovanica_peer_score < -20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Peer {{ $labels.peer }} has low score: {{ $value }}"
+          description: "Peer score dropped below -20, may be banned soon."
+
+      # Reorg depth
+      - alert: KovanicaReorgDepthHigh
+        expr: increase(kovanica_dag_reorg_depth_total[1h]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High reorg depth detected"
+          description: "Reorg depth increased by {{ $value }} in the last hour."
+
+      # Mempool
+      - alert: KovanicaMempoolLarge
+        expr: kovanica_mempool_tx_count > 50000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mempool size: {{ $value }} transactions"
+          description: "Mempool has grown beyond 50k transactions."
+
+      - alert: KovanicaMempoolEvictionHigh
+        expr: rate(kovanica_mempool_evicted_total[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High mempool eviction rate: {{ $value }}/sec"
+          description: "Mempool is evicting transactions at {{ $value }} per second."
+
+      # DHT
+      - alert: KovanicaDHTRoutingTableSmall
+        expr: kovanica_dht_routing_table_size < 5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DHT routing table size: {{ $value }}"
+          description: "DHT routing table has fewer than 5 contacts."
+
+      - alert: KovanicaDHTPruningHigh
+        expr: rate(kovanica_dht_peers_pruned_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High DHT peer pruning rate"
+          description: "DHT is pruning {{ $value }} peers per second."
+
+      # Sync
+      - alert: KovanicaSyncSlow
+        expr: kovanica_sync_duration_seconds > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Sync duration over 30 seconds"
+          description: "Sync took {{ $value }} seconds."
+
+      # Validation
+      - alert: KovanicaBlockRejectionHigh
+        expr: rate(kovanica_block_rejected_total[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High block rejection rate"
+          description: "Rejecting {{ $value }} blocks per second."
+
+      - alert: KovanicaTxRejectionHigh
+        expr: rate(kovanica_tx_rejected_total[5m]) > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High transaction rejection rate"
+          description: "Rejecting {{ $value }} transactions per second."
+
+      # Storage
+      - alert: KovanicaSnapshotLarge
+        expr: kovanica_snapshot_size_bytes > 500000000
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Snapshot size over 500MB"
+          description: "Snapshot is {{ $value | humanize }}."
+
+  - name: kovanica-node-recording
+    interval: 30s
+    rules:
+      # Recording rules for derived metrics
+      - record: kovanica:block_rate_5m
+        expr: rate(kovanica_blocks_produced_total[5m])
+
+      - record: kovanica:peer_count_avg_5m
+        expr: avg_over_time(kovanica_peer_count[5m])
+
+      - record: kovanica:mempool_tx_count_avg_5m
+        expr: avg_over_time(kovanica_mempool_tx_count[5m])
+
+      - record: kovanica:dht_routing_table_size_avg_5m
+        expr: avg_over_time(kovanica_dht_routing_table_size[5m])
+
+      - record: kovanica:reorg_rate_1h
+        expr: rate(kovanica_dag_reorg_depth_total[1h])
+
+      - record: kovanica:block_rejection_rate_5m
+        expr: rate(kovanica_block_rejected_total[5m])
+
+      - record: kovanica:tx_rejection_rate_5m
+        expr: rate(kovanica_tx_rejected_total[5m])
+
+      - record: kovanica:mempool_eviction_rate_5m
+        expr: rate(kovanica_mempool_evicted_total[5m])
+
+      - record: kovanica:peer_churn_rate_5m
+        expr: rate(kovanica_peer_connected_total[5m]) + rate(kovanica_peer_disconnected_total[5m])

@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kovanica Chat Playground</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --fg: #c9d1d9;
+    --accent: #58a6ff;
+    --border: #30363d;
+    --success: #3fb950;
+    --error: #f85149;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: 4px; }
+  h2 { font-size: 1.1rem; margin: 20px 0 8px; color: var(--accent); }
+  .subtitle { color: #8b949e; font-size: 0.85rem; margin-bottom: 20px; }
+  .card {
+    background: #161b22;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  label { display: block; font-size: 0.8rem; color: #8b949e; margin-bottom: 4px; }
+  input, textarea, button {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #0d1117;
+    color: var(--fg);
+    font-size: 0.9rem;
+    font-family: inherit;
+  }
+  input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+  textarea { resize: vertical; min-height: 60px; }
+  button {
+    background: var(--accent);
+    color: #0d1117;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    margin-top: 8px;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.secondary { background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .msg {
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin-bottom: 6px;
+    font-size: 0.85rem;
+    word-break: break-word;
+  }
+  .msg.sent { background: #1f6feb22; border-left: 3px solid var(--accent); }
+  .msg.received { background: #3fb95022; border-left: 3px solid var(--success); }
+  .msg .meta { font-size: 0.7rem; color: #8b949e; margin-bottom: 2px; }
+  .msg .text { color: var(--fg); }
+  .status { font-size: 0.8rem; margin-top: 8px; }
+  .status.ok { color: var(--success); }
+  .status.err { color: var(--error); }
+  .hidden { display: none; }
+  .key-display {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: #8b949e;
+    word-break: break-all;
+    margin-top: 4px;
+  }
+  #messages { max-height: 300px; overflow-y: auto; }
+  .empty { color: #8b949e; font-size: 0.85rem; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+
+<h1>Kovanica Chat Playground</h1>
+<p class="subtitle">On-chain encrypted chat over KVP-104 transactions. Client-only — private keys never leave your browser.</p>
+
+<!-- Key Management -->
+<div class="card">
+  <h2>1. Key Pair</h2>
+  <div class="row">
+    <button onclick="generateKey()" class="secondary">Generate New</button>
+    <button onclick="exportKey()" class="secondary">Export</button>
+    <button onclick="importKeyPrompt()" class="secondary">Import</button>
+  </div>
+  <div class="key-display" id="keyDisplay">No key generated yet</div>
+  <div class="status" id="keyStatus"></div>
+</div>
+
+<!-- Send Message -->
+<div class="card">
+  <h2>2. Send Message</h2>
+  <label for="recipient">Recipient Address (hex)</label>
+  <input type="text" id="recipient" placeholder="64 hex chars (Ed25519 public key)">
+  <label for="message" style="margin-top:8px">Message (max 200 chars)</label>
+  <textarea id="message" maxlength="200" placeholder="Type your message..."></textarea>
+  <div class="row">
+    <button onclick="sendMessage()" id="sendBtn" disabled>Send On-Chain</button>
+    <button onclick="clearMessages()" class="secondary">Clear History</button>
+  </div>
+  <div class="status" id="sendStatus"></div>
+</div>
+
+<!-- Message History -->
+<div class="card">
+  <h2>3. Messages</h2>
+  <div id="messages"><div class="empty">No messages yet</div></div>
+  <button onclick="loadMessages()" class="secondary" style="margin-top:8px">Refresh from Chain</button>
+  <div class="status" id="loadStatus"></div>
+</div>
+
+<!-- Hidden import input -->
+<input type="file" id="importFile" accept=".json" class="hidden" onchange="importKeyFile(event)">
+
+<script>
+// ============================================================
+// Kovanica Chat Playground — single-file, zero-build
+// Uses Web Crypto API for X25519 ECDH + ChaCha20-Poly1305
+// ============================================================
+
+const EXPLORER_API = 'https://explorer.kovanica.online';
+const MAX_PLAINTEXT = 200;
+
+let keyPair = null; // { publicKey: CryptoKey, privateKey: CryptoKey, rawPublic: Uint8Array, rawPrivate: Uint8Array }
+let messages = []; // { sender, recipient, plaintext, timestamp, direction }
+
+// --- Key Management ---
+
+async function generateKey() {
+  try {
+    keyPair = await crypto.subtle.generateKey(
+      { name: 'X25519' },
+      true,
+      ['deriveBits']
+    );
+    // Export raw keys for display/storage
+    const rawPrivate = new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.privateKey));
+    const rawPublic = new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey));
+    keyPair.rawPrivate = rawPrivate;
+    keyPair.rawPublic = rawPublic;
+
+    document.getElementById('keyDisplay').textContent =
+      'Public: ' + hexEncode(rawPublic);
+    document.getElementById('keyStatus').textContent = 'Key generated';
+    document.getElementById('keyStatus').className = 'status ok';
+    document.getElementById('sendBtn').disabled = false;
+  } catch (e) {
+    document.getElementById('keyStatus').textContent = 'Error: ' + e.message;
+    document.getElementById('keyStatus').className = 'status err';
+  }
+}
+
+async function exportKey() {
+  if (!keyPair) return;
+  const data = {
+    private: hexEncode(keyPair.rawPrivate),
+    public: hexEncode(keyPair.rawPublic),
+    created: Date.now()
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'kovanica-chat-key.json';
+  a.click();
+}
+
+function importKeyPrompt() {
+  document.getElementById('importFile').click();
+}
+
+async function importKeyFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const rawPrivate = hexDecode(data.private);
+    const rawPublic = hexDecode(data.public);
+
+    const privateKey = await crypto.subtle.importKey(
+      'raw', rawPrivate, { name: 'X25519' }, false, ['deriveBits']
+    );
+    const publicKey = await crypto.subtle.importKey(
+      'raw', rawPublic, { name: 'X25519' }, false, []
+    );
+
+    keyPair = { privateKey, publicKey, rawPrivate, rawPublic };
+    document.getElementById('keyDisplay').textContent =
+      'Public: ' + hexEncode(rawPublic);
+    document.getElementById('keyStatus').textContent = 'Key imported';
+    document.getElementById('keyStatus').className = 'status ok';
+    document.getElementById('sendBtn').disabled = false;
+  } catch (e) {
+    document.getElementById('keyStatus').textContent = 'Import error: ' + e.message;
+    document.getElementById('keyStatus').className = 'status err';
+  }
+}
+
+// --- Send Message ---
+
+async function sendMessage() {
+  if (!keyPair) return;
+  const recipientHex = document.getElementById('recipient').value.trim();
+  const plaintext = document.getElementById('message').value;
+
+  if (!recipientHex || recipientHex.length !== 64) {
+    setStatus('sendStatus', 'Invalid recipient address (need 64 hex chars)', 'err');
+    return;
+  }
+  if (!plaintext) {
+    setStatus('sendStatus', 'Message is empty', 'err');
+    return;
+  }
+  if (plaintext.length > MAX_PLAINTEXT) {
+    setStatus('sendStatus', 'Message exceeds 200 chars', 'err');
+    return;
+  }
+
+  const statusEl = document.getElementById('sendStatus');
+  statusEl.textContent = 'Encrypting...';
+  statusEl.className = 'status';
+
+  try {
+    const recipientPublic = hexDecode(recipientHex);
+
+    // ECDH: derive shared secret
+    const recipientKey = await crypto.subtle.importKey(
+      'raw', recipientPublic, { name: 'X25519' }, false, []
+    );
+    const sharedBits = await crypto.subtle.deriveBits(
+      { name: 'X25519', public: recipientKey },
+      keyPair.privateKey,
+      256
+    );
+    const sharedSecret = new Uint8Array(sharedBits);
+
+    // Derive ChaCha20-Poly1305 key via SHA-256
+    const keyMaterial = await crypto.subtle.digest('SHA-256', sharedSecret);
+    const aesKey = await crypto.subtle.importKey(
+      'raw', keyMaterial, { name: 'AES-GCM' }, false, ['encrypt']
+    );
+
+    // Encrypt with AES-GCM (Web Crypto doesn't have ChaCha20-Poly1305)
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const plaintextBytes = new TextEncoder().encode(plaintext);
+    const ciphertext = new Uint8Array(await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      aesKey,
+      plaintextBytes
+    ));
+
+    // Build payload: epk (32) || iv (12) || ciphertext
+    const epk = keyPair.rawPublic;
+    const payload = new Uint8Array(32 + 12 + ciphertext.length);
+    payload.set(epk, 0);
+    payload.set(iv, 32);
+    payload.set(ciphertext, 44);
+
+    statusEl.textContent = 'Submitting to chain...';
+    statusEl.className = 'status';
+
+    // Submit as KVP-104 transaction via explorer API
+    const txData = {
+      tag: 'CHAT',
+      data: hexEncode(payload),
+      sender: hexEncode(keyPair.rawPublic),
+      recipient: recipientHex
+    };
+
+    const resp = await fetch(`${EXPLORER_API}/api/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(txData)
+    });
+
+    if (!resp.ok) {
+      const errText = await resp.text();
+      throw new Error(`Submit failed: ${resp.status} ${errText}`);
+    }
+
+    const result = await resp.json();
+
+    // Add to local history
+    messages.push({
+      sender: hexEncode(keyPair.rawPublic),
+      recipient: recipientHex,
+      plaintext: plaintext,
+      timestamp: Date.now(),
+      direction: 'sent'
+    });
+    renderMessages();
+
+    document.getElementById('message').value = '';
+    setStatus('sendStatus', `Message submitted! Tx: ${result.txId || result.id || 'ok'}`, 'ok');
+  } catch (e) {
+    setStatus('sendStatus', 'Error: ' + e.message, 'err');
+  }
+}
+
+// --- Load Messages ---
+
+async function loadMessages() {
+  if (!keyPair) {
+    setStatus('loadStatus', 'Generate a key first', 'err');
+    return;
+  }
+
+  const statusEl = document.getElementById('loadStatus');
+  statusEl.textContent = 'Scanning chain...';
+  statusEl.className = 'status';
+
+  try {
+    // Fetch recent blocks and look for CHAT transactions
+    const resp = await fetch(`${EXPLORER_API}/api/blocks?limit=100`);
+    if (!resp.ok) throw new Error(`API error: ${resp.status}`);
+
+    const blocks = await resp.json();
+    const myPk = hexEncode(keyPair.rawPublic);
+    let found = 0;
+
+    for (const block of blocks) {
+      if (!block.txs) continue;
+      for (const tx of block.txs) {
+        if (tx.tag !== 'CHAT' || !tx.data) continue;
+
+        const payload = hexDecode(tx.data);
+        if (payload.length < 44) continue;
+
+        const epk = payload.slice(0, 32);
+        const iv = payload.slice(32, 44);
+        const ciphertext = payload.slice(44);
+
+        // Check if this message is for me
+        const sender = tx.sender || '';
+        const recipient = tx.recipient || '';
+        if (recipient !== myPk && sender !== myPk) continue;
+
+        try {
+          // Derive shared secret
+          const epkKey = await crypto.subtle.importKey(
+            'raw', epk, { name: 'X25519' }, false, []
+          );
+          const sharedBits = await crypto.subtle.deriveBits(
+            { name: 'X25519', public: epkKey },
+            keyPair.privateKey,
+            256
+          );
+          const sharedSecret = new Uint8Array(sharedBits);
+
+          const keyMaterial = await crypto.subtle.digest('SHA-256', sharedSecret);
+          const aesKey = await crypto.subtle.importKey(
+            'raw', keyMaterial, { name: 'AES-GCM' }, false, ['decrypt']
+          );
+
+          const plaintextBytes = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv },
+            aesKey,
+            ciphertext
+          );
+          const plaintext = new TextDecoder().decode(plaintextBytes);
+
+          const direction = sender === myPk ? 'sent' : 'received';
+          // Avoid duplicates
+          if (!messages.find(m => m.sender === sender && m.plaintext === plaintext && m.timestamp === block.timestamp)) {
+            messages.push({
+              sender,
+              recipient,
+              plaintext,
+              timestamp: block.timestamp || Date.now(),
+              direction
+            });
+            found++;
+          }
+        } catch {
+          // Not decryptable by this key — skip
+        }
+      }
+    }
+
+    messages.sort((a, b) => a.timestamp - b.timestamp);
+    renderMessages();
+    setStatus('loadStatus', `Found ${found} message(s)`, 'ok');
+  } catch (e) {
+    setStatus('loadStatus', 'Error: ' + e.message, 'err');
+  }
+}
+
+// --- UI Helpers ---
+
+function renderMessages() {
+  const container = document.getElementById('messages');
+  if (messages.length === 0) {
+    container.innerHTML = '<div class="empty">No messages yet</div>';
+    return;
+  }
+  container.innerHTML = messages.map(m => `
+    <div class="msg ${m.direction}">
+      <div class="meta">${m.direction === 'sent' ? 'To' : 'From'}: ${m.recipient === hexEncode(keyPair?.rawPublic || new Uint8Array(32)) ? m.sender : m.recipient} · ${new Date(m.timestamp).toLocaleString()}</div>
+      <div class="text">${escapeHtml(m.plaintext)}</div>
+    </div>
+  `).join('');
+}
+
+function clearMessages() {
+  messages = [];
+  renderMessages();
+}
+
+function setStatus(id, text, cls) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = 'status ' + cls;
+}
+
+// --- Hex Utils ---
+
+function hexEncode(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function hexDecode(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < hex.length; i += 2) {
+    bytes[i / 2] = parseInt(hex.substr(i, 2), 16);
+  }
+  return bytes;
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "@kovanica/sdk-wasm",
+  "version": "0.1.0-alpha.1",
+  "description": "WASM bindings for kovanica-sdk (browser & Node)",
+  "license": "MIT OR Apache-2.0",
+  "keywords": ["kovanica", "blockdag", "utxo", "wallet", "wasm"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KovanicaDAG/kovanica"
+  },
+  "homepage": "https://kovanica.online",
+  "sideEffects": false,
+  "type": "module",
+  "module": "kovanica_wasm.js",
+  "types": "kovanica_wasm.d.ts",
+  "exports": {
+    ".": {
+      "types": "./kovanica_wasm.d.ts",
+      "import": "./kovanica_wasm.js"
+    }
+  },
+  "files": ["*.js", "*.wasm", "*.d.ts"]
+}

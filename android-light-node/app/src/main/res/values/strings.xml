@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Kovanica Light Node</string>
+    <string name="genesis_verification">Verifying genesis with live network...</string>
+    <string name="genesis_success">Genesis verified! Light node ready.</string>
+    <string name="genesis_failed">Genesis mismatch — check network parameters.</string>
+    <string name="syncing">Syncing with network...</string>
+    <string name="ready">Light node ready</string>
+    <string name="staking_on">Staking enabled</string>
+    <string name="staking_off">Staking disabled</string>
+    <string name="wallet_balance">Balance: %1$s KVNC</string>
+    <string name="send">Send</string>
+    <string name="receive">Receive</string>
+    <string name="history">History</string>
+    <string name="settings">Settings</string>
+</resources>

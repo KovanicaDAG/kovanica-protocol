@@ -1,0 +1,46 @@
+[package]
+name = "kovanica-sdk"
+description = "Official high-level SDK for the Kovanica protocol (facade over types, keys, tx, rpc, fee)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+
+[dependencies]
+kovanica-types = { workspace = true }
+kovanica-keys = { workspace = true }
+kovanica-tx = { workspace = true }
+kovanica-rpc = { workspace = true }
+kovanica-fee = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+serde_json = { workspace = true }
+blake3 = { workspace = true }
+kovanica-airdrop = { path = "../kovanica-airdrop" }
+
+[[example]]
+name = "generate_wallet"
+path = "../../examples/generate_wallet.rs"
+
+[[example]]
+name = "htlc_swap"
+path = "../../examples/htlc_swap.rs"
+
+[[example]]
+name = "create_asset"
+path = "../../examples/create_asset.rs"
+
+[[example]]
+name = "transfer_asset"
+path = "../../examples/transfer_asset.rs"
+
+[[example]]
+name = "airdrop"
+path = "../../examples/airdrop.rs"

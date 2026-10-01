@@ -1,0 +1,71 @@
+name: Feature Request
+description: Suggest an idea for this project
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature!
+  - type: textarea
+    id: problem
+    attributes:
+      label: Is your feature request related to a problem?
+      description: A clear and concise description of what the problem is.
+      placeholder: I'm always frustrated when...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Describe the solution you'd like
+      description: A clear and concise description of what you want to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Describe alternatives you've considered
+      description: A clear and concise description of any alternative solutions or features you've considered.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which component does this relate to?
+      options:
+        - kovanica-dag (consensus/DAG)
+        - kovanica-state (UTXO ledger)
+        - kovanica-node (node binary, RPC, P2P)
+        - kovanica-ffi (UniFFI bindings)
+        - kovanica-web (explorer/wallet frontend)
+        - kovanica-wallet (mobile wallet)
+        - kovanica-mobile (Android app)
+        - CLI / installer
+        - Documentation
+        - Infrastructure / CI
+    validations:
+      required: true
+  - type: dropdown
+    id: rfc
+    attributes:
+      label: Related RFC (if any)
+      description: Does this relate to a specific RFC?
+      options:
+        - RFC-001 Multisig
+        - RFC-002 Native Tokens
+        - RFC-003 Stealth + Script v2
+        - RFC-004 HTLC / Atomic Swap
+        - RFC-005 Vault / CSV
+        - RFC-006 Tokenomics
+        - Not RFC-related / New RFC
+    validations:
+      required: false
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Checklist
+      options:
+        - label: I have searched existing issues/PRs for duplicates
+          required: true
+        - label: This does not introduce a consensus change without an RFC
+          required: true

@@ -1,0 +1,87 @@
+name: bindings-drift
+
+# Slice 6 drift guard: the Kotlin/Swift bindings are committed, so any change
+# to crates/kovanica-ffi/** must regenerate them byte-identically or this
+# fails. Regenerates into a temp dir and diffs — never writes the tree.
+#
+# Runs on every PR touching the FFI crate (or this file). Cheap: one release
+# build of kovanica-ffi plus two bindgen invocations.
+
+on:
+  pull_request:
+    paths:
+      - "crates/kovanica-ffi/**"
+      - ".github/workflows/bindings.yml"
+  push:
+    branches: [main]
+    paths:
+      - "crates/kovanica-ffi/**"
+      - ".github/workflows/bindings.yml"
+
+concurrency:
+  group: bindings-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: Regenerate & diff bindings
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Build FFI cdylib
+        run: cargo build --release -p kovanica-ffi
+
+      # Same invocation as documented in crates/kovanica-ffi/src/lib.rs.
+      - name: Generate Kotlin bindings
+        run: |
+          mkdir -p /tmp/bindgen/kotlin
+          cargo run -p kovanica-ffi --bin uniffi-bindgen -- \
+            generate --library target/release/libkovanica_ffi.so \
+            --language kotlin --out-dir /tmp/bindgen/kotlin
+
+      - name: Generate Swift bindings
+        run: |
+          mkdir -p /tmp/bindgen/swift
+          cargo run -p kovanica-ffi --bin uniffi-bindgen -- \
+            generate --library target/release/libkovanica_ffi.so \
+            --language swift --out-dir /tmp/bindgen/swift
+
+      - name: Diff generated vs committed
+        run: |
+          set -euo pipefail
+          # -x README.md: hand-written docs live beside generated output;
+          # they are not bindgen artifacts and must not trip the guard.
+          fail=0
+          diff -r -x README.md /tmp/bindgen/kotlin crates/kovanica-ffi/bindings/kotlin \
+            || fail=1
+          diff -r -x README.md /tmp/bindgen/swift crates/kovanica-ffi/bindings/swift \
+            || fail=1
+          if [ "$fail" != "0" ]; then
+            echo "::error::Committed bindings drifted from crates/kovanica-ffi."
+            echo "Regenerate and commit:"
+            echo "  cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \\"
+            echo "    --library target/release/libkovanica_ffi.so \\"
+            echo "    --language kotlin --out-dir crates/kovanica-ffi/bindings/kotlin"
+            echo "  cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \\"
+            echo "    --library target/release/libkovanica_ffi.so \\"
+            echo "    --language swift --out-dir crates/kovanica-ffi/bindings/swift"
+          fi
+          exit "$fail"
+
+      # The scripts added in Slice 6 are shell, not Rust: lint them here so a
+      # typo cannot hide until someone runs them on a real machine.
+      - name: Shellcheck packaging scripts
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck crates/kovanica-ffi/build-android.sh \
+                    crates/kovanica-ffi/build-apple.sh

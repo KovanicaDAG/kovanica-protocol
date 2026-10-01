@@ -1,0 +1,30 @@
+[package]
+name = "kovanica-wasm"
+description = "WASM / JS bindings for kovanica-sdk (browser & Node)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+kovanica-sdk = { path = "../../crates/kovanica-sdk" }
+wasm-bindgen = "0.2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+console_error_panic_hook = { version = "0.1", optional = true }
+
+[features]
+default = ["console_error_panic_hook"]
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# getrandom 0.2 rejects wasm32-unknown-unknown by default in the
+# ed25519-dalek -> rand_core chain; the "js" feature swaps in the
+# wasm-bindgen/crypto.getRandomValues shim. Enabling it here (the dedicated
+# wasm binding crate) unifies the feature across the whole graph for this
+# target only — host builds are unaffected.
+getrandom = { version = "0.2", features = ["js"] }

@@ -1,0 +1,16 @@
+[package]
+name = "kovanica-merchant"
+version = "0.4.0"
+edition = "2021"
+license = "MIT"
+description = "Kovanica merchant payments, fiat on/off ramps, and token listing registry"
+repository = "https://github.com/KovanicaDAG/kovanica"
+
+[dependencies]
+kovanica-types = { path = "../kovanica-types" }
+kovanica-tx = { path = "../kovanica-tx" }
+kovanica-airdrop = { path = "../kovanica-airdrop" }
+kovanica-bridge = { path = "../kovanica-bridge" }
+serde = { version = "1", features = ["derive"] }
+blake3 = "1.5"
+uuid = { version = "1", features = ["v4", "serde"] }

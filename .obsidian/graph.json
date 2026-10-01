@@ -1,0 +1,33 @@
+{
+  "collapse-filter": false,
+  "search": "",
+  "showTags": true,
+  "showAttachments": true,
+  "hideUnresolved": true,
+  "showOrphans": false,
+  "collapse-color-groups": false,
+  "colorGroups": [
+    { "query": "path:00-Home", "color": { "a": 1, "rgb": 1241032 } },
+    { "query": "path:10-Protocol", "color": { "a": 1, "rgb": 14725458 } },
+    { "query": "path:20-Network", "color": { "a": 1, "rgb": 5419488 } },
+    { "query": "path:30-Operations", "color": { "a": 1, "rgb": 16249984 } },
+    { "query": "path:40-Node", "color": { "a": 1, "rgb": 8355711 } },
+    { "query": "path:50-Components", "color": { "a": 1, "rgb": 5000267 } },
+    { "query": "path:60-Planning", "color": { "a": 1, "rgb": 11228603 } },
+    { "query": "path:70-Policy", "color": { "a": 1, "rgb": 15132390 } },
+    { "query": "path:80-Repo-Doctrine", "color": { "a": 1, "rgb": 15844367 } },
+    { "query": "path:90-Notes", "color": { "a": 1, "rgb": 15873355 } }
+  ],
+  "collapse-display": true,
+  "showArrow": true,
+  "textFadeMultiplier": 0,
+  "nodeSizeMultiplier": 1,
+  "lineSizeMultiplier": 1,
+  "collapse-forces": true,
+  "centerStrength": 0.5,
+  "repelStrength": 10,
+  "linkStrength": 1,
+  "linkDistance": 250,
+  "scale": 0.5,
+  "close": true
+}

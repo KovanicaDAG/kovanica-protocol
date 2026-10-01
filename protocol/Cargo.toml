@@ -1,0 +1,64 @@
+[workspace]
+resolver = "2"
+members = ["crates/kovanica-dag", "crates/kovanica-state", "crates/kovanica-wallet", "crates/kovanica-node", "crates/kovanica-cli", "crates/kovanica-ffi", "crates/kovanica-chat"]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/KovanicaDAG/kovanica"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# crypto / hashing
+blake3 = { version = "1", features = ["pure"] }
+hex = "0.4"
+ed25519-dalek = { version = "2", features = ["std"] }
+curve25519-dalek = "4"
+sha2 = "0.10"
+sha1 = "0.10"
+# SLIP-0010 key derivation (hmac + sha512); used by kovanica-wallet only.
+hmac = "0.12"
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["std"] }
+rand = "0.8"
+getrandom = "0.2"
+
+# serialization / config
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.3"
+
+# errors
+thiserror = "2"
+anyhow = "1"
+
+# networking / node
+socket2 = "0.5"
+ureq = "2"
+metrics = "0.22"
+# default features pull hyper-tls/openssl for the http-listener we don't use
+# (we render /metrics ourselves); dropping them keeps ARM cross-builds simple.
+metrics-exporter-prometheus = { version = "0.13", default-features = false }
+
+# observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
+
+# cli / ffi
+clap = { version = "4", features = ["derive", "env"] }
+uniffi = { version = "0.32", features = ["cli"] }
+
+# testing / fuzzing
+proptest = "1.0"
+arbitrary = "1.3"
+criterion = "0.5"
+libfuzzer-sys = "0.4"
+
+# BIP-39 mnemonic parsing/entropy. Used by kovanica-wallet only — it is the sole
+# owner of key derivation, so no other crate should take this dependency.
+bip39 = { version = "2", features = ["rand", "std"] }
+
+# chat encryption
+chacha20poly1305 = "0.10"
+x25519-dalek = { version = "2", features = ["static_secrets"] }

@@ -1,0 +1,137 @@
+name: Release Node Binaries
+
+# Tag-driven release of prebuilt kovanica-node binaries. Create a tag named
+# `v<semver>` on a commit on `main`, e.g.:
+#
+#   git tag v0.2.1
+#   git push origin v0.2.1
+#
+# Produces a GitHub Release with the four tarballs documented in
+# node/RELEASES.md (single `kovanica-node` executable per tarball) plus
+# SHA256SUMS. `node/scripts/install.sh` prefers these assets and falls back
+# to a source build when they are missing.
+#
+# Nothing here runs on pull requests. Releasing is a maintainer decision —
+# this workflow only executes it after the tag guard agrees.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linux:
+    name: Build Linux (x86_64 + aarch64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            asset: kovanica-node-x86_64-linux
+          - target: aarch64-unknown-linux-gnu
+            asset: kovanica-node-aarch64-linux
+            linker: aarch64-linux-gnu-gcc
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross linker (aarch64)
+        if: matrix.linker != ''
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build kovanica-node
+        working-directory: node
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+        run: cargo build --release --target ${{ matrix.target }} -p kovanica-node
+
+      - name: Pack tarball
+        run: |
+          mkdir -p dist
+          cp "node/target/${{ matrix.target }}/release/kovanica-node" dist/
+          tar -czf "${{ matrix.asset }}.tar.gz" -C dist kovanica-node
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.tar.gz
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS (x86_64 + arm64)
+    runs-on: macos-14
+    timeout-minutes: 45
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            asset: kovanica-node-aarch64-macos
+          - target: x86_64-apple-darwin
+            asset: kovanica-node-x86_64-macos
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build kovanica-node
+        working-directory: node
+        run: cargo build --release --target ${{ matrix.target }} -p kovanica-node
+
+      - name: Pack tarball
+        run: |
+          mkdir -p dist
+          cp "node/target/${{ matrix.target }}/release/kovanica-node" dist/
+          tar -czf "${{ matrix.asset }}.tar.gz" -C dist kovanica-node
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: [build-linux, build-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        working-directory: artifacts
+        run: sha256sum *.tar.gz > SHA256SUMS
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false

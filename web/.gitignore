@@ -1,0 +1,11 @@
+site/node_modules/
+site/.output/
+site/.vercel/
+site/.tanstack/
+site/dist/
+site/.env
+site/.env.local
+deploy/.output/
+deploy/node_modules/
+.DS_Store
+*.log

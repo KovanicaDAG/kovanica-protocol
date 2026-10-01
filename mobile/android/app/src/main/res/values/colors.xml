@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="kvnc_blue">#3366E6</color>
+    <color name="kvnc_dark_blue">#1A3399</color>
+    <color name="kvnc_green">#33B366</color>
+    <color name="kvnc_orange">#E68033</color>
+    <color name="kvnc_red">#E63333</color>
+    <color name="kvnc_light_gray">#F2F2F2</color>
+    <color name="kvnc_white">#FFFFFF</color>
+    <color name="kvnc_black">#000000</color>
+</resources>

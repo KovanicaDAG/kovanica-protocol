@@ -1,0 +1,29 @@
+[Unit]
+Description=Kovanica BlockDAG Node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ kovanica_user }}
+Group={{ kovanica_group }}
+ExecStart=/usr/local/bin/kovanica-node serve
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65536
+
+Environment=KOVANICA_DATA={{ kovanica_data }}
+Environment=KOVANICA_P2P_PORT={{ kovanica_p2p_port }}
+Environment=KOVANICA_HTTP_PORT={{ kovanica_http_port }}
+Environment=KOVANICA_PEERS={{ kovanica_peers }}
+Environment=KOVANICA_MINE={{ '1' if kovanica_mine else '0' }}
+Environment=KOVANICA_MINE_SECS={{ kovanica_mine_secs }}
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths={{ kovanica_data }}
+
+[Install]
+WantedBy=multi-user.target

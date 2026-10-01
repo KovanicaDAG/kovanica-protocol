@@ -1,0 +1,118 @@
+name: kovanica wallet
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "kovanica-wallet/**"
+      - ".github/workflows/wallet.yml"
+  pull_request:
+    paths:
+      - "kovanica-wallet/**"
+      - ".github/workflows/wallet.yml"
+  workflow_dispatch:
+
+jobs:
+  build-android-apk:
+    name: Build Android wallet APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "wrapper"
+          gradle-home-cache-cleanup: true
+
+      # The standalone wallet is pure Kotlin/Compose (no FFI / native libs),
+      # so no Rust toolchain / NDK / cargo-ndk is required here.
+      - name: Assemble debug APK
+        run: |
+          chmod +x ./kovanica-wallet/android/gradlew || true
+          ./kovanica-wallet/android/gradlew -p kovanica-wallet/android :app:assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-wallet-apk
+          path: kovanica-wallet/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+  # The iOS app cannot be compiled on the dev Linux host (no Xcode). This job
+  # is the only real build verification — it is structurally validated here, but
+  # a genuine compile/link needs a macOS runner.
+  build-ios-app:
+    name: Build iOS wallet (simulator, no code signing)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build for iOS simulator (validates Swift compile + link, project structure)
+        run: |
+          xcodebuild \
+            -project kovanica-wallet/ios/KovanicaWallet.xcodeproj \
+            -scheme KovanicaWallet \
+            -sdk iphonesimulator \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+  # Produces an unsigned .ipa for sideloading with AltStore / Sideloadly from a
+  # PC (or Mac). No paid Apple Developer identity is required: the app is built
+  # for a physical device with code signing disabled, then packaged into a
+  # standard Payload/ .ipa. AltStore / Sideloadly re-sign it with the user's
+  # (free) Apple ID on install, so even a Linux/Windows-only user can get it onto
+  # a real iPhone — the signing step happens on their side, not here.
+  build-ios-ipa:
+    name: Export iOS wallet .ipa (unsigned, sideloadable)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build device .app (code signing disabled)
+        run: |
+          xcodebuild \
+            -project kovanica-wallet/ios/KovanicaWallet.xcodeproj \
+            -scheme KovanicaWallet \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned .ipa (Payload/)
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/KovanicaWallet.app"
+          test -d "$APP" || { echo "No .app at $APP"; exit 1; }
+          mkdir -p payloadexp/Payload
+          cp -R "$APP" payloadexp/Payload/
+          ( cd payloadexp && zip -qr "../KovanicaWallet-ios-unsigned.ipa" Payload )
+          ls -la KovanicaWallet-ios-unsigned.ipa
+
+      - name: Upload iOS .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-wallet-ios-ipa
+          path: KovanicaWallet-ios-unsigned.ipa
+          if-no-files-found: error

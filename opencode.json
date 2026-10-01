@@ -1,0 +1,54 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "anthropic/claude-sonnet-4-5",
+  "default_agent": "kovanica-core",
+  "update": "notify",
+  "instructions": [
+    "AGENTS.md",
+    "docs/**/*.md",
+    "**/RFC-*.md",
+    "**/KVP-*.md",
+    "Tokenomics.md",
+    "NETWORK.md"
+  ],
+  "permissions": [
+    { "action": "edit", "resource": "*", "effect": "ask" },
+    { "action": "shell", "resource": "*", "effect": "ask" },
+    { "action": "webfetch", "resource": "*", "effect": "allow" },
+    { "action": "websearch", "resource": "*", "effect": "allow" }
+  ],
+  "plugins": [
+    "./.opencode/plugins/guards",
+    "./.opencode/plugins/tools",
+    "./.opencode/plugins/automation"
+  ],
+  "agents": {
+    "kovanica-core": {
+      "mode": "primary",
+      "description": "Kovanica core protocol specialist — GHOSTDAG, UTXO, node, consensus-safe work"
+    },
+    "plan": {
+      "mode": "primary",
+      "description": "Read-only planning and analysis agent",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" },
+        { "action": "shell", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "security-audit": {
+      "mode": "subagent",
+      "description": "Read-only security auditor — keys, crypto, replay/DoS, P2P trust boundary",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "deny" }
+      ]
+    },
+    "genesis-testnet": {
+      "mode": "subagent",
+      "description": "Genesis / testnet-reset playbook — highest-risk operational role",
+      "permissions": [
+        { "action": "edit", "resource": "*", "effect": "ask" },
+        { "action": "shell", "resource": "*", "effect": "ask" }
+      ]
+    }
+  }
+}

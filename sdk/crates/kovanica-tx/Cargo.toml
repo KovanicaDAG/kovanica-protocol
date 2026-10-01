@@ -1,0 +1,22 @@
+[package]
+name = "kovanica-tx"
+description = "Transaction builders for Kovanica (transfer, assets, HTLC, multisig, vault)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+
+[dependencies]
+kovanica-types = { workspace = true }
+kovanica-keys = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+blake3 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+ed25519-dalek = { workspace = true }

@@ -1,0 +1,72 @@
+name: android light node
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android-light-node/**"
+      - "crates/kovanica-ffi/**"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "android-light-node/**"
+      - "crates/kovanica-ffi/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # POPRAVAK 1: Dodani Android targeti kako bi cargo-ndk mogao kompajlirati Rust kod za mobitele
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi, i686-linux-android, x86_64-linux-android
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK + NDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.0.12077973"
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      # POPRAVAK 2: Korištenje komande 'bash' osigurava da skripta radi čak i ako nema '+x' dozvolu u gitu
+      - name: Build the FFI cdylib for Android
+        working-directory: crates/kovanica-ffi
+        run: bash ./build-android.sh
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          # Umjesto fiksne 8.13 verzije, koristimo "wrapper" kako bi se poštivala verzija (8.14) iz tvog gradle-wrapper.properties
+          gradle-version: "wrapper" 
+          gradle-home-cache-cleanup: true
+
+      # POPRAVAK 3: Postavljena okolišna varijabla i za Gradle kako bi AGP (Android Gradle Plugin) lako našao NDK,
+      # i promijenjeno pozivanje na 'gradlew' (preporuka umjesto globalnog 'gradle')
+      - name: Assemble debug APK
+        run: |
+          chmod +x ./android-light-node/gradlew || true
+          ./android-light-node/gradlew -p android-light-node :app:assembleDebug
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+          ANDROID_NDK_ROOT: ${{ env.ANDROID_HOME }}/ndk/27.0.12077973
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-light-node-apk
+          path: android-light-node/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+

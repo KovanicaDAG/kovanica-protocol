@@ -1,0 +1,18 @@
+[package]
+name = "kovanica-dex"
+description = "HTLC-based atomic swap DEX (KVP-104)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kovanica-types = { path = "../kovanica-types" }
+kovanica-keys = { path = "../kovanica-keys" }
+kovanica-tx = { path = "../kovanica-tx" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+blake3 = { workspace = true }
+sha2 = { workspace = true }

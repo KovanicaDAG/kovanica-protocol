@@ -1,0 +1,190 @@
+name: Publish SDK (crates.io + npm)
+
+# Tag-driven release of the kovanica-sdk crates and the WASM npm package.
+# Create a tag named `v<semver>` on a commit on `main`, e.g.:
+#
+#   git tag v0.1.0-alpha.1   # must match sdk/Cargo.toml [workspace.package] version
+#   git push origin v0.1.0-alpha.1
+#
+# Guards (each fails the run before anything is published):
+#   1. Tag version == workspace version (lockstep, incl. bindings package.json).
+#   2. Tagged commit is reachable from origin/main (no release from feature
+#      branches).
+#   3. Required secrets are set (CARGO_REGISTRY_TOKEN, NPM_TOKEN).
+#   4. Full test/clippy gate passes; kovanica-types packages in isolation;
+#      the wasm/npm artifact builds (wasm-pack + npm pack dry-run) — proven
+#      BEFORE any crate is published, so a wasm failure can never leave a
+#      partial release wave.
+#
+# Nothing here runs on pull requests. Publishing is a maintainer decision —
+# this workflow only executes it after the guards agree.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-sdk
+  cancel-in-progress: false
+
+env:
+  # Pinned for reproducible release builds; doubles as the cache key below.
+  WASM_PACK_VERSION: "0.15.0"
+
+jobs:
+  preflight:
+    name: Guards + test gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - name: Checkout (full history for ancestry guard)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract tag version
+        id: tagver
+        run: |
+          tag="${GITHUB_REF#refs/tags/}"
+          ver="${tag#v}"
+          echo "tag=$tag ver=$ver"
+          echo "ver=$ver" >> "$GITHUB_OUTPUT"
+
+      - name: Tag/main ancestry guard
+        run: |
+          git fetch origin main:refs/remotes/origin/main --quiet
+          git merge-base --is-ancestor HEAD refs/remotes/origin/main \
+            || { echo "::error::tag must point to a commit on main"; exit 1; }
+
+      - name: Version lockstep guard (tag vs workspace)
+        run: |
+          ws_ver=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          npm_ver=$(python3 -c "import json; print(json.load(open('bindings/kovanica-wasm/package.json'))['version'])")
+          test "${{ steps.tagver.outputs.ver }}" = "$ws_ver" \
+            || { echo "::error::tag v${{ steps.tagver.outputs.ver }} != workspace $ws_ver"; exit 1; }
+          test "$npm_ver" = "$ws_ver" \
+            || { echo "::error::npm manifest $npm_ver != workspace $ws_ver"; exit 1; }
+          echo "lockstep ok: $ws_ver"
+
+      - name: Secrets guard
+        run: |
+          test -n "${{ secrets.CARGO_REGISTRY_TOKEN }}" \
+            || { echo "::error::CARGO_REGISTRY_TOKEN secret not set"; exit 1; }
+          test -n "${{ secrets.NPM_TOKEN }}" \
+            || { echo "::error::NPM_TOKEN secret not set"; exit 1; }
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Test gate
+        run: cargo test --workspace
+
+      - name: Clippy gate
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Package leaf crate in isolation
+        run: cargo package -p kovanica-types
+
+      - name: Cache wasm-pack ${{ env.WASM_PACK_VERSION }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-${{ env.WASM_PACK_VERSION }}
+
+      - name: Install wasm-pack ${{ env.WASM_PACK_VERSION }}
+        run: |
+          if command -v wasm-pack >/dev/null 2>&1; then wasm-pack --version
+          else cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked; fi
+
+      - name: Prove wasm/npm artifact (before any publish)
+        # wasm-pack 0.15 resolves --out-dir relative to the crate dir, not
+        # the CWD — bare "pkg" lands at bindings/kovanica-wasm/pkg.
+        run: |
+          wasm-pack build bindings/kovanica-wasm --target web --out-dir pkg
+          cp bindings/kovanica-wasm/package.json bindings/kovanica-wasm/pkg/package.json
+          (cd bindings/kovanica-wasm/pkg && npm pack --dry-run)
+
+  publish-crates:
+    name: Publish crates.io (ordered)
+    needs: preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: sdk
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Dependency order is enforced by crates.io resolution: internal path
+      # deps resolve only once the previous crate is live. kovanica-wasm is
+      # intentionally NOT published to crates.io (npm is its channel).
+      - name: Publish crates (types → keys → tx → rpc → fee → sdk)
+        run: |
+          for crate in kovanica-types kovanica-keys kovanica-tx kovanica-rpc kovanica-fee kovanica-sdk; do
+            echo "=== publishing $crate ==="
+            cargo publish -p "$crate"
+          done
+
+  publish-npm:
+    name: Publish npm @kovanica/sdk-wasm
+    needs: publish-crates
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache wasm-pack ${{ env.WASM_PACK_VERSION }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-${{ env.WASM_PACK_VERSION }}
+
+      - name: Install wasm-pack ${{ env.WASM_PACK_VERSION }}
+        run: |
+          if command -v wasm-pack >/dev/null 2>&1; then wasm-pack --version
+          else cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked; fi
+
+      - name: Build web target
+        # wasm-pack 0.15 resolves --out-dir relative to the *crate* dir, not
+        # the CWD — bare "pkg" lands at bindings/kovanica-wasm/pkg.
+        run: >
+          wasm-pack build bindings/kovanica-wasm --target web
+          --out-dir pkg
+
+      - name: Overlay repo package.json (name / entry contract)
+        run: cp bindings/kovanica-wasm/package.json bindings/kovanica-wasm/pkg/package.json
+
+      - name: Configure npm auth
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+
+      - name: Publish (scoped package → --access public, dist-tag alpha)
+        # 0.1.0-alpha.1 is a pre-release: publish under the "alpha" dist-tag,
+        # NOT "latest", so a bare `npm install @kovanica/sdk-wasm` never
+        # silently hands a consumer a pre-release. Consumers opt in with
+        # `npm install @kovanica/sdk-wasm@alpha`.
+        run: npm publish --access public --tag alpha
+        working-directory: sdk/bindings/kovanica-wasm/pkg

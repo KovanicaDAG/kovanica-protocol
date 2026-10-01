@@ -1,0 +1,43 @@
+# Kovanica multi-surface Caddy config
+# All surfaces served from the same Vite build on 127.0.0.1:3000.
+# The Rust node serves /api/* on 127.0.0.1:8080.
+
+# Apex — landing page
+kovanica.online {
+	reverse_proxy 127.0.0.1:3000
+}
+
+# Testnet — full explorer, wallet, network tabs
+testnet.kovanica.online {
+	reverse_proxy 127.0.0.1:3000
+}
+
+# Mainnet — same app, mainnet network (launching soon)
+mainnet.kovanica.online {
+	reverse_proxy 127.0.0.1:3000
+}
+
+# Playground — onboarding, API console, snippets
+playground.kovanica.online {
+	reverse_proxy 127.0.0.1:3000
+}
+
+# Docs
+docs.kovanica.online {
+	reverse_proxy 127.0.0.1:3000
+}
+
+# API reference
+api.kovanica.online {
+	reverse_proxy 127.0.0.1:3000
+}
+
+# Faucet
+faucet.testnet.kovanica.online {
+	reverse_proxy 127.0.0.1:3000
+}
+
+# Legacy explorer domain — redirect to testnet
+explorer.kovanica.online {
+	redir https://testnet.kovanica.online{uri} permanent
+}

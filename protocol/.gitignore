@@ -1,0 +1,25 @@
+# .gitignore for secret key material
+#
+# Two classes of secret live in this tree and must NEVER be committed.
+
+# 1. PoA authority key files (mode 0600), written by the authority-key ceremony.
+#    These paths are relative to THIS file's directory. A pattern containing a
+#    `/` is anchored here, so writing `protocol/authority-keys/…` would resolve
+#    to `protocol/protocol/authority-keys/…` and silently never match — which is
+#    what it did until 2026-09-30. The root .gitignore also covers these; both
+#    are kept so the nested tree stays safe if it is ever split out.
+authority-keys/*.env
+mainnet-authority-keys/*.env
+
+# `authorities.conf` in both dirs is PUBLIC (64-hex pubkeys + threshold) and is
+# deliberately tracked — every node must agree on the set. Never add a secret
+# to it; the authority *signing* keys live in the `*.env` files above.
+
+# 2. Runtime data directories. `Node::data_dir()` defaults to a relative `data/`
+#    under the crate, so `cargo test` / `cargo run` drop these into the source
+#    tree. They contain the founder premine key, the operator wallet (which may
+#    be a 12/24-word BIP-39 phrase), validator/miner seeds, faucet ledgers and
+#    peer ban state — all regenerable, none of it belongs in git history.
+#    Set KOVANICA_DATA outside the checkout to keep them out entirely.
+crates/*/data/
+desktop-app/data/

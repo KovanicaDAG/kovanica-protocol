@@ -1,0 +1,100 @@
+name: Rust gate
+
+# Enforces the gate documented in the root `AGENTS.md` §3, which until now was
+# never actually run. `build-android.yml` only fires on
+# `protocol/crates/kovanica-ffi/**`, so a PR touching `kovanica-dag`,
+# `kovanica-state`, `kovanica-node` or `kovanica-cli` got no CI at all, and CI
+# nowhere built either workspace with `--locked`.
+#
+# That gap had a concrete cost: `protocol/Cargo.lock` (#53) and `node/Cargo.lock`
+# (#55) both shipped missing dependency entries, and `cargo metadata --locked`
+# failed on a clean checkout. Cargo repairs a lockfile in place on a normal
+# build, so the drift accumulated invisibly. The `locked` step below is what
+# turns that class of defect into a red check.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'protocol/**'
+      - 'node/**'
+      - '.github/workflows/rust-gate.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'protocol/**'
+      - 'node/**'
+      - '.github/workflows/rust-gate.yml'
+  workflow_dispatch:
+
+# Nothing here writes to the repo or publishes anything.
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    name: fmt / clippy / test (protocol) + lockfiles
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # `protocol/rust-toolchain.toml` pins 1.98.0 (rustfmt + clippy), so the
+      # toolchain follows the repo rather than a workflow-local `stable`.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.98.0
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            protocol/target
+            node/target
+          key: ${{ runner.os }}-rust-gate-${{ hashFiles('protocol/Cargo.lock', 'node/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-gate-
+
+      # Catches an inconsistent committed lockfile before anything is built.
+      # Both workspaces are checked: `node/` is the one the VPS deploys from.
+      - name: Verify lockfiles are consistent (--locked)
+        run: |
+          cargo metadata --locked --format-version 1 --manifest-path protocol/Cargo.toml > /dev/null
+          cargo metadata --locked --format-version 1 --manifest-path node/Cargo.toml > /dev/null
+
+      - name: Assert lockfiles are not mutated by the check
+        run: |
+          # `--locked` must not have rewritten anything; if it did, the commit
+          # shipped an inconsistent lockfile.
+          if ! git diff --quiet -- protocol/Cargo.lock node/Cargo.lock; then
+            echo "::error::a committed lockfile was inconsistent with its manifests and cargo rewrote it."
+            git diff -- protocol/Cargo.lock node/Cargo.lock
+            exit 1
+          fi
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+        working-directory: protocol
+
+      # `-D warnings`, matching AGENTS.md §3. A bare "clippy is clean" is a much
+      # weaker gate and lets warnings accumulate until one becomes a deny.
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: protocol
+
+      - name: cargo test
+        run: cargo test --workspace
+        working-directory: protocol
+
+      # `node/` builds the deploy artifact, so it is built for real rather than
+      # merely resolved. This is what would have caught the #55 lockfile gap.
+      - name: Build the node release artifact
+        run: cargo build --release --workspace
+        working-directory: node

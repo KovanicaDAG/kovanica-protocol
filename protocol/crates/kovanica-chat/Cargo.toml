@@ -1,0 +1,24 @@
+[package]
+name = "kovanica-chat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "On-chain encrypted chat over KVP-104 data transactions (Kovanica DAG)."
+
+[dependencies]
+blake3.workspace = true
+ed25519-dalek.workspace = true
+curve25519-dalek.workspace = true
+hex.workspace = true
+x25519-dalek.workspace = true
+chacha20poly1305.workspace = true
+rand.workspace = true
+kovanica-state = { path = "../kovanica-state" }
+
+[dev-dependencies]
+ed25519-dalek = { workspace = true }
+
+[lints.rust]
+unsafe_code = "forbid"

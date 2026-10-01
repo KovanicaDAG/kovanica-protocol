@@ -1,0 +1,1 @@
+- SW-PoA-SPV-CONSENSUS.md: Canonical PoA+SPV spec (KVP-201); read before any mainnet ceremony (Gate 4)

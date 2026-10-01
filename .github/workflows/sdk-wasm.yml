@@ -1,0 +1,77 @@
+name: Build SDK Wasm (npm gate)
+
+# Gate for the kovanica-sdk WASM binding: proves that a wasm-pack build of
+# `sdk/bindings/kovanica-wasm` produces a publishable npm tarball with the
+# SDK's manifest contract (@kovanica/sdk-wasm, version lockstep with the
+# workspace, ESM entry `kovanica_wasm.js`). Nothing is published from CI —
+# the publish step stays a human + token decision (see sdk/RELEASE.md).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/**'
+      - '.github/workflows/sdk-wasm.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'sdk/**'
+      - '.github/workflows/sdk-wasm.yml'
+  workflow_dispatch:
+
+env:
+  # Pinned for reproducible gate builds; doubles as the cache key below.
+  WASM_PACK_VERSION: "0.15.0"
+
+jobs:
+  wasm-gate:
+    name: wasm-pack build + npm pack dry-run
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: sdk
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache wasm-pack ${{ env.WASM_PACK_VERSION }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-${{ env.WASM_PACK_VERSION }}
+
+      - name: Install wasm-pack ${{ env.WASM_PACK_VERSION }}
+        run: |
+          if command -v wasm-pack >/dev/null 2>&1; then wasm-pack --version
+          else cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked; fi
+
+      - name: Build web target
+        # wasm-pack 0.15 resolves --out-dir relative to the *crate* dir, not
+        # the CWD — bare "pkg" lands at bindings/kovanica-wasm/pkg.
+        run: >
+          wasm-pack build bindings/kovanica-wasm --target web
+          --out-dir pkg
+
+      - name: Overlay repo package.json (name / entry contract)
+        run: cp bindings/kovanica-wasm/package.json bindings/kovanica-wasm/pkg/package.json
+
+      - name: Version lockstep check (npm vs workspace)
+        run: |
+          npm_ver=$(python3 -c "import tomllib,json; print(json.load(open('bindings/kovanica-wasm/package.json'))['version'])")
+          ws_ver=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          test "$npm_ver" = "$ws_ver" || { echo "version drift: npm=$npm_ver workspace=$ws_ver"; exit 1; }
+          echo "lockstep ok: $npm_ver"
+
+      - name: npm pack dry-run (tarball contents)
+        run: npm pack --dry-run
+        working-directory: sdk/bindings/kovanica-wasm/pkg
+
+      - name: Host compile of the binding
+        run: cargo check -p kovanica-wasm

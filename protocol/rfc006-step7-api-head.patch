@@ -1,0 +1,56 @@
+--- a/crates/kovanica-node/src/explorer.rs
++++ b/crates/kovanica-node/src/explorer.rs
+@@ -14,8 +14,8 @@
+ 
+ use kovanica_dag::{Block, BlockId};
+ use kovanica_state::{
+-    decode_block_payload, encode_block_payload, Address, HybridConfig, OutPoint, Transaction, TxId,
+-    TxOutput,
++    decode_block_payload, encode_block_payload, Address, HybridConfig, OutPoint, SupplyMetrics,
++    Transaction, TxId, TxOutput,
+ };
+ 
+ use crate::dht::{NodeId, PeerContact, RoutingTable};
+@@ -1266,21 +1266,36 @@
+     }
+     if method == "GET" && path == "/api/head" {
+         if let Some(n) = app.mesh.node(&app.selected) {
+-            let genesis = n
+-                .ledger()
+-                .ok()
++            let ledger = n.ledger().ok();
++            let genesis = ledger
++                .as_ref()
+                 .map(|l| l.genesis().to_string())
+                 .unwrap_or_default();
+             let tip = n.selected_tip().map(|t| t.to_string()).unwrap_or_default();
+             let blocks = n.block_count().unwrap_or(0);
++            let min_fee = n.min_fee();
++            let (subsidy, supply) = match &ledger {
++                Some(l) => {
++                    // height of tip ≈ blocks-1 (genesis is height 0)
++                    let height = blocks.saturating_sub(1);
++                    (l.subsidy_at(height), l.supply())
++                }
++                None => (0u64, SupplyMetrics::default()),
++            };
+             let body = format!(
+-                "{{\"network\":{},\"genesis\":{},\"tip\":{},\"blocks\":{},\"min_fee\":{},\"atom\":{}}}",
++                "{{\"network\":{},\"genesis\":{},\"tip\":{},\"blocks\":{},\"min_fee\":{},\"atom\":{},\"subsidy\":{},\"native_minted\":{},\"total\":{},\"circulating\":{},\"burned\":{},\"max_supply\":{}}}",
+                 jstr(network_profile().id),
+                 jstr(&genesis),
+                 jstr(&tip),
+                 blocks,
+-                n.min_fee(),
+-                ATOM
++                min_fee,
++                ATOM,
++                subsidy,
++                supply.total,
++                supply.total,
++                supply.circulating,
++                supply.burned,
++                supply.max_supply,
+             );
+             return respond(&mut stream, 200, "application/json", body.as_bytes());
+         }

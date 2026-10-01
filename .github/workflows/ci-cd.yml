@@ -1,0 +1,363 @@
+name: Kovanica CI/CD
+
+"on":
+  push:
+    branches: [main, develop]
+    tags: ['v*']
+  pull_request:
+    branches: [main, develop]
+
+env:
+  ANDROID_HOME: /opt/android-sdk
+  ANDROID_NDK_HOME: /opt/android-sdk/ndk/25.2.9519653
+  PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
+  PKG_CONFIG_ALLOW_SYSTEM_CFLAGS: 1
+  PKG_CONFIG_ALLOW_SYSTEM_LIBS: 1
+
+jobs:
+  # Android Build & Test
+  android:
+    name: Android Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          ndk-version: r25c
+          emulator: false
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x mobile/android/gradlew
+
+      - name: Build Debug APK
+        run: |
+          cd mobile/android
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Build Release APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cd mobile/android
+          ./gradlew assembleRelease --no-daemon
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-wallet-debug-apk
+          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
+      - name: Upload Release APK
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-wallet-release-apk
+          path: mobile/android/app/build/outputs/apk/release/app-release.apk
+          retention-days: 30
+
+  # Linux Tauri Build
+  linux-tauri:
+    name: Linux Tauri Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libssl-dev
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/console/kovanica/package-lock.json
+
+      - name: Install Node dependencies
+        run: |
+          cd mobile/console/kovanica
+          npm ci
+
+      - name: Build frontend
+        run: |
+          cd mobile/console/kovanica
+          npm run build
+
+      - name: Build Tauri App
+        uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: mobile/console/kovanica/src-tauri
+          tagName: kovanica-console-v__VERSION__
+          releaseName: 'Kovanica Console v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
+          releaseDraft: true
+          prerelease: false
+
+      - name: Upload Linux Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-console-linux
+          path: |
+            mobile/console/kovanica/src-tauri/target/release/bundle/appimage/*.AppImage
+            mobile/console/kovanica/src-tauri/target/release/bundle/deb/*.deb
+            mobile/console/kovanica/src-tauri/target/release/bundle/rpm/*.rpm
+          retention-days: 30
+
+  # Windows Tauri Build (cross-compile)
+  windows-tauri:
+    name: Windows Tauri Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install mingw-w64
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: mobile/console/kovanica/package-lock.json
+
+      - name: Install Node dependencies
+        run: |
+          cd mobile/console/kovanica
+          npm ci
+
+      - name: Build frontend
+        run: |
+          cd mobile/console/kovanica
+          npm run build
+
+      - name: Build Tauri App (Windows)
+        run: |
+          cd mobile/console/kovanica/src-tauri
+          cargo tauri build --target x86_64-pc-windows-gnu
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-console-windows
+          path: mobile/console/kovanica/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
+          retention-days: 30
+
+  # iOS Build (requires macOS runner)
+  ios:
+    name: iOS Build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # The app links the Rust light node and compiles its generated Swift
+      # bindings, so the framework must exist before xcodegen runs. This is
+      # also the build that catches an FFI surface change without a matching
+      # bindings regeneration.
+      - name: Build the light-node xcframework
+        run: ./protocol/crates/kovanica-ffi/build-apple.sh
+
+      - name: Verify committed Swift bindings match the Rust surface
+        run: |
+          set -euo pipefail
+          cd protocol
+          cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \
+            --library target/release/libkovanica_ffi.so \
+            --language swift --out-dir /tmp/bindgen-swift
+          diff -r -x README.md /tmp/bindgen-swift crates/kovanica-ffi/bindings/swift
+
+      - name: Generate the Xcode project
+        run: |
+          cd mobile/ios
+          xcodegen generate --spec xcodegen.yml
+
+      - name: Build iOS App
+        run: |
+          cd mobile/ios
+          xcodebuild -scheme KovanicaWallet -configuration Release \
+            -destination generic/platform=iOS -derivedDataPath build -quiet
+
+      - name: Upload iOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-wallet-ios
+          path: mobile/ios/build/Build/Products/Release-iphoneos/*.app
+          retention-days: 30
+
+  # Web Console Build & Deploy
+  web-consoles:
+    name: Web Console Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Build Kovanica Console
+        run: |
+          cd mobile/console/kovanica
+          npm ci
+          npm run build
+
+      - name: Build Enterprise Console
+        run: |
+          cd mobile/console/enterprise
+          npm ci
+          npm run build
+
+      - name: Upload Kovanica Console
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-console-web
+          path: mobile/console/kovanica/dist/
+          retention-days: 30
+
+      - name: Upload Enterprise Console
+        uses: actions/upload-artifact@v4
+        with:
+          name: enterprise-console-web
+          path: mobile/console/enterprise/dist/
+          retention-days: 30
+
+      - name: Deploy to VPS (main branch only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            cd /opt/kovanica/mobile/console/kovanica && pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
+            cd /opt/kovanica/mobile/console/enterprise && pm2 reload ecosystem.config.js || pm2 start ecosystem.config.js
+            pm2 save
+
+  # Rust Core Tests
+  rust-tests:
+    name: Rust Core Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # The Rust workspaces are `protocol/` (dag, state, node, wallet, ffi,
+      # …) and `sdk/`. The repo root has no Cargo.toml, so every step has to
+      # name its manifest explicitly.
+      - name: Run cargo check
+        run: |
+          cargo check --locked --manifest-path protocol/Cargo.toml --workspace --all-targets
+          cargo check --locked --manifest-path sdk/Cargo.toml --workspace
+
+      - name: Run cargo clippy
+        run: |
+          cargo clippy --locked --manifest-path protocol/Cargo.toml --workspace --all-targets -- -D warnings
+          cargo clippy --locked --manifest-path sdk/Cargo.toml --workspace --all-targets -- -D warnings
+
+      - name: Run cargo test
+        run: |
+          cargo test --locked --manifest-path protocol/Cargo.toml --workspace
+          cargo test --locked --manifest-path sdk/Cargo.toml --workspace
+
+  # Release
+  release:
+    name: Create Release
+    needs: [android, linux-tauri, windows-tauri, web-consoles, rust-tests]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/kovanica-wallet-release-apk/app-release.apk
+            artifacts/kovanica-console-linux/*.AppImage
+            artifacts/kovanica-console-linux/*.deb
+            artifacts/kovanica-console-linux/*.rpm
+            artifacts/kovanica-console-windows/*.exe
+            artifacts/kovanica-console-web/**
+            artifacts/enterprise-console-web/**
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update vault documentation
+        if: false # Manual step - requires vault access
+        run: |
+          echo "Manual step: Update vault documentation with new build artifacts"
+          echo "Artifacts available in release assets"

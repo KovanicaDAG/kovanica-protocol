@@ -1,0 +1,93 @@
+# Kovanica Protocol — Docker Compose
+#
+# ⚠️  RETIRED. Do not `docker compose up` with this file.
+#
+# This file was never runnable. Its build stanza pointed at
+# `kovanica-install/docker/Dockerfile` (no such directory — the path is
+# `installer/docker/`) with context `../..` = the repo root, which has no
+# Cargo.toml; the cargo workspace is `protocol/`. The build could not have
+# succeeded.
+#
+# It was also wrong in ways that only surface at runtime:
+#   - KOVANICA_P2P_PORT / KOVANICA_HTTP_PORT / KOVANICA_EXPLORER are not read
+#     by the node (0 references in the binary). The port mappings happened to
+#     work only because the defaults coincided.
+#   - KOVANICA_PEERS pointed every container at the public testnet seeds, so
+#     any node built from it joined the public testnet by default.
+#   - KOVANICA_NETWORK was unset, so a container always booted the testnet
+#     profile — there was no way to get a separate devnet from it.
+#
+# Use docker-compose.devnet.yml for local development. The testnet seeds run on
+# real hosts under systemd (kovanica-testnet.service); mainnet is dormant and
+# not deployable. See docker-compose.devnet.yml for the full rationale.
+#
+# Retained as a record of the original intent; superseded, not repaired.
+
+services:
+  kovanica-node:
+    profiles: ["retired-do-not-use"]
+    build:
+      context: ../..
+      dockerfile: installer/docker/Dockerfile
+    container_name: kovanica-node
+    restart: unless-stopped
+    ports:
+      - "9000:9000"    # P2P
+      - "8080:8080"    # HTTP/API
+    volumes:
+      - kovanica-data:/var/lib/kovanica
+    environment:
+      - KOVANICA_DATA=/var/lib/kovanica
+      - KOVANICA_P2P_PORT=9000
+      - KOVANICA_HTTP_PORT=8080
+      - KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
+      - KOVANICA_MINE=0
+      - KOVANICA_MINE_SECS=60
+      - KOVANICA_EXPLORER=0
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: "2.0"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/head"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Optional: Prometheus metrics scraper
+  prometheus:
+    profiles: ["retired-do-not-use"]
+    image: prom/prometheus:latest
+    container_name: kovanica-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=30d'
+
+  # Optional: Grafana dashboard
+  grafana:
+    profiles: ["retired-do-not-use"]
+    image: grafana/grafana:latest
+    container_name: kovanica-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=kovanica
+
+volumes:
+  kovanica-data:
+  prometheus-data:
+  grafana-data:

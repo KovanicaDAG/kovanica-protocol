@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+.idea/
+.vscode/
+*.swp
+.DS_Store
+pkg/          # wasm-pack output
+node_modules/

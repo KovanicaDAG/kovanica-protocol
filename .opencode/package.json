@@ -1,0 +1,8 @@
+{
+  "name": "kovanica-opencode-plugins",
+  "version": "0.4.1",
+  "description": "Kovanica OpenCode V2 plugins (guards, tools, automation)",
+  "private": true,
+  "type": "module",
+  "dependencies": {}
+}

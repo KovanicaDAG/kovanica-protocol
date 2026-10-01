@@ -1,0 +1,9 @@
+{
+  "alwaysUpdateLinks": true,
+  "newLinkFormat": "absolute",
+  "useMarkdownLinks": false,
+  "attachmentFolderPath": "98-Attachments",
+  "showUnsupportedFiles": true,
+  "trashOption": "local",
+  "promptDelete": false
+}

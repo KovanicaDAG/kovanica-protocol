@@ -1,0 +1,211 @@
+Here’s the complete “Agent Prompt + Files” package.
+Copy everything below this line and give it to your coding agent (Cursor, Claude, Windsurf, etc.).
+
+# Kovanica Domain Architecture — Full Implementation Prompt
+
+You are a senior full-stack + Cloudflare engineer. Implement the complete network subdomain architecture for Kovanica Protocol.
+
+## Context
+- Domain: kovanica.online (Cloudflare)
+- Goal: Clean separation between marketing root and network surfaces
+- Subdomains already exist: testnet.kovanica.online, mainnet.kovanica.online, explorer, wallet, docs, status, seed*, etc.
+- New records that must exist:
+  - faucet.testnet.kovanica.online  → A 145.223.116.178 (Proxied)
+  - api.kovanica.online             → A 145.223.116.178 (Proxied)
+- Old records to remove (if still present):
+  - kovanica.kovanica.online
+  - map.kovanica.online
+
+## Part 1 — Cloudflare Redirect Rules
+
+Go to Cloudflare Dashboard → kovanica.online → Rules → Redirect Rules.
+
+Create **exactly** these 4 rules in this order (top = highest priority):
+
+### Rule 1
+- Rule name: `map → api`
+- If incoming requests match:
+  - Hostname equals `map.kovanica.online`
+- Then:
+  - Type: Dynamic
+  - Expression: `concat("https://api.kovanica.online", http.request.uri)`
+  - Status code: 301
+- Status: Enabled
+
+### Rule 2
+- Rule name: `kovanica.kovanica → faucet.testnet`
+- If incoming requests match:
+  - Hostname equals `kovanica.kovanica.online`
+- Then:
+  - Type: Dynamic
+  - Expression: `concat("https://faucet.testnet.kovanica.online", http.request.uri)`
+  - Status code: 301
+- Status: Enabled
+
+### Rule 3
+- Rule name: `www → apex`
+- If incoming requests match:
+  - Hostname equals `www.kovanica.online`
+- Then:
+  - Type: Dynamic
+  - Expression: `concat("https://kovanica.online", http.request.uri)`
+  - Status code: 301
+- Status: Enabled
+
+### Rule 4 (the important one)
+- Rule name: `root testnet paths → testnet subdomain`
+- If incoming requests match **Custom filter expression**:
+(http.host eq “kovanica.online”) and ( starts_with(http.request.uri.path, “/explorer”) or starts_with(http.request.uri.path, “/wallet”) or starts_with(http.request.uri.path, “/faucet”) or starts_with(http.request.uri.path, “/network”) or starts_with(http.request.uri.path, “/stealth”) or starts_with(http.request.uri.path, “/htlc”) or starts_with(http.request.uri.path, “/vaults”) or starts_with(http.request.uri.path, “/multisig”) )
+- Then:
+- Type: Dynamic
+- Expression: `concat("https://testnet.kovanica.online", http.request.uri)`
+- Status code: 302 (temporary while we migrate)
+- Status: Enabled
+
+## Part 2 — Web Application Code
+
+Create / overwrite these files exactly.
+
+### File: `src/lib/network.ts`
+
+```ts
+export type NetworkId = "testnet" | "mainnet";
+
+export interface NetworkConfig {
+id: NetworkId;
+name: string;
+hostname: string;
+apiBase: string;
+explorerBase: string;
+walletBase: string;
+faucetUrl?: string;
+seed: string;
+networkId: string;
+genesisHash?: string;
+isTestnet: boolean;
+badgeColor: string;
+badgeLabel: string;
+}
+
+export const NETWORKS: Record = {
+testnet: {
+  id: "testnet",
+  name: "Testnet",
+  hostname: "testnet.kovanica.online",
+  apiBase: "https://api.kovanica.online",
+  explorerBase: "https://explorer.kovanica.online",
+  walletBase: "https://wallet.kovanica.online",
+  faucetUrl: "https://faucet.testnet.kovanica.online",
+  seed: "seed.kovanica.online:9000",
+  networkId: "kovanica-testnet",
+  isTestnet: true,
+  badgeColor: "#f59e0b",
+  badgeLabel: "Testnet",
+},
+mainnet: {
+  id: "mainnet",
+  name: "Mainnet",
+  hostname: "mainnet.kovanica.online",
+  apiBase: "https://api.kovanica.online",
+  explorerBase: "https://explorer.kovanica.online",
+  walletBase: "https://wallet.kovanica.online",
+  seed: "seed.kovanica.online:9000",
+  networkId: "kovanica",
+  isTestnet: false,
+  badgeColor: "#10b981",
+  badgeLabel: "Mainnet",
+},
+};
+
+/**
+* Detect current network purely from hostname.
+* Everything that is not explicitly mainnet defaults to testnet (pre-mainnet phase).
+*/
+export function detectNetwork(): NetworkId {
+if (typeof window === "undefined") return "testnet";
+
+const host = window.location.hostname.toLowerCase();
+
+if (host === "mainnet.kovanica.online" || host.startsWith("mainnet.")) {
+  return "mainnet";
+}
+
+return "testnet";
+}
+
+export function getCurrentNetwork(): NetworkConfig {
+return NETWORKS[detectNetwork()];
+}
+
+/**
+* Hard redirect to the target network, preserving path + query + hash.
+*/
+export function switchNetwork(target: NetworkId) {
+const config = NETWORKS[target];
+const path =
+  window.location.pathname +
+  window.location.search +
+  window.location.hash;
+
+window.location.href = `https://${config.hostname}${path}`;
+}
+File: `src/components/layout/source-switch.tsx` (replace existing)
+import { getCurrentNetwork, switchNetwork } from "@/lib/network";
+
+export function SourceSwitch() {
+  const current = getCurrentNetwork();
+
+  return (
+    
+       switchNetwork("testnet")}
+        className={`rounded-full px-3 py-1.5 transition-colors ${
+          current.id === "testnet"
+            ? "bg-amber-500/20 text-amber-400"
+            : "text-white/60 hover:text-white"
+        }`}
+      >
+        Testnet
+      
+
+       switchNetwork("mainnet")}
+        className={`rounded-full px-3 py-1.5 transition-colors ${
+          current.id === "mainnet"
+            ? "bg-emerald-500/20 text-emerald-400"
+            : "text-white/60 hover:text-white"
+        }`}
+      >
+        Mainnet
+      
+    
+  );
+}
+Part 3 — Usage Instructions for the rest of the codebase
+Everywhere you previously hard-coded network values, replace with:
+import { getCurrentNetwork } from "@/lib/network";
+
+const net = getCurrentNetwork();
+
+// Examples:
+fetch(`${net.apiBase}/api/head`)
+Faucet
+{net.badgeLabel}
+Part 4 — Verification Checklist (do after implementation)
+	•	DNS records faucet.testnet and api exist and are Proxied
+	•	Old records kovanica.kovanica and map are deleted
+	•	All 4 Redirect Rules are created and Enabled in correct order
+	•	src/lib/network.ts exists
+	•	source-switch.tsx uses hard redirect via switchNetwork()
+	•	Visiting https://kovanica.online/explorer redirects to https://testnet.kovanica.online/explorer
+	•	Network switcher on testnet → mainnet actually changes hostname
+Implement all of the above. When finished, output a short summary of what was changed and any files that still need manual review.
+---
+
+Just paste the entire block above to your agent.  
+
+It contains:
+- Exact Cloudflare UI instructions for all 4 rules (including the complex Rule 4 filter expression)
+- Complete ready-to-use `network.ts`
+- Complete ready-to-use `source-switch.tsx`
+- Usage guidance + verification checklist
+
+Once the agent finishes, come back and we go to the next item (root landing cleanup).

@@ -1,0 +1,172 @@
+# Kovanica Protocol — Ansible Playbook
+#
+# Deploys kovanica-node to one or more remote servers.
+#
+# Usage:
+#   ansible-playbook -i inventory.ini deploy.yml
+#   ansible-playbook -i inventory.ini deploy.yml --extra-vars "mine=true peers=seed2.kovanica.online:9000"
+#
+# Inventory example (inventory.ini):
+#   [seeds]
+#   seed1 ansible_host=1.2.3.4 ansible_user=root
+#   seed2 ansible_host=5.6.7.8 ansible_user=root
+#
+#   [seeds:vars]
+#   ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+#   kovanica_p2p_port=9000
+#   kovanica_http_port=8080
+
+---
+- name: Deploy Kovanica BlockDAG Node
+  hosts: seeds
+  become: yes
+  vars:
+    kovanica_version: "0.2.0"
+    kovanica_data: /var/lib/kovanica
+    kovanica_p2p_port: 9000
+    kovanica_http_port: 8080
+    kovanica_peers: "seed.kovanica.online:9000,seed2.kovanica.online:9000"
+    kovanica_mine: false
+    kovanica_mine_secs: 60
+    kovanica_user: kovanica
+    kovanica_group: kovanica
+
+  tasks:
+    - name: Detect architecture
+      ansible.builtin.set_fact:
+        kovanica_arch: >-
+          {{ {'x86_64': 'x86_64', 'amd64': 'x86_64',
+              'aarch64': 'aarch64', 'arm64': 'aarch64',
+              'armv7l': 'armv7l'}[ansible_architecture | default('x86_64')] | default('x86_64') }}
+
+    - name: Install system dependencies
+      ansible.builtin.package:
+        name:
+          - curl
+          - ca-certificates
+          - build-essential
+          - pkg-config
+          - systemd
+        state: present
+      when: ansible_os_family in ['Debian', 'RedHat']
+
+    - name: Create kovanica group
+      ansible.builtin.group:
+        name: "{{ kovanica_group }}"
+        system: yes
+
+    - name: Create kovanica user
+      ansible.builtin.user:
+        name: "{{ kovanica_user }}"
+        group: "{{ kovanica_group }}"
+        shell: /usr/sbin/nologin
+        system: yes
+        create_home: no
+
+    - name: Create data directory
+      ansible.builtin.file:
+        path: "{{ kovanica_data }}"
+        state: directory
+        owner: "{{ kovanica_user }}"
+        group: "{{ kovanica_group }}"
+        mode: "0700"
+
+    - name: Download pre-built binary
+      ansible.builtin.get_url:
+        url: "https://github.com/KovanicaDAG/kovanica-protocol/releases/download/v{{ kovanica_version }}/kovanica-node-linux-{{ kovanica_arch }}.tar.gz"
+        dest: /tmp/kovanica.tar.gz
+        mode: "0644"
+      register: download
+      ignore_errors: yes
+
+    - name: Extract binary
+      ansible.builtin.unarchive:
+        src: /tmp/kovanica.tar.gz
+        dest: /tmp/
+        remote_src: yes
+      when: download is succeeded
+
+    - name: Install binary
+      ansible.builtin.copy:
+        src: "/tmp/kovanica-node"
+        dest: /usr/local/bin/kovanica-node
+        owner: root
+        group: root
+        mode: "0755"
+        remote_src: yes
+      when: download is succeeded
+
+    - name: Build from source (fallback)
+      block:
+        - name: Install Rust
+          ansible.builtin.shell: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          args:
+            creates: /root/.cargo/bin/rustc
+
+        - name: Clone repository
+          ansible.builtin.git:
+            repo: "https://github.com/KovanicaDAG/kovanica-protocol.git"
+            dest: /opt/kovanica-src
+            depth: 1
+            version: "v{{ kovanica_version }}"
+          ignore_errors: yes
+
+        - name: Build release binary
+          ansible.builtin.shell: |
+            source /root/.cargo/env
+            cargo build --release -p kovanica-node
+          args:
+            chdir: /opt/kovanica-src
+
+        - name: Install built binary
+          ansible.builtin.copy:
+            src: /opt/kovanica-src/target/release/kovanica-node
+            dest: /usr/local/bin/kovanica-node
+            owner: root
+            group: root
+            mode: "0755"
+            remote_src: yes
+      when: download is failed
+
+    - name: Install systemd service
+      ansible.builtin.template:
+        src: kovanica-node.service.j2
+        dest: /etc/systemd/system/kovanica-node.service
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Restart kovanica-node
+
+    - name: Enable service
+      ansible.builtin.systemd:
+        name: kovanica-node
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Open firewall ports
+      ansible.posix.firewalld:
+        port: "{{ item }}/tcp"
+        permanent: yes
+        state: enabled
+      loop:
+        - "{{ kovanica_p2p_port }}"
+        - "{{ kovanica_http_port }}"
+      when: ansible_facts.services['firewalld'] is defined
+      ignore_errors: yes
+
+    - name: Verify node starts
+      ansible.builtin.command: /usr/local/bin/kovanica-node --version
+      register: node_version
+      changed_when: false
+
+    - name: Print version
+      ansible.builtin.debug:
+        msg: "Kovanica node installed: {{ node_version.stdout }}"
+
+  handlers:
+    - name: Restart kovanica-node
+      ansible.builtin.systemd:
+        name: kovanica-node
+        state: restarted
+        daemon_reload: yes

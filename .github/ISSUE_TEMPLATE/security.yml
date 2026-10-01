@@ -1,0 +1,70 @@
+name: Security Vulnerability
+description: Report a security vulnerability (use GitHub Security Advisories for sensitive issues)
+title: "[Security]: "
+labels: ["security"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **⚠️ For sensitive security issues, please use [GitHub Security Advisories](https://github.com/KovanicaDAG/kovanica/security/advisories/new) instead of this public form.**
+        
+        Use this form only for non-sensitive security discussions or follow-ups on already-disclosed issues.
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact
+      description: What is the potential impact of this vulnerability?
+      options:
+        - Consensus safety violation (double-spend, fork)
+        - Consensus liveness violation (chain stall)
+        - Funds loss / theft
+        - Private key exposure
+        - DoS / resource exhaustion
+        - Information disclosure
+        - Other
+      default: 0
+    validations:
+      required: true
+  - type: textarea
+    id: component
+    attributes:
+      label: Affected component
+      description: Which component is affected?
+      options:
+        - kovanica-dag
+        - kovanica-state
+        - kovanica-node
+        - kovanica-ffi
+        - kovanica-web
+        - Infrastructure
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the vulnerability
+      render: markdown
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Steps to reproduce (if safe to share publicly)
+      render: shell
+  - type: textarea
+    id: mitigation
+    attributes:
+      label: Suggested mitigation
+      description: Any ideas for fixing or mitigating this issue?
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Disclosure
+      options:
+        - label: I have not publicly disclosed this vulnerability elsewhere
+          required: true
+        - label: I understand this issue will be visible publicly
+          required: true

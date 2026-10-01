@@ -1,0 +1,41 @@
+[package]
+name = "kovanica-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Command-line client for the Kovanica (KVNC) testnet BlockDAG"
+
+[lib]
+name = "kovanica_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kovanica"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+ureq.workspace = true
+serde_json.workspace = true
+hex.workspace = true
+getrandom.workspace = true
+anyhow.workspace = true
+blake3.workspace = true
+kovanica-state = { path = "../kovanica-state" }
+kovanica-airdrop = { path = "../../../sdk/crates/kovanica-airdrop" }
+kovanica-types = { path = "../../../sdk/crates/kovanica-types" }
+# Single source of truth for key derivation: the node uses this too, so one
+# mnemonic can never resolve to two different addresses.
+kovanica-wallet = { path = "../kovanica-wallet" }
+ratatui = "0.29.0"
+# Must track the crossterm that ratatui 0.29 re-exports (0.28.1). Declaring a
+# different minor pulls a second crossterm into the tree, and then
+# `crossterm::event::KeyEvent` and `ratatui::crossterm::event::KeyEvent` are
+# distinct types — the `Screen::handle_key` trait stops matching its impls.
+crossterm = "0.28.1"
+tokio = { version = "1.53.1", features = ["rt", "rt-multi-thread"] }
+
+[lints.rust]
+unsafe_code = "forbid"

@@ -1,0 +1,65 @@
+You are a senior full-stack + DevOps engineer specializing in blockchain project infrastructure (Cloudflare + modern React/TanStack Start + multi-network L1s).
+
+Create the **complete ultimate configuration** for Kovanica Protocol domain architecture during pre-mainnet → mainnet transition.
+
+### Goals
+1. `kovanica.online` becomes a pure, clean project landing / marketing site (no testnet UI, no live explorer graphs, no faucet, no protocol playgrounds).
+2. Full network surfaces live on subdomains:
+   - `testnet.kovanica.online` → current live testnet (explorer + wallet + Multisig/Stealth/HTLC/Vaults + faucet + status)
+   - `mainnet.kovanica.online` → ready for mainnet (identical UI, different genesis/API/seeds, no faucet)
+3. Existing services stay:
+   - `explorer.kovanica.online`
+   - `wallet.kovanica.online`
+   - `seed.kovanica.online`
+   - Prefer `docs.kovanica.online` for all RFCs / KVP-101…105 / tokenomics
+4. Network switcher on every surface must do a **hard redirect** to the correct subdomain (not just client-side state).
+5. Hostname-based automatic network detection (no manual config needed by end users).
+6. Perfect isolation of cookies, localStorage, CORS, and API endpoints between networks.
+7. Production-ready for Cloudflare (DNS, Page Rules / Redirect Rules, Cache Rules, SSL, WAF if useful).
+
+### Current stack context
+- Web UI: TanStack Router / React (files: source-switch.tsx, shell.tsx, home.tsx, protocol views)
+- API: `/api/head`, explorer endpoints, node HTTP
+- Network IDs: `kovanica-testnet` (current), mainnet will be `kovanica` or `kovanica-mainnet`
+- Seed: `seed.kovanica.online:9000`
+- Already have network switcher UI that currently shows “Mainnet · soon”
+
+### Deliverables you must produce (complete and ready to apply)
+
+1. **DNS records** (exact Cloudflare-ready list)
+   - All required A/CNAME/AAAA/TXT records for root + every subdomain
+   - Proxy status (orange/grey cloud) recommendations
+   - Any special records for seed, status, docs, etc.
+
+2. **Cloudflare configuration**
+   - Redirect Rules (301/302) — especially for old paths that should move to subdomains
+   - Page Rules or Cache Rules (what to cache hard, what to bypass)
+   - SSL/TLS settings
+   - Any Transform Rules or Workers needed for network detection / header injection
+   - Optional: status page / health check setup
+
+3. **Web application configuration**
+   - Exact environment variables / config object for each network (API base URL, network ID, genesis hash, faucet URL, seed, explorer base, etc.)
+   - Hostname → network mapping logic (TypeScript)
+   - Updated `source-switch.tsx` (or equivalent) that performs full window.location redirect
+   - How the app should detect current network on load and set correct API client, badge colour, banner, etc.
+   - Persistent “You are on Testnet / Mainnet” indicator rules
+   - localStorage / cookie namespacing strategy (prefix by network)
+
+4. **Root landing page behaviour**
+   - What content stays on `kovanica.online`
+   - What must be removed / redirected
+   - Recommended CTAs and network switcher behaviour on the root
+
+5. **Migration & cut-over checklist**
+   - Ordered steps to go from current mixed state → clean architecture with zero downtime
+   - What to change in GitHub READMEs, install scripts, docs, and Telegram/Discord announcements
+   - How to handle bookmarks and old links
+
+6. **Future-proofing**
+   - How to activate mainnet with one DNS/deploy flip
+   - How to keep testnet running indefinitely for developers
+   - Recommended additional subdomains (status, docs, faucet, api, etc.)
+
+Output everything in clean, structured Markdown with code blocks ready to copy.  
+Be extremely concrete and production-oriented. Prefer the cleanest long-term architecture over short-term hacks.

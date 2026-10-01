@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude sensitive files -->
+    <exclude domain="sharedpref" path="keystore_seed.xml"/>
+    <exclude domain="file" path="light_sync.bin"/>
+    <exclude domain="file" path="operator_wallet.key"/>
+    <exclude domain="file" path="*.key"/>
+    <include domain="file" path="." />
+</full-backup-content>
