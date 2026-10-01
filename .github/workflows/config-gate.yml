@@ -1,0 +1,93 @@
+name: Config gate
+
+# Validates the seed env files and systemd units against the variables the
+# node ACTUALLY reads, extracted from the source at CI time.
+#
+# This exists because the node silently ignores every KOVANICA_* variable it
+# does not recognise. KOVANICA_FINALITY_DEPTH, KOVANICA_PAYLOAD_PRUNING_DEPTH,
+# KOVANICA_BLOCK_PRUNING_DEPTH, KOVANICA_POW and KOVANICA_NETWORK_ID have each
+# been written into real config files, and each did nothing while looking
+# authoritative. One of them also carried the wrong value: the mainnet configs
+# asserted FINALITY_DEPTH=100 when NetworkProfile::mainnet hardcodes 1_000.
+#
+# A config bug does not fail loudly. It produces a node that boots the wrong
+# chain, prunes the wrong depth, or runs a faucet on mainnet, hours later, on a
+# public host. This gate turns those into a red check on the PR.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - 'config/**'
+      - 'protocol/crates/kovanica-node/src/**'
+      - '.github/workflows/config-gate.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'deploy/**'
+      - 'config/**'
+      - 'protocol/crates/kovanica-node/src/**'
+      - '.github/workflows/config-gate.yml'
+  workflow_dispatch:
+
+# Read-only. This gate never deploys and never touches a secret.
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: env vars, network identity, safety invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The validator derives the authoritative variable list from this path,
+      # so it fails closed if the layout ever moves.
+      - name: Check node source is present
+        run: |
+          test -d protocol/crates/kovanica-node/src \
+            || { echo "::error::node source missing; validator cannot work"; exit 1; }
+
+      - name: Lint the validator itself
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -S warning deploy/validate-configs.sh
+
+      - name: Validate seed configs
+        run: ./deploy/validate-configs.sh
+
+      # systemd-analyze verify is the only real test of a unit file. It resolves
+      # %i instantiation and catches directives systemd does not accept, which a
+      # shell lint cannot.
+      - name: Verify systemd units instantiate
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq systemd
+          for unit in deploy/systemd/*@.service; do
+            base="$(basename "$unit")"
+            for seed in 1 2 3; do
+              inst="kovanica-${base%.service}@${seed}.service"
+              # Stub out the EnvironmentFile targets and the binary; only the
+              # unit syntax and %i expansion are under test here.
+              sudo mkdir -p /tmp/unitverify
+              sudo sed -e "s#/etc/kovanica/#/tmp/unitverify/#g" \
+                       -e "s#/usr/local/bin/kovanica-node#/bin/true#" \
+                       "$unit" > "/tmp/$inst"
+              systemd-analyze verify "/tmp/$inst"
+            done
+          done
+
+      # A secret committed to a tracked env file is the failure this repo can
+      # least afford, so it is checked independently of the validator.
+      - name: No secrets in tracked env files
+        run: |
+          if git ls-files -- 'deploy/**/*.env' 'config/**/*.env' \
+             | xargs -r grep -lE '^[[:space:]]*KOVANICA_(AUTHORITY_KEY|TREASURY_SEED|AUTHORITIES)='; then
+            echo "::error::a tracked env file contains key material — remove it and rotate the key"
+            exit 1
+          fi
+          echo "no key material in tracked env files"

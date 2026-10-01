@@ -34,7 +34,7 @@ Real variable names only. There is no `KOVANICA_HTTP` and no
 
 | Seed | Value |
 |---|---|
-| seed1 | `NETWORK=kovanica-testnet` · `LISTEN=0.0.0.0:8000` · `PEERS=seed.kovanica.online:8000` · `DATA=/var/lib/kovanica-testnet-seed1` · `PRODUCE=1` `PRODUCE_SECS=3` |
+| seed1 | `NETWORK=kovanica-testnet` · `LISTEN=0.0.0.0:8000` · `PEERS=seed2:8000,seed3:8000` · `DATA=/var/lib/kovanica-testnet-seed1` · `PRODUCE=1` `PRODUCE_SECS=3` |
 | seed2 | same · `DATA=/var/lib/kovanica-testnet-seed2` · authority-2 |
 | seed3 | same · `DATA=/var/lib/kovanica-testnet-seed3` · authority-3 |
 
@@ -44,17 +44,32 @@ Shared across all three seeds:
 KOVANICA_NETWORK=kovanica-testnet
 KOVANICA_CONSENSUS=poa
 KOVANICA_LISTEN=0.0.0.0:8000
-KOVANICA_PEERS=seed.kovanica.online:8000
+KOVANICA_PEERS=<the other two seeds>
 KOVANICA_OPERATOR=0
+KOVANICA_ISOLATED_HOST=1
 KOVANICA_FAUCET=1
 KOVANICA_ALLOW_RESET=0
 KOVANICA_PRODUCE=1
 KOVANICA_PRODUCE_SECS=3
 KOVANICA_METRICS_LISTEN=127.0.0.1:9090
-KOVANICA_PAYLOAD_PRUNING_DEPTH=1000
-KOVANICA_BLOCK_PRUNING_DEPTH=1000
-KOVANICA_FINALITY_DEPTH=100
 ```
+
+There is deliberately no `KOVANICA_FINALITY_DEPTH`, no
+`KOVANICA_PAYLOAD_PRUNING_DEPTH` and no `KOVANICA_BLOCK_PRUNING_DEPTH` here.
+The node reads none of them — they are compiled-in `NetworkProfile` constants,
+and setting them looks authoritative while doing nothing.
+
+| Profile | finality | payload prune | block prune |
+|---|---|---|---|
+| testnet / devnet | 100 | 1_000 | 1_000 |
+| mainnet | 1_000 | 10_000 | 10_000 |
+
+Note mainnet prunes an order of magnitude harder than testnet. An earlier
+revision of these configs asserted `FINALITY_DEPTH=100` for mainnet; that was
+inert *and* wrong.
+
+`KOVANICA_ISOLATED_HOST` is an operator attestation that the binary does not
+read. It marks that the faucet decision was made deliberately.
 
 `ExecStart=/usr/local/bin/kovanica-node explorer 127.0.0.1:3001`
 
@@ -72,8 +87,30 @@ KOVANICA_DATA=/var/lib/kovanica-mainnet-seed<N>
 
 `ExecStart=/usr/local/bin/kovanica-node explorer 127.0.0.1:3002`
 
-`KOVANICA_MAINNET_OVERRIDE` is not set; mainnet refuses to boot without an
-explicit `KOVANICA_AUTHORITIES`, which is the intended behaviour.
+`KOVANICA_MAINNET_OVERRIDE=1` **is** set. The mainnet profile is marked
+`dormant` and refuses to boot without it (`profile_for_env`, `explorer.rs`).
+The override is the deliberate gate that stops a mainnet node from starting on
+placeholder consensus parameters. It is not a licence to run mainnet before
+the profile's parameters are ratified.
+
+Mainnet additionally requires `KOVANICA_AUTHORITIES` and
+`KOVANICA_TREASURY_SEED`. It will not fall back to the publicly derivable
+placeholder authority set, and a missing treasury seed is a hard panic rather
+than a default. Testnet *does* fall back to a deterministic placeholder set,
+which is why a mainnet config that is silently running as testnet is such a
+dangerous failure: nothing warns you.
+
+### A seed dials the other two, never itself
+
+```
+seed1  PEERS=seed2.kovanica.online:<port>,seed3.kovanica.online:<port>
+seed2  PEERS=seed.kovanica.online:<port>,seed3.kovanica.online:<port>
+seed3  PEERS=seed.kovanica.online:<port>,seed2.kovanica.online:<port>
+```
+
+Naming all three hosts as peers on every node makes every node dial seed1
+first, which concentrates the mesh on one host and makes an eclipse against it
+trivial.
 
 ## 4) Authority keys
 
@@ -156,6 +193,32 @@ mainnet.kovanica.online:3000  →  127.0.0.1:3002
 The dashboard's Python proxy forwards `/api/*` and `/ws` to the same backend
 port, so both UIs stay live simultaneously on 3000 while the two chains stay
 fully isolated.
+
+---
+
+## 10) Validate before every deploy
+
+```sh
+./deploy/validate-configs.sh
+```
+
+The validator derives the authoritative variable list by grepping
+`protocol/crates/kovanica-node/src` at run time, so it cannot drift from the
+binary. It fails on:
+
+- any `KOVANICA_*` variable the node does not read
+- any consensus constant exposed as an env var
+- network identity that disagrees with the directory it lives in
+- `KOVANICA_FAUCET=1` or `KOVANICA_ALLOW_RESET=1` in a mainnet file
+- `KOVANICA_ALLOW_RESET=1` on any seed other than the genesis seed
+- testnet and mainnet binding the same P2P port
+- two seeds sharing one `KOVANICA_DATA`
+- a peer pointing at an orange-cloud explorer hostname
+- key material committed to a tracked env file
+- a unit file inlining a secret with `Environment=`
+- `export` inside an `EnvironmentFile=` (systemd does not accept it)
+
+CI runs it on every PR that touches `deploy/`, `config/` or the node source.
 
 ## 8) DNS
 
