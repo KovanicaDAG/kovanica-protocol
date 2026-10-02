@@ -21,21 +21,21 @@ Network ID: `kovanica-testnet`
 | Max supply | 90.2M KVNC |
 | Maturity | 100 blocks |
 | Fee split | 75% burn / 25% producer |
-| P2P port | 9000 (TCP) |
+| P2P port | 8000 (TCP) — 9000 is mainnet |
 
 ## Quick Start
 
 ```sh
-KOVANICA_LISTEN=0.0.0.0:9000 \
-KOVANICA_PEERS=seed.kovanica.online:9000 \
+KOVANICA_LISTEN=0.0.0.0:8000 \
+KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000 \
 KOVANICA_DATA=/root/kovanica-data \
 ./target/release/kovanica-node explorer 127.0.0.1:8080
 ```
 
 ## Seed Nodes
 
-- `seed.kovanica.online:9000` (DNS-only, grey cloud)
-- `seed2.kovanica.online:9000`
+- `seed2.kovanica.online:8000` (DNS-only, grey cloud)
+- `seed3.kovanica.online:8000`
 
 ## Documentation
 

@@ -9,7 +9,7 @@
 #
 # Options:
 #   --name <name>         Seed name (default: seed2; used in unit + data dir)
-#   --peers <host:port>   Bootstrap peers (default: seed.kovanica.online:9000,seed2.kovanica.online:9000)
+#   --peers <host:port>   Bootstrap peers (default: seed2.kovanica.online:8000,seed3.kovanica.online:8000)
 #   --mine                Enable auto-mining (default: off for pure seeds)
 #   --mine-secs <n>       Block interval when mining (default: 60)
 #   --explorer <port>     Explorer HTTP port (default: 8080)
@@ -23,7 +23,7 @@ set -euo pipefail
 
 TARGET=""
 NAME="seed2"
-PEERS="seed.kovanica.online:9000,seed2.kovanica.online:9000"
+PEERS="seed2.kovanica.online:8000,seed3.kovanica.online:8000"
 MINE=0
 MINE_SECS=60
 EXPLORER_PORT=8080

@@ -298,9 +298,9 @@ pub struct Dag {
 /// `blue_work` provably nominal, and it is why no change is needed in the
 /// GHOSTDAG fold: every block that reaches insertion has
 /// `work == POA_NOMINAL_WORK`, so the accumulated blue work is a plain block
-/// count. This mirrors the staked-VRF `nominal_work` pin in
-/// `kovanica_state::HybridConfig` (which lives in the state crate, so it is
-/// referenced here by name rather than linked).
+/// count. This mirrors the `nominal_work` pin that the staked-VRF path used to
+/// carry — that path, and the `HybridConfig` it lived in, were removed with
+/// PoW, so there is nothing left to link to.
 ///
 /// This is a constant rather than a [`PoAConfig`] field because, unlike a
 /// staked block competing against real PoW blocks, there is nothing to tune:

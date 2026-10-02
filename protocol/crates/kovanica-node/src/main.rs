@@ -4,7 +4,9 @@
 //!   command and its response, so the whole stack can be exercised in one run.
 //! * `kovanica-node explorer [addr]` — self-hosted BlockDAG explorer (JSON API +
 //!   UI) on `addr`, default `0.0.0.0:8080`. TCP P2P (the only network path)
-//!   binds `KOVANICA_LISTEN` (default `0.0.0.0:9000`) in the same process.
+//!   binds `KOVANICA_LISTEN` in the same process. The default follows the
+//!   active network profile: `0.0.0.0:8000` on testnet (the default network),
+//!   `0.0.0.0:9000` on dormant mainnet, loopback `:9002` on devnet.
 
 use kovanica_node::{rpc, Node};
 use std::io::{self, BufRead, Write};
@@ -28,13 +30,13 @@ fn main() {
             println!("  serve     read commands from stdin (default)");
             println!("  demo      run a scripted end-to-end scenario");
             println!("  explorer  HTTP UI + JSON API (default 0.0.0.0:8080)");
-            println!("            TCP P2P on KOVANICA_LISTEN (default 0.0.0.0:9000)");
+            println!("            TCP P2P on KOVANICA_LISTEN (testnet default 0.0.0.0:8000)");
             println!("            env: KOVANICA_DATA  KOVANICA_CONSENSUS=poa|pow");
             println!("                 KOVANICA_PRODUCE=0|1  KOVANICA_PRODUCE_SECS=120");
             println!("                 KOVANICA_FAUCET=0|1");
             println!("                 KOVANICA_ALLOW_RESET=0|1  KOVANICA_OPERATOR=0|1");
-            println!("                 KOVANICA_LISTEN=0.0.0.0:9000   (off to disable)");
-            println!("                 KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000");
+            println!("                 KOVANICA_LISTEN=0.0.0.0:8000   (off to disable)");
+            println!("                 KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000");
             println!();
             println!("{}", rpc::HELP);
         }

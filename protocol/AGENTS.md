@@ -1311,13 +1311,18 @@ teaches us it needs.
    The live DNS-seed hostnames are `seed` (primary, Hostinger VPS
    `145.223.116.178`) and `seed2` (Hostinger KVM2 VPS `76.13.250.65`,
    `srv1991525`); `seed3` is a **new** VPS (`187.7.27.139`, `srv2013143`) — its
-   node is not yet running (TCP 9000 closed), and its DNS A record must be
+   node is not yet running, and its DNS A record must be
    re-pointed to `187.7.27.139` and left **DNS-only / grey-cloud** before it can
    serve as a seed. `deploy-seed.sh` defaults new seeds to
-   `KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000`.
-   Remaining wiring: the node binary's default `KOVANICA_PEERS` still names only
-   `seed.kovanica.online:9000`; new-install defaults now use seed+seed2
-   (installer updated 2026-09-20).
+   `KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000`.
+   The node binary's compiled-in defaults now match: testnet `DEFAULT_PEERS` is
+   seed2+seed3 on `:8000` (was seed+seed2 on `:9000` — mainnet's port, so a
+   testnet node relying on it never joined the network). The DNS-seed
+   resolver's port is derived from the active profile's bind default too, so DHT
+   bootstrap no longer resolves seeds on mainnet's port. Guarded by
+   `explorer::tests::public_defaults_are_testnet_ports_not_mainnet_ports`,
+   `every_profile_resolves_dns_seeds_on_its_own_p2p_port`, and
+   `dns_seed_config_is_not_mainnet_shaped_on_testnet`.
 
 4. ~~**Mobile light-node slices 4–8**:~~ ✅ landed 2026-08-25 (workspace v0.2.0)
    - Full plan with per-slice implementation notes: `docs/plans/mobile-light-node.md`
@@ -1352,7 +1357,7 @@ teaches us it needs.
      **seed2 = Hostinger KVM2 VPS `76.13.250.65`** (`srv1991525`) — live since
      2026-08-24, mining on, genesis verified, DNS `seed2.kovanica.online`;
      **seed3 = new VPS `187.7.27.139`** (`srv2013143`) — provisioned, node NOT yet
-     running, TCP 9000 closed, no fail2ban) — `[CURRENT]`-state description of
+     running, no fail2ban) — `[CURRENT]`-state description of
      the *pre-reset* PoW testnet; those hosts will need re-genesis under PoA.
    - Measure: orphan rate, propagation latency, fork rate, disk growth
      (both seeds expose `/metrics`; `alerting_rules.yml` ready to arm)
