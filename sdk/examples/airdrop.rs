@@ -17,8 +17,8 @@
 //! cargo run -p kovanica-sdk --example airdrop
 //! ```
 
+use kovanica_airdrop::{build_merkle_root, generate_proof, AirdropCampaign, AirdropLeaf};
 use kovanica_sdk::prelude::*;
-use kovanica_airdrop::{AirdropCampaign, AirdropLeaf, build_merkle_root, generate_proof};
 use kovanica_types::{Address, AssetId, Hash32};
 
 /// Deterministic demo keypair (test only — never use fixed bytes in production).
@@ -41,11 +41,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Define recipients for the airdrop campaign
     // In practice, this would come from a CSV file or database
     let recipients = vec![
-        (demo_address(0x01), 1_000_000_000u64),  // 10 KVNC
-        (demo_address(0x02), 2_000_000_000u64),  // 20 KVNC
-        (demo_address(0x03), 500_000_000u64),    // 5 KVNC
-        (demo_address(0x04), 750_000_000u64),    // 7.5 KVNC
-        (demo_address(0x05), 1_500_000_000u64),  // 15 KVNC
+        (demo_address(0x01), 1_000_000_000u64), // 10 KVNC
+        (demo_address(0x02), 2_000_000_000u64), // 20 KVNC
+        (demo_address(0x03), 500_000_000u64),   // 5 KVNC
+        (demo_address(0x04), 750_000_000u64),   // 7.5 KVNC
+        (demo_address(0x05), 1_500_000_000u64), // 15 KVNC
     ];
 
     // 2. Build AirdropLeaf objects
@@ -76,7 +76,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== Campaign ===");
     println!("Campaign ID     : {}", campaign.id);
-    println!("Total amount    : {} KVNC", total_amount as f64 / 100_000_000.0);
+    println!(
+        "Total amount    : {} KVNC",
+        total_amount as f64 / 100_000_000.0
+    );
     println!("Asset           : {}", campaign.asset_id);
     println!("Expires at      : height {}", campaign.expires_at);
     println!("Merkle root     : {}", campaign.merkle_root);
@@ -89,15 +92,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proof = generate_proof(&leaves, claimant_index)
         .expect("Failed to generate proof - claimant index out of bounds");
 
-    println!("\n=== Merkle Proof (for claimant index {}) ===", claimant_index);
+    println!(
+        "\n=== Merkle Proof (for claimant index {}) ===",
+        claimant_index
+    );
     println!("Claimant address: {}", claimant_address);
-    println!("Claimant amount : {} KVNC", claimant_amount as f64 / 100_000_000.0);
+    println!(
+        "Claimant amount : {} KVNC",
+        claimant_amount as f64 / 100_000_000.0
+    );
     println!("Siblings count  : {}", proof.siblings.len());
     println!("Path directions : {:?}", proof.is_left);
 
     // 6. Verify the proof locally before submitting
     let proof_valid = proof.verify(campaign.merkle_root);
-    println!("Proof valid     : {}", if proof_valid { "✓ YES" } else { "✗ NO" });
+    println!(
+        "Proof valid     : {}",
+        if proof_valid { "✓ YES" } else { "✗ NO" }
+    );
 
     if !proof_valid {
         eprintln!("ERROR: Proof does not verify against campaign Merkle root!");
@@ -111,7 +123,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n=== Claim Transaction ===");
     println!("Claimant        : {}", claimant.address().to_hex());
-    println!("Claiming        : {} KVNC", claimant_amount as f64 / 100_000_000.0);
+    println!(
+        "Claiming        : {} KVNC",
+        claimant_amount as f64 / 100_000_000.0
+    );
     println!("Campaign ID     : {}", campaign.id);
     println!("Merkle proof    : {} siblings", proof.siblings.len());
 
@@ -167,7 +182,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n=== Summary ===");
     println!("✓ Campaign created with {} recipients", leaves.len());
     println!("✓ Merkle root computed: {}", merkle_root);
-    println!("✓ Merkle proof generated for claimant index {}", claimant_index);
+    println!(
+        "✓ Merkle proof generated for claimant index {}",
+        claimant_index
+    );
     println!("✓ Proof verified against campaign root");
     println!("✓ Claim transaction prepared and signed");
     println!("\nNote: On live networks, submit via node's airdrop claim endpoint");

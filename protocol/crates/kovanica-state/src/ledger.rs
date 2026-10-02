@@ -251,7 +251,8 @@ pub struct SupplyMetrics {
 
 use crate::tx::{
     decode_block_payload, encode_block_payload, AssetId, AssetKind, AssetRegistryEntry,
-    DecodeError, OutPoint, Transaction, TxId, TxOutput,
+    DecodeError, LogoScheme, LogoUri, MetadataScheme, MetadataUri, OutPoint, Transaction, TxId,
+    TxOutput,
 };
 use crate::utxo::{UtxoEntry, UtxoSet};
 use crate::validation::TxStructureValidator;
@@ -3222,6 +3223,42 @@ impl Ledger {
                 } else {
                     None
                 };
+                // v11+ fields (mint_price_per_unit, logo_uri, metadata_uri) default for old checkpoints
+                let mint_price_per_unit = if version >= 11 { reader.read_u64()? } else { 0 };
+                let logo_uri = if version >= 11 && reader.read_u8()? == 1 {
+                    let scheme_byte = reader.read_u8()?;
+                    let scheme = LogoScheme::from_u8(scheme_byte)
+                        .ok_or(LedgerCheckpointError::BadAssetKind)?;
+                    let content_hash = reader.read_array::<32>()?;
+                    let uri_len = reader.read_u64()? as usize;
+                    let uri_bytes = reader.read_bytes(uri_len)?;
+                    let uri = String::from_utf8(uri_bytes)
+                        .map_err(|_| LedgerCheckpointError::BadAssetKind)?;
+                    Some(LogoUri {
+                        scheme,
+                        content_hash,
+                        uri,
+                    })
+                } else {
+                    None
+                };
+                let metadata_uri = if version >= 11 && reader.read_u8()? == 1 {
+                    let scheme_byte = reader.read_u8()?;
+                    let scheme = MetadataScheme::from_u8(scheme_byte)
+                        .ok_or(LedgerCheckpointError::BadAssetKind)?;
+                    let content_hash = reader.read_array::<32>()?;
+                    let uri_len = reader.read_u64()? as usize;
+                    let uri_bytes = reader.read_bytes(uri_len)?;
+                    let uri = String::from_utf8(uri_bytes)
+                        .map_err(|_| LedgerCheckpointError::BadAssetKind)?;
+                    Some(MetadataUri {
+                        scheme,
+                        content_hash,
+                        uri,
+                    })
+                } else {
+                    None
+                };
                 registry.insert(
                     asset_id,
                     AssetRegistryEntry {
@@ -3232,6 +3269,9 @@ impl Ledger {
                         metadata_hash,
                         collection_id,
                         creator,
+                        mint_price_per_unit,
+                        logo_uri,
+                        metadata_uri,
                     },
                 );
             }
@@ -3664,6 +3704,8 @@ impl Ledger {
             });
             buf.extend_from_slice(&entry.max_supply.to_le_bytes());
             buf.extend_from_slice(&entry.minted.to_le_bytes());
+            // mint_price_per_unit (v11+): u64
+            buf.extend_from_slice(&entry.mint_price_per_unit.to_le_bytes());
             // metadata_hash: 0 = none, 1 = present + 32 bytes
             if let Some(hash) = entry.metadata_hash {
                 buf.push(1);
@@ -3685,55 +3727,28 @@ impl Ledger {
             } else {
                 buf.push(0);
             }
+            // logo_uri (v11+): 0 = none, 1 = present
+            if let Some(logo) = &entry.logo_uri {
+                buf.push(1);
+                buf.push(logo.scheme.to_u8());
+                buf.extend_from_slice(&logo.content_hash);
+                buf.extend_from_slice(&(logo.uri.len() as u64).to_le_bytes());
+                buf.extend_from_slice(logo.uri.as_bytes());
+            } else {
+                buf.push(0);
+            }
+            // metadata_uri (v11+): 0 = none, 1 = present
+            if let Some(meta) = &entry.metadata_uri {
+                buf.push(1);
+                buf.push(meta.scheme.to_u8());
+                buf.extend_from_slice(&meta.content_hash);
+                buf.extend_from_slice(&(meta.uri.len() as u64).to_le_bytes());
+                buf.extend_from_slice(meta.uri.as_bytes());
+            } else {
+                buf.push(0);
+            }
         }
         buf
-    }
-
-    /// Decode the asset registry from checkpoint bytes.
-    fn decode_asset_registry(
-        &mut self,
-        reader: &mut CheckpointReader,
-    ) -> Result<(), LedgerCheckpointError> {
-        let count = reader.read_u64()? as usize;
-        for _ in 0..count {
-            let asset_id = AssetId::from_bytes(reader.read_array::<32>()?);
-            let kind_byte = reader.read_u8()?;
-            let kind = match kind_byte {
-                0 => AssetKind::Fungible,
-                1 => AssetKind::NonFungible,
-                _ => return Err(LedgerCheckpointError::BadAssetKind),
-            };
-            let max_supply = reader.read_u64()?;
-            let minted = reader.read_u64()?;
-            let metadata_hash = if reader.read_u8()? == 1 {
-                Some(reader.read_array::<32>()?)
-            } else {
-                None
-            };
-            let collection_id = if reader.read_u8()? == 1 {
-                Some(reader.read_array::<32>()?)
-            } else {
-                None
-            };
-            let creator = if reader.read_u8()? == 1 {
-                Some(reader.read_array::<32>()?)
-            } else {
-                None
-            };
-            self.asset_registry.insert(
-                asset_id,
-                AssetRegistryEntry {
-                    asset_id,
-                    kind,
-                    max_supply,
-                    minted,
-                    metadata_hash,
-                    collection_id,
-                    creator,
-                },
-            );
-        }
-        Ok(())
     }
 }
 
@@ -3753,7 +3768,9 @@ const CHECKPOINT_MAGIC: [u8; 4] = *b"KVCP";
 /// longer written; v3..=v9 checkpoints still decode (the blob is read and
 /// discarded). This is a consensus-breaking change — old readers cannot read
 /// v10.
-const CHECKPOINT_VERSION: u16 = 10;
+/// v11 (KVP-107): asset registry entries include mint_price_per_unit, logo_uri,
+/// and metadata_uri. v3..=v10 checkpoints still decode (new fields default to 0/None).
+const CHECKPOINT_VERSION: u16 = 11;
 
 /// Why a ledger checkpoint could not be encoded or decoded.
 #[derive(Clone, Debug, PartialEq, Eq)]

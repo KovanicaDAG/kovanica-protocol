@@ -180,10 +180,146 @@ pub enum AssetKind {
     NonFungible,
 }
 
-/// Registry entry for an asset, tracking supply and metadata.
+/// URI scheme for logo/metadata references.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum LogoScheme {
+    /// IPFS URI (e.g., ipfs://Qm... or ipfs://bafy...)
+    #[default]
+    Ipfs = 0,
+    /// Arweave URI (e.g., ar://txid or https://arweave.net/txid)
+    Arweave = 1,
+    /// HTTPS URI (traditional web hosting)
+    Https = 2,
+    /// Data URI (base64-encoded inline, for tiny logos < 1KB)
+    Data = 3,
+}
+
+impl LogoScheme {
+    /// Decode a scheme byte. Returns None for unknown values.
+    pub fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(LogoScheme::Ipfs),
+            1 => Some(LogoScheme::Arweave),
+            2 => Some(LogoScheme::Https),
+            3 => Some(LogoScheme::Data),
+            _ => None,
+        }
+    }
+
+    /// Encode as a single byte.
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// URI scheme for extended metadata references.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MetadataScheme {
+    /// IPFS URI
+    #[default]
+    Ipfs = 0,
+    /// Arweave URI
+    Arweave = 1,
+    /// HTTPS URI
+    Https = 2,
+}
+
+impl MetadataScheme {
+    pub fn from_u8(byte: u8) -> Option<Self> {
+        match byte {
+            0 => Some(MetadataScheme::Ipfs),
+            1 => Some(MetadataScheme::Arweave),
+            2 => Some(MetadataScheme::Https),
+            _ => None,
+        }
+    }
+
+    pub fn to_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// On-chain logo commitment.
 ///
-/// This extends the per-asset conservation of KVP-102 with optional
-/// NFT-specific fields (KVP-106).
+/// Stores a URI reference and a BLAKE3 content hash for integrity verification.
+/// The content hash ensures the referenced image cannot be silently swapped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogoUri {
+    /// URI scheme (IPFS, Arweave, HTTPS, or Data).
+    pub scheme: LogoScheme,
+    /// BLAKE3 hash of the image content (32 bytes).
+    /// For Data URIs, this is the hash of the decoded bytes.
+    pub content_hash: [u8; 32],
+    /// URI string (max 256 bytes).
+    pub uri: String,
+}
+
+impl LogoUri {
+    /// Maximum allowed URI length in bytes.
+    pub const MAX_URI_LEN: usize = 256;
+    /// Maximum allowed Data URI payload (decoded) in bytes.
+    pub const MAX_DATA_LEN: usize = 1024;
+
+    /// Create a new LogoUri, validating size constraints.
+    pub fn new(
+        scheme: LogoScheme,
+        content_hash: [u8; 32],
+        uri: String,
+    ) -> Result<Self, &'static str> {
+        if uri.len() > Self::MAX_URI_LEN {
+            return Err("logo URI exceeds 256 bytes");
+        }
+        if scheme == LogoScheme::Data && uri.len() > Self::MAX_DATA_LEN * 4 / 3 + 32 {
+            // Rough base64 overhead check
+            return Err("data URI payload too large (max 1KB decoded)");
+        }
+        Ok(Self {
+            scheme,
+            content_hash,
+            uri,
+        })
+    }
+}
+
+/// On-chain extended metadata commitment.
+///
+/// References a JSON document with fields like name, symbol, decimals,
+/// description, website, social links, and logo details.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MetadataUri {
+    /// URI scheme (IPFS, Arweave, or HTTPS).
+    pub scheme: MetadataScheme,
+    /// BLAKE3 hash of the JSON content (32 bytes).
+    pub content_hash: [u8; 32],
+    /// URI string (max 256 bytes).
+    pub uri: String,
+}
+
+impl MetadataUri {
+    pub const MAX_URI_LEN: usize = 256;
+
+    pub fn new(
+        scheme: MetadataScheme,
+        content_hash: [u8; 32],
+        uri: String,
+    ) -> Result<Self, &'static str> {
+        if uri.len() > Self::MAX_URI_LEN {
+            return Err("metadata URI exceeds 256 bytes");
+        }
+        Ok(Self {
+            scheme,
+            content_hash,
+            uri,
+        })
+    }
+}
+
+/// Registry entry for an asset, tracking supply, mint price, and metadata.
+///
+/// This extends the per-asset conservation of KVP-102 with:
+/// - NFT-specific fields (KVP-106)
+/// - Mint price per unit (KVP-107)
+/// - Logo and extended metadata URIs (KVP-107)
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AssetRegistryEntry {
     /// The unique asset identifier.
@@ -195,15 +331,24 @@ pub struct AssetRegistryEntry {
     /// Amount currently minted.
     pub minted: u64,
     /// Optional BLAKE3 hash of off-chain metadata (IPFS/Arweave URI + JSON).
+    /// Legacy field; prefer `metadata_uri` for new assets.
     pub metadata_hash: Option<[u8; 32]>,
     /// Optional collection identifier for grouping NFTs.
     pub collection_id: Option<[u8; 32]>,
     /// Optional creator public key (Ed25519).
     pub creator: Option<[u8; 32]>,
+    /// Mint price per base unit (atoms of KVNC).
+    /// 0 = free minting (legacy behavior).
+    /// Enforced when mint_price_activation_score is reached.
+    pub mint_price_per_unit: u64,
+    /// Optional on-chain logo commitment.
+    pub logo_uri: Option<LogoUri>,
+    /// Optional extended metadata commitment (name, symbol, decimals, etc.).
+    pub metadata_uri: Option<MetadataUri>,
 }
 
 impl AssetRegistryEntry {
-    /// Create a new fungible asset registry entry.
+    /// Create a new fungible asset registry entry (legacy - free minting, no logo/metadata).
     pub fn new_fungible(asset_id: AssetId, max_supply: u64) -> Self {
         Self {
             asset_id,
@@ -213,10 +358,36 @@ impl AssetRegistryEntry {
             metadata_hash: None,
             collection_id: None,
             creator: None,
+            mint_price_per_unit: 0,
+            logo_uri: None,
+            metadata_uri: None,
         }
     }
 
-    /// Create a new non-fungible (NFT) asset registry entry.
+    /// Create a new fungible asset registry entry with mint price and optional logo/metadata.
+    pub fn new_fungible_with_mint_price(
+        asset_id: AssetId,
+        max_supply: u64,
+        mint_price_per_unit: u64,
+        logo_uri: Option<LogoUri>,
+        metadata_uri: Option<MetadataUri>,
+        creator: Option<[u8; 32]>,
+    ) -> Self {
+        Self {
+            asset_id,
+            kind: AssetKind::Fungible,
+            max_supply,
+            minted: 0,
+            metadata_hash: None,
+            collection_id: None,
+            creator,
+            mint_price_per_unit,
+            logo_uri,
+            metadata_uri,
+        }
+    }
+
+    /// Create a new non-fungible (NFT) asset registry entry (legacy).
     /// Enforces max_supply = 1.
     pub fn new_nft(
         asset_id: AssetId,
@@ -232,6 +403,32 @@ impl AssetRegistryEntry {
             metadata_hash,
             collection_id,
             creator,
+            mint_price_per_unit: 0,
+            logo_uri: None,
+            metadata_uri: None,
+        }
+    }
+
+    /// Create a new non-fungible (NFT) asset registry entry with mint price and optional logo/metadata.
+    /// Enforces max_supply = 1.
+    pub fn new_nft_with_mint_price(
+        asset_id: AssetId,
+        mint_price_per_unit: u64,
+        logo_uri: Option<LogoUri>,
+        metadata_uri: Option<MetadataUri>,
+        creator: Option<[u8; 32]>,
+    ) -> Self {
+        Self {
+            asset_id,
+            kind: AssetKind::NonFungible,
+            max_supply: 1,
+            minted: 0,
+            metadata_hash: None,
+            collection_id: None,
+            creator,
+            mint_price_per_unit,
+            logo_uri,
+            metadata_uri,
         }
     }
 

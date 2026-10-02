@@ -10,8 +10,9 @@
 //! stay deterministic — there is no thread, socket, or wall-clock wait here.
 //!
 //! TCP one-shot sync (the on-wire path) lives in [`crate::net`]: a seed
-//! accepts on `KOVANICA_LISTEN` (default `:9000`) and writes every block;
-//! a clone pulls with `KOVANICA_PEERS=explorer.kovanica.online:9000`.
+//! accepts on `KOVANICA_LISTEN` and writes every block; a clone pulls with
+//! `KOVANICA_PEERS=<host>:<port>`. Both defaults are per-network-profile, so
+//! quote the network's own port: `:8000` on testnet, `:9000` on mainnet.
 //! Long-lived relay sessions are [`crate::relay`] — tests only, not the
 //! explorer loop.
 //!

@@ -125,20 +125,57 @@ pub struct DnsSeedConfig {
     pub max_addrs: usize,
 }
 
-impl Default for DnsSeedConfig {
-    fn default() -> Self {
+impl DnsSeedConfig {
+    /// The operator-curated DNS seed **hostnames**. The port is supplied by
+    /// [`DnsSeedConfig::on_port`], never baked into a hostname: a seed list
+    /// carrying a port is how a testnet node ends up querying mainnet's socket.
+    ///
+    /// Host membership is operator policy, tracked in OPERATIONS.md §7 — do not
+    /// add a host here on the strength of a DNS record alone. `seed3` is
+    /// currently absent for exactly that reason.
+    pub const SEED_HOSTS: [&'static str; 2] = ["seed.kovanica.online", "seed2.kovanica.online"];
+
+    /// A seed config for a node on `port` — i.e. the active network's P2P port.
+    ///
+    /// A running node must use this, not [`Default`]: the default port belongs
+    /// to mainnet, so a testnet node using it resolves the right hosts on the
+    /// wrong port. That fails silently — DNS resolution succeeds, the connect
+    /// just times out — so the node looks healthy while never joining its chain.
+    pub fn on_port(port: u16, seeds: Vec<String>) -> Self {
         Self {
-            seeds: vec![
-                "seed.kovanica.online".to_string(),
-                "seed2.kovanica.online".to_string(),
-            ],
-            default_port: 9000,
+            seeds,
+            default_port: port,
             fallbacks: vec![
-                "127.0.0.1:9000".parse().unwrap(),
-                "[::1]:9000".parse().unwrap(),
+                SocketAddr::from(([127, 0, 0, 1], port)),
+                SocketAddr::from(([0u16, 0, 0, 0, 0, 0, 0, 1], port)),
             ],
             max_addrs: 50,
         }
+    }
+
+    /// No seeds, no fallbacks: [`DnsSeedResolver::resolve_all`] returns empty
+    /// and the caller's DHT bootstrap becomes a no-op. Used when the node has no
+    /// derivable P2P port — better to skip seeding than to guess mainnet's port.
+    pub fn disabled() -> Self {
+        Self {
+            seeds: Vec::new(),
+            default_port: 0,
+            fallbacks: Vec::new(),
+            max_addrs: 50,
+        }
+    }
+}
+
+/// Mainnet-shaped defaults. **Not network-aware** — a node with a network
+/// profile must build its config with [`DnsSeedConfig::on_port`] instead. Kept as
+/// a `Default` because the DNS-seed unit tests and any profile-less caller need
+/// a well-defined shape, and because it shares `SEED_HOSTS` with that path.
+impl Default for DnsSeedConfig {
+    fn default() -> Self {
+        Self::on_port(
+            9000,
+            Self::SEED_HOSTS.iter().map(|s| s.to_string()).collect(),
+        )
     }
 }
 

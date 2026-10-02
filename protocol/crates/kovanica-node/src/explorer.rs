@@ -64,10 +64,18 @@ const ACTORS: [u64; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 /// replay reports ambiguous.
 const DEVNET_OPERATOR_SEED: &[u8; 32] = b"KOVANICA_DEVNET_OPERATOR_SEED_01";
 /// Single P2P path: plaintext TCP. Not 80/443/3010/8080 and not libp2p :30333.
-const P2P_LISTEN_DEFAULT: &str = "0.0.0.0:9000";
-/// Devnet's default P2P bind. Loopback, and a distinct port from the testnet's
-/// 9000, so a devnet node neither collides with a testnet node on the same host
-/// nor is reachable from outside it unless `KOVANICA_LISTEN` says so.
+///
+/// Every network has its own port, so a host can run a testnet node and a
+/// dormant mainnet node side by side without either silently stealing the
+/// other's socket. Testnet is the live network; 9000 belongs to mainnet only.
+const TESTNET_P2P_LISTEN_DEFAULT: &str = "0.0.0.0:8000";
+/// Mainnet's P2P bind. Matches `deploy/mainnet/configs/*.env`. Dormant until
+/// `KOVANICA_MAINNET_OVERRIDE=1`, but kept correct so the port is not a
+/// late-binding surprise on the day mainnet opens.
+const MAINNET_P2P_LISTEN_DEFAULT: &str = "0.0.0.0:9000";
+/// Devnet's default P2P bind. Loopback, and a distinct port from both public
+/// networks, so a devnet node neither collides with a public node on the same
+/// host nor is reachable from outside it unless `KOVANICA_LISTEN` says so.
 const DEVNET_P2P_LISTEN_DEFAULT: &str = "127.0.0.1:9002";
 
 /// A network profile: identity, genesis parameters, and data-dir isolation.
@@ -145,7 +153,7 @@ impl NetworkProfile {
             block_pruning_depth: TESTNET_BLOCK_PRUNING_DEPTH,
             dormant: false,
             default_peers: DEFAULT_PEERS,
-            p2p_listen_default: P2P_LISTEN_DEFAULT,
+            p2p_listen_default: TESTNET_P2P_LISTEN_DEFAULT,
         }
     }
 
@@ -197,7 +205,7 @@ impl NetworkProfile {
             // mainnet node must be handed its seeds explicitly rather than
             // inheriting the testnet's.
             default_peers: &[],
-            p2p_listen_default: P2P_LISTEN_DEFAULT,
+            p2p_listen_default: MAINNET_P2P_LISTEN_DEFAULT,
         }
     }
 }
@@ -623,9 +631,11 @@ impl Explorer {
                 self.dht_node_id = Some(node_id);
                 self.dht_table = Some(n.dht_routing_table().unwrap().clone());
 
-                // Initialize DNS resolver
-                let _config = DnsSeedConfig::default();
-                self.dns_resolver = Some(DnsSeedResolver::new(crate::dns_seed::StdDnsResolver));
+                // DNS resolver, on this node's own P2P port.
+                self.dns_resolver = Some(DnsSeedResolver::with_config(
+                    crate::dns_seed::StdDnsResolver,
+                    dns_seed_config(),
+                ));
             }
         }
 
@@ -894,8 +904,10 @@ impl Explorer {
         if !listen_addr.is_empty() || !peers.is_empty() {
             eprintln!("kovanica p2p listen={listen_addr} peers={peers:?}");
         }
-        let _config = DnsSeedConfig::default();
-        let dns_resolver = Some(DnsSeedResolver::new(crate::dns_seed::StdDnsResolver));
+        let dns_resolver = Some(DnsSeedResolver::with_config(
+            crate::dns_seed::StdDnsResolver,
+            dns_seed_config(),
+        ));
         let (rate_limit_rate, rate_limit_burst) = rate_limit_from_env();
         let mut app = Self {
             mesh,
@@ -1546,13 +1558,61 @@ fn ensure_network() {
     }
 }
 
+/// Port out of a `host:port` bind string. `None` when there is no port, or it is
+/// 0 — 0 is never a valid destination, so it must not become a seed port.
+fn listen_port(raw: &str) -> Option<u16> {
+    raw.rsplit(':')
+        .next()?
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .filter(|p| *p != 0)
+}
+
+/// The effective P2P bind string: `KOVANICA_LISTEN` when set, otherwise the
+/// active network profile's default. `None` means P2P is switched off.
+fn p2p_listen_setting() -> Option<String> {
+    match std::env::var("KOVANICA_LISTEN") {
+        Ok(s) if env_off(s.trim()) => None,
+        Ok(s) => Some(s),
+        Err(_) => {
+            let d = network_profile().p2p_listen_default;
+            (!d.is_empty()).then(|| d.to_string())
+        }
+    }
+}
+
+/// Port the effective P2P bind resolves to, if any.
+fn p2p_listen_port() -> Option<u16> {
+    p2p_listen_setting().as_deref().and_then(listen_port)
+}
+
+/// DNS-seed config pinned to **this node's** P2P port.
+///
+/// The seed hostnames are shared operator policy; the port is not. Building this
+/// from [`DnsSeedConfig::default`] instead would resolve the right hosts on the
+/// wrong port — a testnet node dialling mainnet's socket, failing silently.
+fn dns_seed_config() -> DnsSeedConfig {
+    match p2p_listen_port() {
+        Some(port) => DnsSeedConfig::on_port(
+            port,
+            DnsSeedConfig::SEED_HOSTS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+        ),
+        None => {
+            eprintln!("kovanica dns seed: no P2P port configured; DHT seeding off");
+            DnsSeedConfig::disabled()
+        }
+    }
+}
+
 fn bind_p2p() -> Vec<TcpListener> {
-    let raw = std::env::var("KOVANICA_LISTEN")
-        .unwrap_or_else(|_| network_profile().p2p_listen_default.into());
-    if env_off(&raw) {
+    let Some(raw) = p2p_listen_setting() else {
         eprintln!("kovanica p2p listen disabled");
         return Vec::new();
-    }
+    };
     let listeners = bind_p2p_addrs(&raw);
     if listeners.is_empty() && !raw.is_empty() {
         eprintln!("kovanica p2p listen {raw} produced no listeners");
@@ -1621,7 +1681,25 @@ fn bind_v6_only(addr: &str) -> std::io::Result<TcpListener> {
     Ok(listener)
 }
 
-pub const DEFAULT_PEERS: &[&str] = &["seed.kovanica.online:9000", "seed2.kovanica.online:9000"];
+/// Testnet's compiled-in bootstrap set, used only when `KOVANICA_PEERS` is unset
+/// and the node is running the testnet profile.
+///
+/// **These must be testnet ports.** A testnet node whose default named a
+/// mainnet port would dial mainnet's socket and never sync the chain it was
+/// launched for — and the failure is silent, because the dial simply times out.
+/// Live `/api/p2p` reported `bootstrap: seed.kovanica.online:9000,
+/// seed2.kovanica.online:9000` while the same process reported
+/// `listen: 0.0.0.0:8000`: the defaults and the running node disagreed on the
+/// port.
+///
+/// The set is the one the live testnet seeds actually run with
+/// (`deploy/testnet/configs/seed1.env`, and `/api/p2p` on
+/// explorer.kovanica.online). `seed.kovanica.online` is deliberately absent:
+/// it has been dead at the head of this list before — see the regression that
+/// motivated [`Explorer::dial_order`] — and a compiled default must not carry a
+/// known-dead entry. Redundancy comes from the two live seeds plus the rotating
+/// dial cursor, not from padding the list.
+pub const DEFAULT_PEERS: &[&str] = &["seed2.kovanica.online:8000", "seed3.kovanica.online:8000"];
 
 fn peer_list() -> Vec<String> {
     match std::env::var("KOVANICA_PEERS") {
@@ -3582,17 +3660,32 @@ fn dispatch(
             return Ok(format!("{{\"ok\":true,\"tx\":{}}}", jstr(&id.to_string())));
         }
         "airdrop/prepare-claim" => {
-            let campaign_id = kovanica_types::Hash32(parse_hash(q.get("campaign_id").ok_or("campaign_id required")?)?);
+            let campaign_id = kovanica_types::Hash32(parse_hash(
+                q.get("campaign_id").ok_or("campaign_id required")?,
+            )?);
             let claimant = parse_addr(q.get("claimant").ok_or("claimant required")?)?;
             let amount = parse_u64(q, "amount", 0)?;
             let asset_id = crate::node::asset_id_from_wire(q.get("asset_id").map(String::as_str))?;
-            let merkle_siblings_bytes = parse_hash_array(q.get("merkle_siblings").ok_or("merkle_siblings required")?)?;
-            let merkle_siblings: Vec<kovanica_types::Hash32> = merkle_siblings_bytes.into_iter().map(kovanica_types::Hash32).collect();
-            let merkle_is_left = parse_bool_array(q.get("merkle_is_left").ok_or("merkle_is_left required")?)?;
+            let merkle_siblings_bytes =
+                parse_hash_array(q.get("merkle_siblings").ok_or("merkle_siblings required")?)?;
+            let merkle_siblings: Vec<kovanica_types::Hash32> = merkle_siblings_bytes
+                .into_iter()
+                .map(kovanica_types::Hash32)
+                .collect();
+            let merkle_is_left =
+                parse_bool_array(q.get("merkle_is_left").ok_or("merkle_is_left required")?)?;
             let to = parse_addr(q.get("to").ok_or("to address required")?)?;
             let n = app.mesh.node(&node).ok_or("unknown node")?;
             let p = n
-                .prepare_airdrop_claim(campaign_id, claimant, amount, asset_id, merkle_siblings, merkle_is_left, to)
+                .prepare_airdrop_claim(
+                    campaign_id,
+                    claimant,
+                    amount,
+                    asset_id,
+                    merkle_siblings,
+                    merkle_is_left,
+                    to,
+                )
                 .map_err(|e| e.to_string())?;
             return Ok(format!(
                 "{{\"ok\":true,\"sighash\":{},\"campaign_id\":{},\"claimant\":{},\"amount\":{},\"asset_id\":{}}}",
@@ -3604,18 +3697,33 @@ fn dispatch(
             ));
         }
         "airdrop/finalize-claim" => {
-            let campaign_id = kovanica_types::Hash32(parse_hash(q.get("campaign_id").ok_or("campaign_id required")?)?);
+            let campaign_id = kovanica_types::Hash32(parse_hash(
+                q.get("campaign_id").ok_or("campaign_id required")?,
+            )?);
             let claimant = parse_addr(q.get("claimant").ok_or("claimant required")?)?;
             let amount = parse_u64(q, "amount", 0)?;
             let asset_id = crate::node::asset_id_from_wire(q.get("asset_id").map(String::as_str))?;
-            let merkle_siblings_bytes = parse_hash_array(q.get("merkle_siblings").ok_or("merkle_siblings required")?)?;
-            let merkle_siblings: Vec<kovanica_types::Hash32> = merkle_siblings_bytes.into_iter().map(kovanica_types::Hash32).collect();
-            let merkle_is_left = parse_bool_array(q.get("merkle_is_left").ok_or("merkle_is_left required")?)?;
+            let merkle_siblings_bytes =
+                parse_hash_array(q.get("merkle_siblings").ok_or("merkle_siblings required")?)?;
+            let merkle_siblings: Vec<kovanica_types::Hash32> = merkle_siblings_bytes
+                .into_iter()
+                .map(kovanica_types::Hash32)
+                .collect();
+            let merkle_is_left =
+                parse_bool_array(q.get("merkle_is_left").ok_or("merkle_is_left required")?)?;
             let to = parse_addr(q.get("to").ok_or("to address required")?)?;
             let sig = parse_sig(q.get("sig").ok_or("sig required")?)?;
             let n = app.mesh.node_mut(&node).ok_or("unknown node")?;
             let p = n
-                .prepare_airdrop_claim(campaign_id, claimant, amount, asset_id, merkle_siblings, merkle_is_left, to)
+                .prepare_airdrop_claim(
+                    campaign_id,
+                    claimant,
+                    amount,
+                    asset_id,
+                    merkle_siblings,
+                    merkle_is_left,
+                    to,
+                )
                 .map_err(|e| e.to_string())?;
             let id = n.submit_airdrop_claim(p, sig).map_err(|e| e.to_string())?;
             app.mesh.drain(8);
@@ -4187,7 +4295,13 @@ fn token_detail_json(
 
     let holders_json = holders
         .into_iter()
-        .map(|h| format!("{{\"address\":{},\"balance\":{}}}", jstr(&h.address.to_kvnc()), h.balance))
+        .map(|h| {
+            format!(
+                "{{\"address\":{},\"balance\":{}}}",
+                jstr(&h.address.to_kvnc()),
+                h.balance
+            )
+        })
         .collect::<Vec<_>>()
         .join(",");
 
@@ -5541,16 +5655,90 @@ mod tests {
         );
     }
 
-    /// Devnet binds loopback by default so a developer's node is not exposed.
+    /// Devnet binds loopback by default so a developer's node is not exposed,
+    /// and on a port distinct from **both** public networks — not just testnet.
     #[test]
     fn devnet_p2p_defaults_to_loopback_on_its_own_port() {
         let devnet = profile_for_env(Some("devnet"), false);
         assert!(devnet.p2p_listen_default.starts_with("127.0.0.1:"));
+        for (net, mainnet) in [(None, false), (Some("mainnet"), true)] {
+            assert_ne!(
+                devnet.p2p_listen_default,
+                profile_for_env(net, mainnet).p2p_listen_default,
+                "devnet must not collide with another network's P2P port"
+            );
+        }
+    }
+
+    /// A default seed or listen address carrying the wrong network's port is a
+    /// **silent** failure: the bind succeeds and the dial just times out, so a
+    /// node launched with no env overrides reports healthy while never syncing.
+    /// The public defaults must be testnet's, and never mainnet's.
+    #[test]
+    fn public_defaults_are_testnet_ports_not_mainnet_ports() {
+        let testnet = profile_for_env(None, false);
+        assert_eq!(testnet.p2p_listen_default, TESTNET_P2P_LISTEN_DEFAULT);
         assert_ne!(
-            devnet.p2p_listen_default,
-            profile_for_env(None, false).p2p_listen_default,
-            "devnet must not collide with the testnet P2P port"
+            testnet.p2p_listen_default, MAINNET_P2P_LISTEN_DEFAULT,
+            "testnet must not default to mainnet's P2P port"
         );
+        assert!(
+            !DEFAULT_PEERS.is_empty(),
+            "a live network needs a bootstrap set"
+        );
+        for peer in DEFAULT_PEERS {
+            assert!(
+                peer.ends_with(":8000"),
+                "testnet default peer {peer} is not on the testnet P2P port"
+            );
+            assert!(
+                !peer.contains(":9000"),
+                "testnet default peer {peer} is on mainnet's port"
+            );
+        }
+    }
+
+    /// DNS-seed resolution must use the *acting* network's port. A testnet node
+    /// resolving seeds on mainnet's port still gets answers — it just can never
+    /// complete a handshake, so it looks healthy and stays isolated forever.
+    #[test]
+    fn every_profile_resolves_dns_seeds_on_its_own_p2p_port() {
+        let mut ports = Vec::new();
+        for (env, mainnet, want) in [
+            (None, false, 8000),
+            (Some("devnet"), false, 9002),
+            (Some("mainnet"), true, 9000),
+        ] {
+            let profile = profile_for_env(env, mainnet);
+            assert_eq!(
+                listen_port(profile.p2p_listen_default),
+                Some(want),
+                "profile must derive its DNS-seed port from its own bind default"
+            );
+            ports.push(want);
+        }
+        // Distinct ports: no two networks can steal each other's socket on one
+        // host, which is exactly what let testnet and mainnet collide before.
+        ports.sort_unstable();
+        ports.dedup();
+        assert_eq!(ports.len(), 3, "two networks share a P2P port");
+
+        // No port, or a bind-everything port: never a seed destination.
+        assert_eq!(listen_port("0.0.0.0"), None);
+        assert_eq!(listen_port("0.0.0.0:0"), None);
+    }
+
+    /// The resolver's seed config is built from the profile's port, so a
+    /// testnet default must not leak mainnet's 9000 into it.
+    #[test]
+    fn dns_seed_config_is_not_mainnet_shaped_on_testnet() {
+        let testnet_port = listen_port(profile_for_env(None, false).p2p_listen_default);
+        assert_eq!(testnet_port, Some(8000));
+        let cfg = DnsSeedConfig::on_port(testnet_port.unwrap(), vec![]);
+        assert_eq!(cfg.default_port, 8000);
+        assert!(cfg.fallbacks.iter().all(|a| a.port() == 8000));
+        assert!(DnsSeedConfig::disabled().seeds.is_empty());
+        assert!(DnsSeedConfig::disabled().fallbacks.is_empty());
     }
 
     #[test]
@@ -5558,12 +5746,12 @@ mod tests {
         assert!(env_off("off"));
         assert!(env_off("none"));
         assert!(env_off("0"));
-        assert!(!env_off(P2P_LISTEN_DEFAULT));
+        assert!(!env_off(TESTNET_P2P_LISTEN_DEFAULT));
         // The testnet profile's default seeds are the public testnet, and are
         // reported from DEFAULT_PEERS rather than a second hardcoded copy.
         assert_eq!(
             DEFAULT_PEERS,
-            &["seed.kovanica.online:9000", "seed2.kovanica.online:9000"]
+            &["seed2.kovanica.online:8000", "seed3.kovanica.online:8000"]
         );
     }
 

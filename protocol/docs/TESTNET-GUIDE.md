@@ -15,8 +15,8 @@
 | **Network ID** | `kovanica-testnet` |
 | **Genesis hash** | See `/api/head` on explorer |
 | **Consensus** | GHOSTDAG BlockDAG, **k = 3** |
-| **P2P port** | TCP **9000** (plaintext, no libp2p) |
-| **Bootstrap seeds** | `seed.kovanica.online:9000`, `seed2.kovanica.online:9000` |
+| **P2P port** | TCP **8000** (plaintext, no libp2p) — 9000 is mainnet |
+| **Bootstrap seeds** | `seed2.kovanica.online:8000`, `seed3.kovanica.online:8000` |
 | **Explorer** | https://explorer.kovanica.online |
 | **Wallet** | https://wallet.kovanica.online |
 | **Faucet** | https://faucet.testnet.kovanica.online (1 KVNC, rate-limited) |
@@ -70,8 +70,8 @@ cargo build --release -p kovanica-node
 ### Run a participant node (connects to testnet)
 
 ```sh
-export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
+export KOVANICA_LISTEN=0.0.0.0:8000
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
 export KOVANICA_MINE=0          # Leave off unless you intend to mint
 export KOVANICA_MINE_SECS=120
 export KOVANICA_FAUCET=0
@@ -97,8 +97,8 @@ The `network` and `genesis` fields must match. Your tip will catch up after the 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `KOVANICA_LISTEN` | `0.0.0.0:9000` | P2P bind address (also tries `[::]:9000`) |
-| `KOVANICA_PEERS` | `seed.kovanica.online:9000` | Comma-separated bootstrap peers |
+| `KOVANICA_LISTEN` | `0.0.0.0:8000` (testnet) · `0.0.0.0:9000` (mainnet) · `127.0.0.1:9002` (devnet) | P2P bind address (also tries `[::]:<port>`). Default follows `KOVANICA_NETWORK`; override only to pin it |
+| `KOVANICA_PEERS` | `seed2.kovanica.online:8000,seed3.kovanica.online:8000` (testnet) · empty (devnet, mainnet) | Comma-separated bootstrap peers. Devnet/mainnet ship no default seeds on purpose |
 | `KOVANICA_MINE` | `0` | Enable auto-mining (produce blocks) |
 | `KOVANICA_MINE_SECS` | `120` | Mining interval in seconds (when `MINE=1`) |
 | `KOVANICA_FAUCET` | `0` | Enable faucet endpoint (seed-only) |
@@ -117,7 +117,7 @@ The `network` and `genesis` fields must match. Your tip will catch up after the 
 ### Participant (default)
 - **Purpose:** Validate, sync, submit transactions, run wallet
 - **Config:** `MINE=0`, `FAUCET=0`, `OPERATOR=0`
-- **Ports:** Outbound 9000 only (inbound optional for serving peers)
+- **Ports:** Outbound 8000 only (inbound optional for serving peers)
 - **Data:** Preserves `KOVANICA_DATA` across restarts
 
 ### Block producer (PoA authority)
@@ -132,8 +132,8 @@ The `network` and `genesis` fields must match. Your tip will catch up after the 
 ### Seed / Explorer Node
 - **Purpose:** Bootstrap, serve explorer API, mine empty blocks
 - **Config:** `MINE=1`, `FAUCET=1`, `OPERATOR=1`, `ALLOW_RESET=0`
-- **Ports:** P2P 9000 (grey-cloud DNS), HTTP 8080 (loopback), metrics 9090
-- **Peers:** `seed2.kovanica.online:9000` (primary) or `seed.kovanica.online:9000` (secondary)
+- **Ports:** P2P 8000 (grey-cloud DNS), HTTP 8080 (loopback), metrics 9090
+- **Peers:** `seed2.kovanica.online:8000` (primary) or `seed3.kovanica.online:8000` (secondary)
 
 ---
 
@@ -285,7 +285,7 @@ KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh --data-dir /root/kovanica-
 mkdir -p /tmp/kov-restore-drill
 KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh \
   --data-dir /tmp/kov-restore-drill/data --force
-KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed.kovanica.online:9000 \
+KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed2.kovanica.online:8000 \
   /usr/local/bin/kovanica-node explorer 127.0.0.1:18081 &
 curl -s http://127.0.0.1:18081/api/head | jq .genesis
 ```
@@ -296,11 +296,12 @@ curl -s http://127.0.0.1:18081/api/head | jq .genesis
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
-| Sync stalls at genesis | Wrong bootstrap peer | Use `KOVANICA_PEERS=145.223.116.178:9000` (origin IP) |
-| `address already in use` on 9000 | Another node running | `systemctl stop kovanica-*` or change `KOVANICA_LISTEN` |
+| Sync stalls at genesis | Wrong bootstrap peer, **or the mainnet port 9000** | Use `KOVANICA_PEERS=76.13.250.65:8000` (seed2 origin IP) |
+| `address already in use` on 8000 | Another node running | `systemctl stop kovanica-*` or change `KOVANICA_LISTEN` |
 | Genesis mismatch | Old chain data in `KOVANICA_DATA` | Wipe data dir (`KOVANICA_ALLOW_RESET=1` + restart) or backup/restore |
-| No peers connecting | Cloudflare orange-cloud on seed hostname | Use `seed.kovanica.online` (grey-cloud DNS only) |
-| IPv6 dial stalls | Ubuntu prefers IPv6 | Set `KOVANICA_PEERS=145.223.116.178:9000` |
+| No peers connecting, no error logged | Dialed the wrong port — P2P has no handshake error path | `curl -s :8080/api/p2p \| jq` and compare `listen`/`peers`/`bootstrap` |
+| No peers connecting | Cloudflare orange-cloud on seed hostname | Use the DNS-only seed name or its origin IP |
+| IPv6 dial stalls | Ubuntu prefers IPv6 | Set `KOVANICA_PEERS=76.13.250.65:8000` |
 | Miner not producing | `MINE=0` or no mempool txs | Set `KOVANICA_MINE=1` and ensure mempool has txs (or `produce_empty`) |
 
 ---

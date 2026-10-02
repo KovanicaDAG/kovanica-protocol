@@ -6,7 +6,7 @@ use crossterm::{
 };
 use ratatui::{
     backend::CrosstermBackend,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
@@ -35,6 +35,18 @@ enum MenuItem {
     Rwa,
     Nft,
     Quit,
+}
+
+/// 1 KVNC = 100_000_000 atoms.
+const ATOM: u64 = 100_000_000;
+
+/// Render an atom amount as fixed-point KVNC with 8 decimals.
+///
+/// Integer division alone is wrong at every amount below 1 KVNC: a 0.5 KVNC
+/// send printed as "0 KVNC". Kept local so the TUI and the CLI's `send`
+/// agree on the rendering.
+fn fmt_kvnc(atoms: u64) -> String {
+    format!("{}.{:08}", atoms / ATOM, atoms % ATOM)
 }
 
 impl MenuItem {
@@ -138,6 +150,7 @@ enum InputMode {
     Normal,
     BalanceAddress,
     AddressKeyPath,
+    KeygenPath,
     Send(SendStep),
     Htlc(HtlcStep),
     Offer(OfferStep),
@@ -208,6 +221,8 @@ struct App {
     input_buffer: String,
     input_prompt: Option<String>,
     input_mode: InputMode,
+    /// Held between selecting Keygen and answering the path prompt.
+    pending_keygen: Option<crate::Wallet>,
     send_state: SendState,
     htlc_state: HtlcState,
     offer_state: OfferState,
@@ -227,6 +242,7 @@ impl App {
             input_buffer: String::new(),
             input_prompt: None,
             input_mode: InputMode::Normal,
+            pending_keygen: None,
             send_state: SendState::default(),
             htlc_state: HtlcState::default(),
             offer_state: OfferState::default(),
@@ -259,24 +275,75 @@ impl App {
         self.input_mode = mode;
     }
 
+    /// Menu label for the prompt currently shown, or `None` in the menu.
+    fn prompt_menu_item(&self) -> Option<MenuItem> {
+        Some(match self.input_mode {
+            InputMode::BalanceAddress => MenuItem::Balance,
+            InputMode::AddressKeyPath => MenuItem::Address,
+            InputMode::KeygenPath => MenuItem::Keygen,
+            InputMode::Send(_) => MenuItem::Send,
+            InputMode::Htlc(_) => MenuItem::Htlc,
+            InputMode::Offer(_) => MenuItem::Offer,
+            InputMode::Rwa(_) => MenuItem::Rwa,
+            InputMode::Nft(_) => MenuItem::Nft,
+            InputMode::Normal => return None,
+        })
+    }
+
+    /// Expand the raw JSON currently in `output` into the compact summary a
+    /// wallet user actually wants: confirmed amount, fee, and tx id, with the
+    /// full payload kept for the cases that are genuinely diagnostic.
+    fn render_summary(&mut self) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&self.output) else {
+            return;
+        };
+
+        // A confirmed send/issue is a few scalar fields; `state`/`blocks` are
+        // whole DAGs and must stay as JSON.
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(tx) = value.get("tx").and_then(|v| v.as_str()) {
+            lines.push(format!("tx: {tx}"));
+        }
+        if let Some(fee) = value.get("fee").and_then(|v| v.as_u64()) {
+            lines.push(format!("fee: {fee} atoms ({})", fmt_kvnc(fee)));
+        }
+        for field in ["amount", "burned", "height", "balance", "supply"] {
+            if let Some(v) = value.get(field) {
+                lines.push(format!("{field}: {v}"));
+            }
+        }
+
+        // Keep the raw payload only when we could not find anything to say.
+        if lines.is_empty() {
+            return;
+        }
+        lines.push(String::new());
+        lines.push(format!("-- raw --\n{}", self.output));
+        self.output = lines.join("\n");
+    }
+
     async fn submit_input(&mut self) -> Result<()> {
         let input = std::mem::take(&mut self.input_buffer);
         let mode = std::mem::replace(&mut self.input_mode, InputMode::Normal);
         self.input_prompt = None;
 
         match mode {
+            // `input` is the captured buffer: `mem::take` above already
+            // emptied `self.input_buffer`, so these handlers must read the
+            // local, never the field.
             InputMode::BalanceAddress => {
-                let addr = Address::parse(&self.input_buffer)
+                let addr = Address::parse(input.trim())
                     .map_err(|e| anyhow::anyhow!("invalid address: {e}"))?;
                 let result = self.client.utxos(&addr.to_hex())?;
                 self.output = serde_json::to_string_pretty(&result)?;
+                self.render_summary();
                 self.show_output = true;
             }
             InputMode::AddressKeyPath => {
-                let path = if self.input_buffer.trim().is_empty() {
+                let path = if input.trim().is_empty() {
                     "kovanica.key".to_string()
                 } else {
-                    self.input_buffer.clone()
+                    input.trim().to_string()
                 };
                 let wallet = crate::Wallet::load(&PathBuf::from(&path))?;
                 let addr = wallet.address();
@@ -287,12 +354,36 @@ impl App {
                 );
                 self.show_output = true;
             }
+            InputMode::KeygenPath => {
+                let path = if input.trim().is_empty() {
+                    "kovanica.key".to_string()
+                } else {
+                    input.trim().to_string()
+                };
+                let wallet = self
+                    .pending_keygen
+                    .take()
+                    .context("keygen was cancelled before the path was chosen")?;
+                // `save(.., false)` never clobbers an existing file, so a
+                // second Keygen into the same path errors instead of silently
+                // replacing a key the user still holds funds under.
+                wallet.save(&PathBuf::from(&path), false)?;
+                let addr = wallet.address();
+                self.output = format!(
+                    "Wrote key to {path} (0600, keep it secret)\n\
+                     address (kvnc): {}\n\
+                     address (hex):  {}",
+                    addr.to_kvnc(),
+                    addr.to_hex()
+                );
+                self.show_output = true;
+            }
             InputMode::Send(step) => match step {
                 SendStep::KeyPath => {
-                    self.send_state.key_path = Some(if self.input_buffer.trim().is_empty() {
+                    self.send_state.key_path = Some(if input.trim().is_empty() {
                         "kovanica.key".to_string()
                     } else {
-                        self.input_buffer.clone()
+                        input.trim().to_string()
                     });
                     self.start_input(
                         "Enter recipient address (kvnc...dag or hex): ".to_string(),
@@ -300,17 +391,45 @@ impl App {
                     );
                 }
                 SendStep::ToAddress => {
-                    self.send_state.to_address = Some(self.input_buffer.clone());
+                    // Validate here so a typo does not walk the user through
+                    // the amount prompt before failing; re-prompt on the same
+                    // step rather than dropping back to the menu. The Input
+                    // pane covers the Output pane, so the reason has to ride
+                    // along in the prompt to be visible at all.
+                    let to = input.trim();
+                    if let Err(e) = Address::parse(to) {
+                        self.start_input(
+                            format!("Invalid address ({e}) - try again: "),
+                            InputMode::Send(SendStep::ToAddress),
+                        );
+                        return Ok(());
+                    }
+                    self.send_state.to_address = Some(to.to_string());
                     self.start_input(
                         "Enter amount in atoms (1 KVNC = 100000000): ".to_string(),
                         InputMode::Send(SendStep::Amount),
                     );
                 }
                 SendStep::Amount => {
-                    let amount = self
-                        .input_buffer
-                        .parse::<u64>()
-                        .map_err(|_| anyhow::anyhow!("invalid amount"))?;
+                    // Same as above: reason in the prompt, stay on the step.
+                    let amount = match input.trim().parse::<u64>() {
+                        Ok(0) => {
+                            self.start_input(
+                                "Amount must be greater than zero - try again: ".to_string(),
+                                InputMode::Send(SendStep::Amount),
+                            );
+                            return Ok(());
+                        }
+                        Ok(amount) => amount,
+                        Err(_) => {
+                            self.start_input(
+                                "Amount must be whole atoms (1 KVNC = 100000000) - try again: "
+                                    .to_string(),
+                                InputMode::Send(SendStep::Amount),
+                            );
+                            return Ok(());
+                        }
+                    };
                     self.send_state.amount = Some(amount);
                     self.execute_send().await?;
                 }
@@ -358,13 +477,29 @@ impl App {
         let sig = wallet.keypair().sign(&sighash);
         let sig_hex = hex::encode(sig);
 
-        self.client.submit(&from, &to_addr, amount, &sig_hex)?;
-        self.output = format!(
-            "Sent {} atoms ({} KVNC) to {}",
+        let result = self.client.submit(&from, &to_addr, amount, &sig_hex)?;
+        let fee = prepared.get("fee").and_then(|v| v.as_u64());
+        let tx = result.get("tx").and_then(|v| v.as_str()).unwrap_or("");
+        let mut out = format!(
+            "Sent {} atoms ({}) to {to_address}",
             amount,
-            amount / 100_000_000,
-            to_address
+            fmt_kvnc(amount)
         );
+        if let Some(fee) = fee {
+            // RFC-006: the whole fee is charged; the producer only keeps
+            // `fee / 4` and the rest is burned. Show the split so the number
+            // the user sees matches /api/head's `burned` accumulation.
+            out.push_str(&format!(
+                "\nfee: {fee} atoms ({}) — burned: {} atoms, producer: {} atoms",
+                fmt_kvnc(fee),
+                fee - fee / 4,
+                fee / 4
+            ));
+        }
+        if !tx.is_empty() {
+            out.push_str(&format!("\ntx: {tx}"));
+        }
+        self.output = out;
         self.show_output = true;
         Ok(())
     }
@@ -1311,15 +1446,13 @@ impl App {
             }
             MenuItem::Keygen => {
                 let wallet = crate::Wallet::generate()?;
-                let key_path = "kovanica.key";
-                wallet.save(&PathBuf::from("kovanica.key"), false)?;
-                let addr = wallet.address();
-                let mut output = String::new();
-                output.push_str(&format!("Wrote key to {key_path} (keep it secret)\n"));
-                output.push_str(&format!("address (kvnc): {}\n", addr.to_kvnc()));
-                output.push_str(&format!("address (hex):  {}", addr.to_hex()));
-                self.output = output;
-                self.show_output = true;
+                // The path was hardcoded, so every Keygen run landed in the
+                // caller's cwd and collided with the previous one.
+                self.pending_keygen = Some(wallet);
+                self.start_input(
+                    "Enter key file path to write (default: kovanica.key): ".to_string(),
+                    InputMode::KeygenPath,
+                );
             }
             MenuItem::Address => {
                 self.start_input(
@@ -1371,10 +1504,21 @@ impl App {
 }
 
 fn ui(f: &mut Frame, app: &App) {
+    // 4 rows are reserved for the footer up front, so the footer does not
+    // paint over the bottom border of the panels it sits beneath.
+    // 2 rows for the help (prompt + key hint), 2 for the contact block,
+    // 1 for the version. Reserving it up front stops the footer from painting
+    // over the bottom border of the panels above it.
+    const FOOTER_H: u16 = 5;
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(FOOTER_H)])
+        .split(f.area());
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(f.area());
+        .split(outer[0]);
 
     let items: Vec<ListItem> = MenuItem::all()
         .iter()
@@ -1423,24 +1567,32 @@ fn ui(f: &mut Frame, app: &App) {
         .wrap(Wrap { trim: true });
     f.render_widget(output, chunks[1]);
 
+    // The prompt-mode help needs two rows (prompt + key hint), so reserve two
+    // here rather than letting the second line get clipped.
     let footer_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(2),
             Constraint::Length(2),
             Constraint::Length(1),
         ])
-        .split(Rect {
-            x: f.area().x,
-            y: f.area().y + f.area().height - 4,
-            width: f.area().width,
-            height: 4,
-        });
+        .split(outer[1]);
 
-    let help_text = if app.input_prompt.is_some() {
-        "Type input | Enter: Submit | Esc: Cancel"
+    let help_text = if let Some(prompt_for) = app.input_prompt.as_deref() {
+        // Name the flow the user is in, and hint that a multi-step wizard can
+        // be abandoned with Esc.
+        let flow = app
+            .prompt_menu_item()
+            .map(|item| {
+                item.label()
+                    .trim_start_matches(|c: char| c.is_ascii_digit() || c == '.')
+                    .trim()
+                    .to_string()
+            })
+            .unwrap_or_default();
+        format!("{prompt_for}\nType input | Enter: Submit | Esc: Cancel ({flow})")
     } else {
-        "↑/↓: Navigate | Enter: Execute | Q: Quit"
+        "↑/↓: Navigate | Enter: Execute | Q: Quit".to_string()
     };
     let help = Paragraph::new(help_text)
         .style(Style::default().fg(Color::Gray))
@@ -1522,9 +1674,14 @@ async fn run_app<B: ratatui::backend::Backend>(
                             }
                         }
                         KeyCode::Esc => {
+                            // A pending Keygen must not leave an unwritten
+                            // wallet parked in the App across the cancel.
+                            app.pending_keygen = None;
                             app.input_prompt = None;
                             app.input_buffer.clear();
                             app.input_mode = InputMode::Normal;
+                            app.output = "Cancelled.".to_string();
+                            app.show_output = true;
                         }
                         _ => {}
                     }

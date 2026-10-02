@@ -1314,7 +1314,9 @@ fn dex(client: &Client, cmd: DexCommand) -> Result<()> {
 
 /// Airdrop command implementations — Merkle proof based claims (client-side only).
 fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
-    use kovanica_airdrop::{AirdropCampaign, AirdropLeaf, MerkleProof, build_merkle_root, generate_proof};
+    use kovanica_airdrop::{
+        build_merkle_root, generate_proof, AirdropCampaign, AirdropLeaf, MerkleProof,
+    };
 
     match cmd {
         AirdropCommand::Create {
@@ -1326,14 +1328,15 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
             total_amount,
         } => {
             // Parse campaign ID
-            let campaign_id_bytes = hex::decode(&campaign_id).context("campaign_id must be 32-byte hex")?;
+            let campaign_id_bytes =
+                hex::decode(&campaign_id).context("campaign_id must be 32-byte hex")?;
             if campaign_id_bytes.len() != 32 {
                 bail!("campaign_id must be 32 bytes (64 hex chars)");
             }
             let campaign_id = Hash32(
                 campaign_id_bytes
                     .try_into()
-                    .map_err(|_| anyhow::anyhow!("campaign_id must be 32 bytes"))?
+                    .map_err(|_| anyhow::anyhow!("campaign_id must be 32 bytes"))?,
             );
 
             // Parse asset ID
@@ -1342,10 +1345,9 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
                 if raw.len() != 32 {
                     bail!("asset_id must be 32 bytes");
                 }
-                Some(TypesAssetId(Hash32(
-                    raw.try_into()
-                        .map_err(|_| anyhow::anyhow!("asset_id must be 32 bytes"))?
-                )))
+                Some(TypesAssetId(Hash32(raw.try_into().map_err(|_| {
+                    anyhow::anyhow!("asset_id must be 32 bytes")
+                })?)))
             } else {
                 None
             };
@@ -1353,10 +1355,10 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
             // Parse recipients CSV
             let csv_content = std::fs::read_to_string(&recipients)
                 .with_context(|| format!("cannot read recipients file {}", recipients.display()))?;
-            
+
             let mut leaves = Vec::new();
             let mut computed_total = 0u64;
-            
+
             for (line_num, line) in csv_content.lines().enumerate() {
                 let line = line.trim();
                 if line.is_empty() || line.starts_with('#') {
@@ -1364,19 +1366,32 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
                 }
                 let parts: Vec<&str> = line.split(',').collect();
                 if parts.len() != 2 {
-                    bail!("line {}: expected 'address,amount', got: {}", line_num + 1, line);
+                    bail!(
+                        "line {}: expected 'address,amount', got: {}",
+                        line_num + 1,
+                        line
+                    );
                 }
                 let addr_state = parse_address(parts[0].trim())?;
                 let addr_types = TypesAddress::from_versioned(*addr_state.as_bytes());
-                let amount: u64 = parts[1].trim().parse()
+                let amount: u64 = parts[1]
+                    .trim()
+                    .parse()
                     .with_context(|| format!("line {}: invalid amount", line_num + 1))?;
-                
-                leaves.push(AirdropLeaf { address: addr_types, amount });
+
+                leaves.push(AirdropLeaf {
+                    address: addr_types,
+                    amount,
+                });
                 computed_total = computed_total.saturating_add(amount);
             }
 
             if computed_total != total_amount {
-                bail!("total_amount {} does not match sum of recipients {}", total_amount, computed_total);
+                bail!(
+                    "total_amount {} does not match sum of recipients {}",
+                    total_amount,
+                    computed_total
+                );
             }
 
             // Build Merkle root
@@ -1391,7 +1406,7 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
             };
 
             let json = serde_json::to_string_pretty(&campaign)?;
-            
+
             if let Some(path) = output {
                 std::fs::write(&path, &json)
                     .with_context(|| format!("cannot write to {}", path.display()))?;
@@ -1410,8 +1425,8 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
             // Load campaign
             let campaign_json = std::fs::read_to_string(&campaign)
                 .with_context(|| format!("cannot read campaign file {}", campaign.display()))?;
-            let campaign: AirdropCampaign = serde_json::from_str(&campaign_json)
-                .context("invalid campaign JSON")?;
+            let campaign: AirdropCampaign =
+                serde_json::from_str(&campaign_json).context("invalid campaign JSON")?;
 
             // Parse claimant address
             let claimant_addr = parse_address(&claimant)?;
@@ -1419,7 +1434,7 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
             // Load recipients CSV to reconstruct leaves
             let csv_content = std::fs::read_to_string(&recipients)
                 .with_context(|| format!("cannot read recipients file {}", recipients.display()))?;
-            
+
             let mut leaves = Vec::new();
             for line in csv_content.lines() {
                 let line = line.trim();
@@ -1433,12 +1448,17 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
                 let addr_state = parse_address(parts[0].trim())?;
                 let addr_types = TypesAddress::from_versioned(*addr_state.as_bytes());
                 let amount: u64 = parts[1].trim().parse().unwrap_or(0);
-                leaves.push(AirdropLeaf { address: addr_types, amount });
+                leaves.push(AirdropLeaf {
+                    address: addr_types,
+                    amount,
+                });
             }
 
             // Find the leaf index for this claimant
             let claimant_types = TypesAddress::from_versioned(*claimant_addr.as_bytes());
-            let index = leaves.iter().position(|l| l.address == claimant_types)
+            let index = leaves
+                .iter()
+                .position(|l| l.address == claimant_types)
                 .ok_or_else(|| anyhow::anyhow!("claimant not found in recipients list"))?;
 
             // Generate proof
@@ -1447,11 +1467,13 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
 
             // Verify the proof
             if !proof.verify(campaign.merkle_root) {
-                bail!("generated proof does not verify against campaign merkle root - data mismatch");
+                bail!(
+                    "generated proof does not verify against campaign merkle root - data mismatch"
+                );
             }
 
             let json = serde_json::to_string_pretty(&proof)?;
-            
+
             if let Some(path) = output {
                 std::fs::write(&path, &json)
                     .with_context(|| format!("cannot write to {}", path.display()))?;
@@ -1461,21 +1483,18 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
             }
             Ok(())
         }
-        AirdropCommand::Verify {
-            campaign,
-            proof,
-        } => {
+        AirdropCommand::Verify { campaign, proof } => {
             // Load campaign
             let campaign_json = std::fs::read_to_string(&campaign)
                 .with_context(|| format!("cannot read campaign file {}", campaign.display()))?;
-            let campaign: AirdropCampaign = serde_json::from_str(&campaign_json)
-                .context("invalid campaign JSON")?;
+            let campaign: AirdropCampaign =
+                serde_json::from_str(&campaign_json).context("invalid campaign JSON")?;
 
             // Load proof
             let proof_json = std::fs::read_to_string(&proof)
                 .with_context(|| format!("cannot read proof file {}", proof.display()))?;
-            let proof: MerkleProof = serde_json::from_str(&proof_json)
-                .context("invalid proof JSON")?;
+            let proof: MerkleProof =
+                serde_json::from_str(&proof_json).context("invalid proof JSON")?;
 
             let valid = proof.verify(campaign.merkle_root);
             if valid {
@@ -1495,14 +1514,14 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
             // Load campaign
             let campaign_json = std::fs::read_to_string(&campaign)
                 .with_context(|| format!("cannot read campaign file {}", campaign.display()))?;
-            let campaign: AirdropCampaign = serde_json::from_str(&campaign_json)
-                .context("invalid campaign JSON")?;
+            let campaign: AirdropCampaign =
+                serde_json::from_str(&campaign_json).context("invalid campaign JSON")?;
 
             // Load proof
             let proof_json = std::fs::read_to_string(&proof)
                 .with_context(|| format!("cannot read proof file {}", proof.display()))?;
-            let proof: MerkleProof = serde_json::from_str(&proof_json)
-                .context("invalid proof JSON")?;
+            let proof: MerkleProof =
+                serde_json::from_str(&proof_json).context("invalid proof JSON")?;
 
             // Verify proof
             if !proof.verify(campaign.merkle_root) {
@@ -1539,7 +1558,7 @@ fn airdrop(_client: &Client, cmd: AirdropCommand) -> Result<()> {
             });
 
             let json = serde_json::to_string_pretty(&claim_tx)?;
-            
+
             if let Some(path) = output {
                 std::fs::write(&path, &json)
                     .with_context(|| format!("cannot write to {}", path.display()))?;

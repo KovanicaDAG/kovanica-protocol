@@ -6,7 +6,7 @@
 #
 # Options:
 #   --name <name>         Seed name (default: seed2)
-#   --peers <host:port>   Bootstrap peers (default: seed.kovanica.online:9000,seed2.kovanica.online:9000)
+#   --peers <host:port>   Bootstrap peers (default: seed2.kovanica.online:8000,seed3.kovanica.online:8000)
 #   --mine                Enable auto-mining (default: 0 for pure seed)
 #   --mine-secs <secs>    Block interval when mining (default: 60)
 #   --explorer <port>     Explorer HTTP port (default: 8080)
@@ -20,7 +20,7 @@ set -euo pipefail
 
 TARGET=""
 NAME="seed2"
-PEERS="seed.kovanica.online:9000,seed2.kovanica.online:9000"
+PEERS="seed2.kovanica.online:8000,seed3.kovanica.online:8000"
 MINE=0
 MINE_SECS=60
 EXPLORER_PORT=8080
@@ -191,8 +191,8 @@ DNS:
   AAAA  $HOSTNAME   -> (if IPv6)
 
 Bootstrap list (add to KOVANICA_PEERS on new nodes):
-  seed.kovanica.online:9000
-  seed2.kovanica.online:9000
+  seed2.kovanica.online:8000
+  seed3.kovanica.online:8000
 
 Next:
   1. Add DNS A/AAAA record for $HOSTNAME

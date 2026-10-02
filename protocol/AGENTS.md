@@ -65,20 +65,17 @@ Guidance for AI assistants (and humans) working in the **kovanica-protocol** rep
 > mempool, block production, multi-node block gossip, and an in-process
 > continuous overlay (`crates/kovanica-node`: `net` one-shot sync + `p2p::Mesh`
 > with peer discovery, a delayed relay loop, and tx dissemination).
-> **Proof-of-work is real and opt-in `[CURRENT]` / `[TARGET]`-for-removal**:
-> blocks carry a `nonce`, and
-> `Dag::set_proof_of_work(true)` makes `Dag::insert` require each block's id to
-> meet its `work` target (Nakamoto-style `H * work < 2^256`, so `work` = expected
-> hashes). Difficulty is both an algorithm (`kovanica-dag::difficulty`) and, now,
-> **consensus-enforced**: blocks carry a `timestamp`, and an opt-in policy
-> (`Dag::set_difficulty`) requires each block's `work` to equal the target its
-> past implies and its timestamp not to precede any parent's; with PoW on too, the
-> block must actually be mined to that work. Separately, the
-> **node** now enforces a wall-clock future-time bound on block timestamps
-> (`Node::receive_block` rejects a block dated more than two hours ahead of the
-> local clock) — deliberately node policy, not a pure function of the DAG.
-> Keep this file in sync with the code: update it in the same change that adds or
-> moves the structure it describes.
+> **Consensus admission is PoA only `[CURRENT]`**: an authority set signs one
+> block per fixed `SLOT_DURATION_MS` slot (default 3000) and a threshold of
+> signatures admits it. Every PoA block's `work` is pinned to the nominal
+> `POA_NOMINAL_WORK = 1` at admission, so accumulated blue work is a plain block
+> count and the GHOSTDAG fold needs no difficulty logic. The one surviving
+> timestamp rule is node policy, not a pure function of the DAG: the **node**
+> rejects a block dated more than two hours ahead of the local clock
+> (`Node::receive_block`, `MAX_FUTURE_DRIFT_MS`).
+>
+> Keep this file in sync with the code: update it in the same change that adds,
+> moves, **or removes** the structure it describes.
 
 ---
 
@@ -215,8 +212,8 @@ crates/
       lib.rs                   Re-exports `Wallet` from kovanica-wallet so `kovanica_cli::Wallet` keeps working
       main.rs                  clap surface + command dispatch
       api.rs                   Thin HTTP client for the explorer JSON API
-      tui/                     Terminal UI — `mod.rs` (App/event loop/Screen trait), `theme.rs`, `widgets.rs`, `screens/` (dashboard, explorer, wallet, send, assets, contracts, stealth, nft_rwa, settings)
-  kovanica-ffi/                UniFFI bindings for the mobile light node (Slice 3)
+      tui.rs                   Terminal UI — one file, not a module dir: App state, menu, input modes, event loop, layout/theme inline. Run: `cargo run -p kovanica-cli -- tui [--api URL]`
+  kovanica-ffi/              UniFFI bindings for mobile light nodes (Slice 3 — scaled back)
 ```
 
 ⚠️ **Key derivation is frozen and has exactly one implementation.** `Wallet`
@@ -1096,7 +1093,7 @@ deterministic + adversarial tests per the conventions above.
   - ⚠️ **FORMAT BUMP**: the 1-byte asset flag makes old wire blobs undecodable
     and new blobs undecodable by old readers — the testnet **resets at
     activation**.
-- **Slice 3 — `kovanica-ffi` (UniFFI bindings for mobile light nodes)**:
+- **Slice 3 — `kovanica-ffi` (UniFFI bindings for mobile light nodes) — *(REMOVED with staked-VRF admission — history only)***:
   - New workspace crate wrapping `Node` behind one exported object,
     `LightNode` (`Mutex<Node>` inside; poison-tolerant lock). Full surface:
     genesis config (`LightConfig`), validator/miner seed setup, hybrid
@@ -1128,7 +1125,7 @@ deterministic + adversarial tests per the conventions above.
     `receive_blocks` counts records processed — known blocks re-validate as
     no-ops (ledger insert is idempotent), so idempotent re-sync is measured
     by `block_count`, not by the return value.
-- **Slice 4 — custody & unbond (FFI + node)**:
+- **Slice 4 — custody & unbond (FFI + node) — *(REMOVED with the stake registry — history only)***:
   - Spending keys: `Node::send_with(kp, amount, to)` signs with an explicit
     keypair (`send`/`send_to` delegate); FFI `send_from(secret_hex, amount,
     to_address)` — secrets cross the bridge per call and are never stored.
@@ -1149,7 +1146,7 @@ deterministic + adversarial tests per the conventions above.
     measured from the post-release tip — bonds close together in height can
     both mature by the time the second release applies (the gate is
     `>=`, equality included).
-- **Slice 5 — SPV / filters over FFI**:
+- **Slice 5 — SPV / filters over FFI — *(design predates PoA; only the `require_pow=false` decision survives)***:
   - Node helpers: `block_filter(id, k)` (distinct payload output addresses →
     Golomb-Rice `BlockFilter`) and `merkle_proof(id, tx_id)`; header chain was
     already covered by `export_spv_headers()`.
@@ -1163,7 +1160,7 @@ deterministic + adversarial tests per the conventions above.
   - Lesson: single-payload-tx blocks prove as bare leaves — empty merkle path,
     84-byte proof blob. Tamper tests must hit the root region; path/index
     bytes don't exist there.
-- **Slice 6 — mobile packaging & CI drift guard**:
+- **Slice 6 — mobile packaging & CI drift guard — *(design only, no current surface)***:
   - `crates/kovanica-ffi/build-android.sh` (cargo-ndk, `--platform 24`,
     arm64-v8a + x86_64 → `android/src/main/jniLibs/`) and
     `build-apple.sh` (iOS/macOS staticlibs → one
@@ -1175,14 +1172,19 @@ deterministic + adversarial tests per the conventions above.
     `uniffi.kovanica`, minSdk 24) compiling the committed `bindings/kotlin`
     tree via `sourceSets`; sole runtime dep `net.java.dev.jna:jna:5.14.0@aar`;
     consumer R8 rules included.
-  - Drift guard: `.github/workflows/bindings.yml` regenerates kotlin+swift
+  - Drift guard: `.github/workflows/bindings-drift.yml` at the **repository
+    root** regenerates kotlin+swift
     into a temp dir on every PR touching `crates/kovanica-ffi/**` and fails
     on any difference (`diff -r -x README.md` — the hand-written READMEs sit
     beside generated output and must not trip it), plus shellcheck of both
     scripts. Verified byte-identical at landing.
+    NOTE: this guard originally lived at `protocol/.github/workflows/bindings.yml`
+    and never ran — `protocol/` is a plain directory, not a submodule, and
+    GitHub Actions only reads `<repo-root>/.github/workflows/`. The root-level
+    path is the one that actually executes.
   - Mirror decision resolved as recommended: `kovanica-ffi` now rides
     `sync-public-node.yml`; kovanica-cli stays excluded.
-- **Slice 7 — wallet UX layer (node + FFI)**:
+- **Slice 7 — wallet UX layer (node + FFI) — *(design only, assumes removed FFI surface)***:
   - `Node::history_of(owner, max_blocks)` (`crates/kovanica-node/src/node.rs`):
     reconstructs an address's history by scanning `dag.linearize()` in canonical
     order while tracking outpoints owned by `owner`; spending a seen outpoint is
@@ -1199,14 +1201,14 @@ deterministic + adversarial tests per the conventions above.
     spend-after-receive debit, window bound) and two ffi.rs cases
     (`history_over_ffi_matches_utxo_semantics`,
     `filter_matches_any_batches_watch_addresses`).
-- **Slice 8 — docs & release**:
+- **Slice 8 — docs & release — *(plan doc exists; APIs it describes were removed)***:
   - Plan file marked landed (`docs/plans/mobile-light-node.md`); slice-4/5
     surprises promoted into §8 hard-won lessons.
   - Root `README.md` rewritten for the protocol repo with a
     "Run a light node from Kotlin/Swift" section — copy-paste snippets
     mirroring the ffi.rs two-node blob-sync convergence test, plus the SPV
     light-sync surface and packaging pointers.
-  - Workspace version bumped to **0.2.0** (Stage 3 close-out: VRF leader
+  - Workspace version bumped to **1.0.0** (Stage 3 close-out: VRF leader
     eligibility, hybrid PoW+staked admission, stake registry, P2P hardening,
     mempool v2, metrics/observability, DHT+DNS discovery, mobile FFI slices
     1–8).
@@ -1306,15 +1308,22 @@ teaches us it needs.
    The live DNS-seed hostnames are `seed` (primary, Hostinger VPS
    `145.223.116.178`) and `seed2` (Hostinger KVM2 VPS `76.13.250.65`,
    `srv1991525`); `seed3` is a **new** VPS (`187.7.27.139`, `srv2013143`) — its
-   node is not yet running (TCP 9000 closed), and its DNS A record must be
+   node is not yet running, and its DNS A record must be
    re-pointed to `187.7.27.139` and left **DNS-only / grey-cloud** before it can
    serve as a seed. `deploy-seed.sh` defaults new seeds to
-   `KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000`.
-   Remaining wiring: the node binary's default `KOVANICA_PEERS` still names only
-   `seed.kovanica.online:9000`; new-install defaults now use seed+seed2
-   (installer updated 2026-09-20).
+   `KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000`.
+   The node binary's compiled-in defaults now match: testnet `DEFAULT_PEERS` is
+   seed2+seed3 on `:8000` (was seed+seed2 on `:9000` — mainnet's port, so a
+   testnet node relying on it never joined the network). The DNS-seed
+   resolver's port is derived from the active profile's bind default too, so DHT
+   bootstrap no longer resolves seeds on mainnet's port. Guarded by
+   `explorer::tests::public_defaults_are_testnet_ports_not_mainnet_ports`,
+   `every_profile_resolves_dns_seeds_on_its_own_p2p_port`, and
+   `dns_seed_config_is_not_mainnet_shaped_on_testnet`.
 
-4. ~~**Mobile light-node slices 4–8**:~~ ✅ landed 2026-08-25 (workspace v0.2.0)
+4. ~~**Mobile light-node slices 4–8**:~~ ✅ **landed 2026-08-25 as a
+   pre-cutover snapshot (workspace v0.2.0), then superseded by the PoA-only
+   cutover.**
    - Full plan with per-slice implementation notes: `docs/plans/mobile-light-node.md`
    - Slice 4 custody & unbond FFI (`send_from`, `unbond`, FIFO maturity) ·
      Slice 5 SPV/filter FFI (`KVLS`v1 light-sync blobs, merkle proofs,
@@ -1347,7 +1356,7 @@ teaches us it needs.
      **seed2 = Hostinger KVM2 VPS `76.13.250.65`** (`srv1991525`) — live since
      2026-08-24, mining on, genesis verified, DNS `seed2.kovanica.online`;
      **seed3 = new VPS `187.7.27.139`** (`srv2013143`) — provisioned, node NOT yet
-     running, TCP 9000 closed, no fail2ban) — `[CURRENT]`-state description of
+     running, no fail2ban) — `[CURRENT]`-state description of
      the *pre-reset* PoW testnet; those hosts will need re-genesis under PoA.
    - Measure: orphan rate, propagation latency, fork rate, disk growth
      (both seeds expose `/metrics`; `alerting_rules.yml` ready to arm)
