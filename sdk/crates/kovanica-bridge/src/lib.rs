@@ -10,7 +10,7 @@
 //! 4. Relayer claims on source chain using same preimage
 //! 5. If timeout expires, both parties can refund
 
-use kovanica_types::{Address, AssetId, Hash32};
+use kovanica_types::{Address, Hash32};
 use serde::{Deserialize, Serialize};
 
 /// Supported destination chains for bridging

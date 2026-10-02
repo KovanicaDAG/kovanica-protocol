@@ -6,10 +6,7 @@
 //! - On-chain token listing registry (KVP-106 compliant)
 //! - Presale contract types
 
-use kovanica_airdrop::{build_merkle_root, generate_proof, AirdropCampaign, AirdropLeaf};
-use kovanica_bridge::{
-    generate_swap_id_hex, BridgeHtlcParams, BridgeState, BridgeSwap, DestinationChain,
-};
+use kovanica_bridge::DestinationChain;
 use kovanica_types::{Address, AssetId, Hash32};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -252,13 +249,19 @@ pub struct FiatQuoteRequest {
 }
 
 /// Generate a token listing proposal
+///
+/// `_payment_asset` is accepted for API compatibility but deliberately does not
+/// feed the derived `asset_id`: a KVP-106 asset identifier is derived from the
+/// token itself (creator + symbol), not from how a listing happens to be paid
+/// for. Changing the derivation would change every asset ID this crate has
+/// already handed out, so the parameter is kept but left out of the hash.
 pub fn create_token_listing(
     creator: Address,
     name: String,
     symbol: String,
     decimals: u8,
     total_supply: u64,
-    payment_asset: AssetId,
+    _payment_asset: AssetId,
     description: Option<String>,
 ) -> TokenListing {
     // Derive asset ID from creator + symbol (simplified)
@@ -287,6 +290,11 @@ pub fn create_token_listing(
 }
 
 /// Create a presale contract
+///
+/// The nine parameters mirror the fields of [`PresaleContract`] one-for-one.
+/// A parameter struct would add a conversion layer without clarifying intent,
+/// so the lint is suppressed here rather than papered over with a builder.
+#[allow(clippy::too_many_arguments)]
 pub fn create_presale(
     owner: Address,
     token_asset_id: AssetId,
