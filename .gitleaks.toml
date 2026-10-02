@@ -65,3 +65,31 @@ id = "generic-api-key"
 description = "A credential assigned to a name, rather than any high-entropy string in prose."
 regex = '''(?i)\b[A-Z0-9_]*(?:CLIENT_?SECRET|API_?KEY|ACCESS_?TOKEN|AUTH_?TOKEN|SECRET_?KEY|PRIVATE_?KEY|PRIVKEY)[A-Z0-9_]*\s*[:=]\s*["'][^"'\s]{16,}["']'''
 keywords = ["secret", "apikey", "api_key", "token", "privatekey", "private_key"]
+
+# --- Value-shaped allowlist, never path-shaped -------------------------------
+# `curl-auth-header` fired on `mobile/console/enterprise/src/pages/ApiKeysPage.tsx`
+# line 104, which is the literal docs snippet
+#   curl -H "Authorization: Bearer YOUR_API_KEY" https://api.kovanica.online/api/head
+# — a placeholder in an API-documentation card, not a credential. It has been
+# failing `gitleaks dir` since the monorepo consolidation (30ff826), which is
+# why both secret-scan jobs have been red on `main` and on every PR.
+#
+# Why this is an allowlist and not a re-declared `curl-auth-header` rule: the
+# rule above shows the house style is to override a rule with a stricter regex.
+# That is right when the rule is merely noisy, because it keeps every file
+# under test. Here the alternative is re-deriving gitleaks' own regex from
+# upstream and getting it subtly wrong, and a subtly wrong secret regex is a
+# far worse outcome than a documented false positive.
+#
+# Why a global `regexes` allowlist and not `paths`: the file's own header warns
+# that a path allowlist "hides the next secret", and it is right about paths —
+# excluding a file exempts everything in it forever. This entry is shaped
+# around the *value* instead, so it stops matching exactly one class of string
+# in the whole repo. A real credential is never literally `YOUR_API_KEY`; if
+# someone committed a live token here, it would not be spelled that way and
+# would still be caught. The trade is explicit and one-directional.
+[allowlist]
+description = "Documentation placeholder tokens. Value-shaped, so no file is exempt."
+regexes = [
+  '''(?i)\b(?:YOUR|MY|REPLACE_WITH|REPLACEME|INSERT|EXAMPLE|SAMPLE|DUMMY|PLACEHOLDER|CHANGEME|NOT_A_REAL|FAKE)[A-Z0-9_]{0,20}(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)?[A-Z0-9_]{0,20}\b''',
+]
