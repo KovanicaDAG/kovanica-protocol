@@ -23,7 +23,7 @@ use std::sync::{Mutex, MutexGuard};
 
 use kovanica_dag::{AuthorityPublicKey, AuthoritySet, BlockId};
 use kovanica_node::{net, Node, TreasuryGenesis};
-use kovanica_state::{OutPoint, StealthAddress, Transaction, TxOutput, RFC006_PREMINE};
+use kovanica_state::{AssetKind, LogoScheme, MetadataScheme, LogoUri, MetadataUri, OutPoint, StealthAddress, Transaction, TxOutput, RFC006_PREMINE};
 
 /// Why a [`LightNode`] operation failed.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -300,6 +300,72 @@ pub struct VaultInfo {
     /// Funding transaction id of the outpoint, lowercase hex.
     pub outpoint_tx: String,
     /// Output index of the Vault output within the funding transaction.
+    pub outpoint_index: u32,
+}
+
+/// Logo URI for asset branding (KVP-107) — FFI representation.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct LogoUriRecord {
+    /// URI scheme: 0 = IPFS, 1 = Arweave, 2 = HTTPS, 3 = Data.
+    pub scheme: u8,
+    /// BLAKE3 content hash of the logo image (32 bytes, hex).
+    pub content_hash: String,
+    /// The URI string (max 256 bytes).
+    pub uri: String,
+}
+
+/// Extended metadata URI for asset (KVP-107) — FFI representation.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct MetadataUriRecord {
+    /// URI scheme: 0 = IPFS, 1 = Arweave, 2 = HTTPS.
+    pub scheme: u8,
+    /// BLAKE3 content hash of the JSON metadata (32 bytes, hex).
+    pub content_hash: String,
+    /// The URI string (max 256 bytes).
+    pub uri: String,
+}
+
+/// Result of preparing an asset creation transaction (KVP-107).
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct PrepareCreateAssetResult {
+    /// The unsigned transaction, hex-encoded.
+    pub tx_hex: String,
+    /// The sighash to sign (32 bytes, hex).
+    pub sighash_hex: String,
+    /// The derived asset ID (32 bytes, lowercase hex).
+    pub asset_id_hex: String,
+    /// Total input value in atoms (decimal string).
+    pub value: String,
+    /// Protocol fee in atoms (decimal string).
+    pub fee: String,
+    /// Change amount in atoms (decimal string).
+    pub change: String,
+    /// The funding outpoint (tx_id:hex, index:u32).
+    pub outpoint_tx: String,
+    pub outpoint_index: u32,
+    /// The logo URI (if provided).
+    pub logo_uri: Option<LogoUriRecord>,
+    /// The metadata URI (if provided).
+    pub metadata_uri: Option<MetadataUriRecord>,
+}
+
+/// Result of preparing a mint transaction (KVP-107).
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct PrepareMintAssetResult {
+    /// The unsigned transaction, hex-encoded.
+    pub tx_hex: String,
+    /// The sighash to sign (32 bytes, hex).
+    pub sighash_hex: String,
+    /// The asset ID being minted (32 bytes, lowercase hex).
+    pub asset_id_hex: String,
+    /// Total input value in atoms (decimal string).
+    pub value: String,
+    /// Protocol fee in atoms (decimal string).
+    pub fee: String,
+    /// Change amount in atoms (decimal string).
+    pub change: String,
+    /// The funding outpoint (tx_id:hex, index:u32).
+    pub outpoint_tx: String,
     pub outpoint_index: u32,
 }
 
@@ -1182,6 +1248,113 @@ impl LightNode {
         Ok(hex::encode(kovanica_node::atomic_swap::preimage_hash(
             &preimage,
         )))
+    }
+
+    // ---------------------------------------------------------------------------
+    // Asset Creation & Minting (KVP-107)
+    // ---------------------------------------------------------------------------
+
+    /// Prepare an unsigned asset creation transaction (KVP-107).
+    ///
+    /// The caller must fund the creation fee (1000 KVNC) + protocol fee from the
+    /// signing key's native KVNC UTXOs. The transaction creates an output with the
+    /// new asset_id (value = 0 for fungible, 1 for NFT) to the signer, registering
+    /// the asset in the ledger's asset registry with the specified parameters.
+    ///
+    /// Returns the unsigned transaction, sighash, derived asset_id, and other details.
+    pub fn prepare_create_asset(
+        &self,
+        signing_secret_hex: String,
+        max_supply: u64,
+        kind: u8, // 0 = fungible, 1 = nonfungible
+        mint_price_per_unit: u64,
+        logo_uri: Option<LogoUriRecord>,
+        metadata_uri: Option<MetadataUriRecord>,
+    ) -> Result<PrepareCreateAssetResult, LightNodeError> {
+        let kp = keypair_from_secret(&signing_secret_hex)?;
+        let from = kp.address();
+        let asset_kind = match kind {
+            0 => AssetKind::Fungible,
+            1 => AssetKind::NonFungible,
+            _ => return Err(invalid("kind must be 0 (fungible) or 1 (nonfungible)")),
+        };
+        // Convert FFI LogoUriRecord/MetadataUriRecord to kovanica_state types
+        let logo = logo_uri.as_ref().map(|l| {
+            let scheme = match l.scheme {
+                0 => LogoScheme::Ipfs,
+                1 => LogoScheme::Arweave,
+                2 => LogoScheme::Https,
+                3 => LogoScheme::Data,
+                _ => LogoScheme::Ipfs,
+            };
+            let content_hash = decode_32(&l.content_hash, "logo content_hash")?;
+            LogoUri::new(scheme, content_hash, l.uri.clone()).map_err(|e| invalid(format!("invalid logo_uri: {e}")))
+        }).transpose()?;
+        let metadata = metadata_uri.as_ref().map(|m| {
+            let scheme = match m.scheme {
+                0 => MetadataScheme::Ipfs,
+                1 => MetadataScheme::Arweave,
+                2 => MetadataScheme::Https,
+                _ => MetadataScheme::Ipfs,
+            };
+            let content_hash = decode_32(&m.content_hash, "metadata content_hash")?;
+            MetadataUri::new(scheme, content_hash, m.uri.clone()).map_err(|e| invalid(format!("invalid metadata_uri: {e}")))
+        }).transpose()?;
+        let node = self.lock();
+        let p = node
+            .prepare_create_asset(from, max_supply, asset_kind, mint_price_per_unit, logo, metadata)
+            .map_err(LightNodeError::from)?;
+        let asset_id = p.tx.outputs()[0].asset_id.unwrap();
+        let change = p.value.saturating_sub(kovanica_state::ASSET_CREATION_FEE).saturating_sub(p.fee);
+        Ok(PrepareCreateAssetResult {
+            tx_hex: hex::encode(p.tx.encode()),
+            sighash_hex: hex::encode(p.sighash),
+            asset_id_hex: asset_id.to_hex(),
+            value: p.value.to_string(),
+            fee: p.fee.to_string(),
+            change: change.to_string(),
+            outpoint_tx: p.outpoint.tx.to_hex(),
+            outpoint_index: p.outpoint.index,
+            logo_uri,
+            metadata_uri,
+        })
+    }
+
+    /// Prepare an unsigned mint transaction for an existing asset (KVP-107).
+    ///
+    /// The caller must pay the mint fee = `mint_price_per_unit * amount` in native KVNC
+    /// (enforced by the ledger). The fee is paid from the signing key's native KVNC UTXOs.
+    /// The newly minted `amount` of `asset_id` is sent to `to`.
+    ///
+    /// Returns the unsigned transaction, sighash, and other details.
+    pub fn prepare_mint_asset(
+        &self,
+        signing_secret_hex: String,
+        asset_id_hex: String,
+        amount: u64,
+        to_address: String,
+    ) -> Result<PrepareMintAssetResult, LightNodeError> {
+        let kp = keypair_from_secret(&signing_secret_hex)?;
+        let from = kp.address();
+        let asset_id = parse_asset_id(Some(asset_id_hex))?
+            .ok_or_else(|| invalid("asset_id cannot be native KVNC"))?;
+        let to = kovanica_state::Address::parse(&to_address)
+            .map_err(|e| invalid(format!("bad address: {e}")))?;
+        let node = self.lock();
+        let p = node
+            .prepare_mint_asset(from, asset_id, amount, to)
+            .map_err(LightNodeError::from)?;
+        let change = p.value.saturating_sub(amount).saturating_sub(p.fee);
+        Ok(PrepareMintAssetResult {
+            tx_hex: hex::encode(p.tx.encode()),
+            sighash_hex: hex::encode(p.sighash),
+            asset_id_hex: asset_id.to_hex(),
+            value: p.value.to_string(),
+            fee: p.fee.to_string(),
+            change: change.to_string(),
+            outpoint_tx: p.outpoint.tx.to_hex(),
+            outpoint_index: p.outpoint.index,
+        })
     }
 
     // ---------------------------------------------------------------------------

@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use kovanica_dag::{AuthoritySet, BlockId};
 use kovanica_state::{
-    decode_block_payload, Address, AssetId, HtlcScript, OutPoint, Transaction, TxId, TxOutput,
-    MAX_SUPPLY,
+    decode_block_payload, Address, AssetId, AssetKind, HtlcScript, LogoUri, LogoScheme,
+    MetadataUri, MetadataScheme, OutPoint, Transaction, TxId, TxOutput, MAX_SUPPLY,
 };
 
 use crate::dht::{NodeId, PeerContact, RoutingTable};
@@ -3659,6 +3659,55 @@ fn dispatch(
             app.mesh.drain(8);
             return Ok(format!("{{\"ok\":true,\"tx\":{}}}", jstr(&id.to_string())));
         }
+        "asset/create/prepare" => {
+            let from = parse_addr(q.get("from").ok_or("from address required")?)?;
+            let max_supply = parse_u64(q, "max_supply", 0)?;
+            let kind_str = q.get("kind").ok_or("kind required")?;
+            let kind = parse_asset_kind(kind_str)?;
+            let mint_price_per_unit = parse_u64(q, "mint_price_per_unit", 0)?;
+            let logo_uri = parse_logo_uri(q, "logo_uri", "logo_uri_hash")?;
+            let metadata_uri = parse_metadata_uri(q, "metadata_uri", "metadata_uri_hash")?;
+            let n = app.mesh.node(&node).ok_or("unknown node")?;
+            let p = n
+                .prepare_create_asset(from, max_supply, kind, mint_price_per_unit, logo_uri, metadata_uri)
+                .map_err(|e| e.to_string())?;
+            let asset_id = crate::node::asset_id_to_wire(Some(p.tx.outputs()[0].asset_id.unwrap()));
+            let change = p.value.saturating_sub(kovanica_state::ASSET_CREATION_FEE).saturating_sub(p.fee);
+            return Ok(format!(
+                "{{\"ok\":true,\"sighash\":{},\"asset_id\":{},\"value\":{},\"fee\":{},\"change\":{},\"outpoint\":{{\"tx\":{},\"index\":{}}}}}",
+                jstr(&hex::encode(p.sighash)),
+                jstr(&asset_id),
+                p.value,
+                p.fee,
+                change,
+                jstr(&p.outpoint.tx.to_string()),
+                p.outpoint.index
+            ));
+        }
+        "asset/mint/prepare" => {
+            let from = parse_addr(q.get("from").ok_or("from address required")?)?;
+            let asset_id_hex = q.get("asset_id").ok_or("asset_id required")?;
+            let asset_id = crate::node::asset_id_from_wire(Some(asset_id_hex))?
+                .ok_or("asset_id cannot be native KVNC")?;
+            let amount = parse_u64(q, "amount", 0)?;
+            let to = parse_addr(q.get("to").ok_or("to address required")?)?;
+            let n = app.mesh.node(&node).ok_or("unknown node")?;
+            let p = n
+                .prepare_mint_asset(from, asset_id, amount, to)
+                .map_err(|e| e.to_string())?;
+            let asset_wire = crate::node::asset_id_to_wire(Some(asset_id));
+            let change = p.value.saturating_sub(amount.saturating_add(p.fee));
+            return Ok(format!(
+                "{{\"ok\":true,\"sighash\":{},\"asset_id\":{},\"value\":{},\"fee\":{},\"change\":{},\"outpoint\":{{\"tx\":{},\"index\":{}}}}}",
+                jstr(&hex::encode(p.sighash)),
+                jstr(&asset_wire),
+                p.value,
+                p.fee,
+                change,
+                jstr(&p.outpoint.tx.to_string()),
+                p.outpoint.index
+            ));
+        }
         "airdrop/prepare-claim" => {
             let campaign_id = kovanica_types::Hash32(parse_hash(
                 q.get("campaign_id").ok_or("campaign_id required")?,
@@ -4908,6 +4957,71 @@ fn parse_u64(
     match q.get(key) {
         None => Ok(default),
         Some(s) => s.parse().map_err(|_| format!("bad {key}")),
+    }
+}
+
+/// Parse a LogoUri from a URI string (e.g., "ipfs://Qm...").
+/// The content_hash must be provided separately as a hex string.
+fn parse_logo_uri(
+    q: &std::collections::HashMap<String, String>,
+    uri_key: &str,
+    hash_key: &str,
+) -> Result<Option<LogoUri>, String> {
+    let Some(uri) = q.get(uri_key).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let hash_str = q.get(hash_key).ok_or(format!("{hash_key} required when {uri_key} is present"))?;
+    let content_hash = parse_hash(hash_str)?;
+    // Determine scheme from URI prefix
+    let scheme = if uri.starts_with("ipfs://") {
+        LogoScheme::Ipfs
+    } else if uri.starts_with("ar://") || uri.starts_with("https://arweave.net/") {
+        LogoScheme::Arweave
+    } else if uri.starts_with("https://") || uri.starts_with("http://") {
+        LogoScheme::Https
+    } else if uri.starts_with("data:") {
+        LogoScheme::Data
+    } else {
+        return Err("unsupported logo URI scheme".to_string());
+    };
+    LogoUri::new(scheme, content_hash, uri.to_string())
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// Parse a MetadataUri from a URI string (e.g., "ipfs://Qm...").
+/// The content_hash must be provided separately as a hex string.
+fn parse_metadata_uri(
+    q: &std::collections::HashMap<String, String>,
+    uri_key: &str,
+    hash_key: &str,
+) -> Result<Option<MetadataUri>, String> {
+    let Some(uri) = q.get(uri_key).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let hash_str = q.get(hash_key).ok_or(format!("{hash_key} required when {uri_key} is present"))?;
+    let content_hash = parse_hash(hash_str)?;
+    // Determine scheme from URI prefix
+    let scheme = if uri.starts_with("ipfs://") {
+        MetadataScheme::Ipfs
+    } else if uri.starts_with("ar://") || uri.starts_with("https://arweave.net/") {
+        MetadataScheme::Arweave
+    } else if uri.starts_with("https://") || uri.starts_with("http://") {
+        MetadataScheme::Https
+    } else {
+        return Err("unsupported metadata URI scheme".to_string());
+    };
+    MetadataUri::new(scheme, content_hash, uri.to_string())
+        .map(Some)
+        .map_err(|e| e.to_string())
+}
+
+/// Parse AssetKind from string ("fungible" or "nonfungible"/"nft")
+fn parse_asset_kind(s: &str) -> Result<AssetKind, String> {
+    match s.to_lowercase().as_str() {
+        "fungible" => Ok(AssetKind::Fungible),
+        "nonfungible" | "nft" => Ok(AssetKind::NonFungible),
+        _ => Err("asset kind must be 'fungible' or 'nonfungible'".to_string()),
     }
 }
 

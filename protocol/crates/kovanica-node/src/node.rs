@@ -22,9 +22,11 @@ use kovanica_dag::{
 use kovanica_state::multisig::{verify_threshold_signatures, MultisigScript};
 use kovanica_state::{
     apply_block_at_height, decode_block_payload, encode_block_payload, verify, Address, AssetId,
-    HalvingSchedule, HtlcScript, KeyPair, Ledger, LedgerError, LedgerInsertError, LedgerStore,
-    OutPoint, Sig, StealthAddress, Transaction, TxId, TxInput, TxOutput, UtxoSet, VaultScript,
-    COINBASE_MATURITY, DEFAULT_HALVING_ERA, FEE_PRODUCER_DEN, FEE_PRODUCER_NUM,
+    AssetKind, HalvingSchedule, HtlcScript, KeyPair, Ledger, LedgerError, LedgerInsertError,
+    LedgerStore, LogoUri, MetadataUri, OutPoint, Sig, StealthAddress, Transaction,
+    TxId, TxInput, TxOutput, UtxoSet, VaultScript, ASSET_CREATION_FEE, COINBASE_MATURITY,
+    DEFAULT_HALVING_ERA, FEE_PRODUCER_DEN, FEE_PRODUCER_NUM, MIN_MINT_PRICE,
+    MAX_MINT_PRICE,
 };
 use kovanica_types::Hash32;
 use kovanica_wallet::Wallet;
@@ -1782,6 +1784,246 @@ impl Node {
             }
         }
         self.submit_tx(tx)
+    }
+
+    // === Asset Creation & Minting (KVP-107) ===
+
+    /// Derive an AssetId from the asset definition (KVP-107).
+    ///
+    /// The asset definition is encoded as:
+    /// `kind (1 byte) || max_supply (8 bytes LE) || mint_price_per_unit (8 bytes LE) || logo_uri || metadata_uri || creator_pk (32 bytes)`
+    /// where logo_uri and metadata_uri are length-prefixed encodings (0 = absent, 1 = present + scheme + content_hash + uri_len + uri).
+    /// The entire encoding is hashed with BLAKE3 to produce the 32-byte AssetId.
+    fn derive_asset_id(
+        kind: AssetKind,
+        max_supply: u64,
+        mint_price_per_unit: u64,
+        logo_uri: Option<&LogoUri>,
+        metadata_uri: Option<&MetadataUri>,
+        creator_pk: [u8; 32],
+    ) -> AssetId {
+        use blake3::Hasher;
+        let mut hasher = Hasher::new();
+        // Tag to domain-separate from other hash uses
+        hasher.update(b"KVP107-ASSET");
+        // kind: 0 = Fungible, 1 = NonFungible
+        hasher.update(&[match kind {
+            AssetKind::Fungible => 0u8,
+            AssetKind::NonFungible => 1u8,
+        }]);
+        hasher.update(&max_supply.to_le_bytes());
+        hasher.update(&mint_price_per_unit.to_le_bytes());
+        // logo_uri
+        if let Some(logo) = logo_uri {
+            hasher.update(&[1u8]); // present
+            hasher.update(&[logo.scheme.to_u8()]);
+            hasher.update(&logo.content_hash);
+            hasher.update(&(logo.uri.len() as u64).to_le_bytes());
+            hasher.update(logo.uri.as_bytes());
+        } else {
+            hasher.update(&[0u8]); // absent
+        }
+        // metadata_uri
+        if let Some(meta) = metadata_uri {
+            hasher.update(&[1u8]); // present
+            hasher.update(&[meta.scheme.to_u8()]);
+            hasher.update(&meta.content_hash);
+            hasher.update(&(meta.uri.len() as u64).to_le_bytes());
+            hasher.update(meta.uri.as_bytes());
+        } else {
+            hasher.update(&[0u8]); // absent
+        }
+        // creator_pk
+        hasher.update(&creator_pk);
+        AssetId::from_bytes(*hasher.finalize().as_bytes())
+    }
+
+    /// Prepare an unsigned asset creation transaction (KVP-107).
+    ///
+    /// The caller must fund the creation fee (1000 KVNC) + protocol fee from `from`'s
+    /// native KVNC UTXOs. The transaction creates an output with the new asset_id
+    /// (value = 0 for fungible, 1 for NFT) to `from`, registering the asset in the
+    /// ledger's asset registry with the specified parameters.
+    ///
+    /// Returns a [`Prepared`] with the unsigned tx, sighash, and the derived asset_id
+    /// so the caller knows the asset identifier before signing.
+    pub fn prepare_create_asset(
+        &self,
+        from: Address,
+        max_supply: u64,
+        kind: AssetKind,
+        mint_price_per_unit: u64,
+        logo_uri: Option<LogoUri>,
+        metadata_uri: Option<MetadataUri>,
+    ) -> Result<Prepared, NodeError> {
+        // Validate mint price bounds
+        if mint_price_per_unit < MIN_MINT_PRICE || mint_price_per_unit > MAX_MINT_PRICE {
+            return Err(NodeError::ZeroAmount); // Reuse for "invalid mint price"
+        }
+        // Validate max_supply for NFT
+        if kind == AssetKind::NonFungible && max_supply != 1 {
+            return Err(NodeError::ZeroAmount); // Reuse for "NFT must have max_supply=1"
+        }
+
+        // Derive asset_id from the asset definition
+        let creator_pk = *from.payload();
+        let asset_id = Self::derive_asset_id(
+            kind,
+            max_supply,
+            mint_price_per_unit,
+            logo_uri.as_ref(),
+            metadata_uri.as_ref(),
+            creator_pk,
+        );
+
+        // Asset creation fee (1000 KVNC) + protocol fee
+        let fee = self.min_fee();
+        let creation_fee = ASSET_CREATION_FEE;
+        let need = creation_fee
+            .checked_add(fee)
+            .ok_or(NodeError::InsufficientFunds)?;
+
+        let state = self.ledger()?.ledger_state();
+        let chain_height = self
+            .ledger()
+            .as_ref()
+            .map(|l| l.tip_blue_score())
+            .unwrap_or(0);
+        let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
+
+        // Select covering UTXOs from `from` (native KVNC only)
+        let mut owned: Vec<(OutPoint, u64)> = state
+            .iter()
+            .filter(|(_, out)| out.owner == from && out.asset_id.is_none())
+            .filter(|(op, _)| match state.get_entry(op) {
+                Some(entry) => !entry.is_coinbase || entry.creation_height <= mature_before,
+                None => true,
+            })
+            .map(|(op, out)| (*op, out.value))
+            .collect();
+        owned.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+        let mut selected: Vec<(OutPoint, u64)> = Vec::new();
+        let mut total: u64 = 0;
+        for (op, value) in owned {
+            selected.push((op, value));
+            total = total.saturating_add(value);
+            if total >= need {
+                break;
+            }
+        }
+        if total < need {
+            return Err(NodeError::InsufficientFunds);
+        }
+
+        // Output: new asset registration (value = 0 for fungible, 1 for NFT)
+        let initial_value = if kind == AssetKind::NonFungible { 1 } else { 0 };
+        let mut outputs = vec![TxOutput::new(initial_value, Some(asset_id), from)];
+        let change = total - need;
+        if change > 0 {
+            outputs.push(TxOutput::native(change, from));
+        }
+        let outpoints: Vec<OutPoint> = selected.iter().map(|(op, _)| *op).collect();
+        let tx = Transaction::unsigned(&outpoints, outputs, Vec::new());
+        let sighash = tx.sighash();
+        Ok(Prepared {
+            tx,
+            sighash,
+            outpoint: selected[0].0,
+            value: total,
+            fee,
+        })
+    }
+
+    /// Prepare an unsigned mint transaction for an existing asset (KVP-107).
+    ///
+    /// The caller must pay the mint fee = `mint_price_per_unit * amount` in native KVNC
+    /// (enforced by the ledger). The fee is paid from `from`'s native KVNC UTXOs.
+    /// The newly minted `amount` of `asset_id` is sent to `to`.
+    ///
+    /// Returns a [`Prepared`] with the unsigned tx and sighash.
+    pub fn prepare_mint_asset(
+        &self,
+        from: Address,
+        asset_id: AssetId,
+        amount: u64,
+        to: Address,
+    ) -> Result<Prepared, NodeError> {
+        if amount == 0 {
+            return Err(NodeError::ZeroAmount);
+        }
+
+        // Get the asset registry entry to determine mint_price_per_unit
+        let ledger = self.ledger()?;
+        let asset_registry = ledger.asset_registry();
+        let entry = asset_registry
+            .get(&asset_id)
+            .ok_or(NodeError::InsufficientFunds)?; // Asset not found
+
+        let mint_price = entry.mint_price_per_unit;
+        if mint_price == 0 {
+            // Free minting (legacy) - just need protocol fee
+        } else {
+            // Validate mint price bounds (ledger will enforce, but check early)
+            if mint_price < MIN_MINT_PRICE || mint_price > MAX_MINT_PRICE {
+                return Err(NodeError::ZeroAmount); // Reuse for "invalid mint price"
+            }
+        }
+
+        // Required mint fee in native KVNC
+        let mint_fee = mint_price
+            .checked_mul(amount)
+            .ok_or(NodeError::InsufficientFunds)?;
+        let protocol_fee = self.min_fee();
+        let need = mint_fee
+            .checked_add(protocol_fee)
+            .ok_or(NodeError::InsufficientFunds)?;
+
+        let state = ledger.ledger_state();
+        let chain_height = ledger.tip_blue_score();
+        let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
+
+        // Select covering UTXOs from `from` (native KVNC only) for the mint fee
+        let mut owned: Vec<(OutPoint, u64)> = state
+            .iter()
+            .filter(|(_, out)| out.owner == from && out.asset_id.is_none())
+            .filter(|(op, _)| match state.get_entry(op) {
+                Some(entry) => !entry.is_coinbase || entry.creation_height <= mature_before,
+                None => true,
+            })
+            .map(|(op, out)| (*op, out.value))
+            .collect();
+        owned.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+
+        let mut selected: Vec<(OutPoint, u64)> = Vec::new();
+        let mut total: u64 = 0;
+        for (op, value) in owned {
+            selected.push((op, value));
+            total = total.saturating_add(value);
+            if total >= need {
+                break;
+            }
+        }
+        if total < need {
+            return Err(NodeError::InsufficientFunds);
+        }
+
+        // Output: minted asset to `to`
+        let mut outputs = vec![TxOutput::new(amount, Some(asset_id), to)];
+        let change = total - need;
+        if change > 0 {
+            outputs.push(TxOutput::native(change, from));
+        }
+        let outpoints: Vec<OutPoint> = selected.iter().map(|(op, _)| *op).collect();
+        let tx = Transaction::unsigned(&outpoints, outputs, Vec::new());
+        let sighash = tx.sighash();
+        Ok(Prepared {
+            tx,
+            sighash,
+            outpoint: selected[0].0,
+            value: total,
+            fee: protocol_fee,
+        })
     }
 
     /// Prepare an unsigned airdrop claim transaction.

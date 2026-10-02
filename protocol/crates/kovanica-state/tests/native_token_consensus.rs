@@ -1256,3 +1256,115 @@ fn test_fungible_asset_kind_registry() {
     assert!(!entry.is_nft());
     assert!(!entry.is_fully_minted());
 }
+
+// =========================================================================
+// Category: KVP-107 Mint Price & Asset Logos
+// =========================================================================
+
+#[test]
+fn test_kvp107_asset_registry_entry_with_mint_price() {
+    use kovanica_state::{AssetKind, AssetRegistryEntry, LogoScheme, LogoUri, MetadataScheme, MetadataUri};
+
+    let asset_id = make_asset_id(300);
+    let logo = LogoUri::new(LogoScheme::Ipfs, [0xAAu8; 32], "ipfs://QmTest".to_string()).unwrap();
+    let meta = MetadataUri::new(MetadataScheme::Ipfs, [0xBBu8; 32], "ipfs://QmMeta".to_string()).unwrap();
+    let creator = Some([0xCCu8; 32]);
+
+    let entry = AssetRegistryEntry::new_fungible_with_mint_price(
+        asset_id,
+        1_000_000_000,
+        100_000, // 0.001 KVNC per unit
+        Some(logo),
+        Some(meta),
+        creator,
+    );
+
+    assert_eq!(entry.mint_price_per_unit, 100_000);
+    assert_eq!(entry.logo_uri.as_ref().unwrap().uri, "ipfs://QmTest");
+    assert_eq!(entry.metadata_uri.as_ref().unwrap().uri, "ipfs://QmMeta");
+    assert_eq!(entry.creator, creator);
+}
+
+#[test]
+fn test_kvp107_nft_asset_registry_entry_with_mint_price() {
+    use kovanica_state::{AssetKind, AssetRegistryEntry, LogoScheme, LogoUri, MetadataScheme, MetadataUri};
+
+    let asset_id = make_asset_id(301);
+    let logo = LogoUri::new(LogoScheme::Ipfs, [0xAAu8; 32], "ipfs://QmNFT".to_string()).unwrap();
+
+    let entry = AssetRegistryEntry::new_nft_with_mint_price(
+        asset_id,
+        50_000, // mint price
+        Some(logo),
+        None,
+        Some([0xDDu8; 32]),
+    );
+
+    assert_eq!(entry.kind, AssetKind::NonFungible);
+    assert_eq!(entry.max_supply, 1);
+    assert_eq!(entry.mint_price_per_unit, 50_000);
+    assert!(entry.logo_uri.is_some());
+    assert!(entry.metadata_uri.is_none());
+}
+
+#[test]
+fn test_kvp107_logo_uri_validation() {
+    use kovanica_state::{LogoScheme, LogoUri};
+
+    // Valid IPFS URI
+    let logo = LogoUri::new(LogoScheme::Ipfs, [0xAAu8; 32], "ipfs://QmTest".to_string());
+    assert!(logo.is_ok());
+
+    // Valid Data URI (small)
+    let logo = LogoUri::new(LogoScheme::Data, [0xAAu8; 32], "data:image/svg+xml;base64,PHN2Zz4=".to_string());
+    assert!(logo.is_ok());
+
+    // Too long URI
+    let long_uri = "a".repeat(257);
+    let logo = LogoUri::new(LogoScheme::Ipfs, [0xAAu8; 32], long_uri);
+    assert!(logo.is_err());
+    assert_eq!(logo.unwrap_err(), "logo URI exceeds 256 bytes");
+}
+
+#[test]
+fn test_kvp107_metadata_uri_validation() {
+    use kovanica_state::{MetadataScheme, MetadataUri};
+
+    // Valid IPFS URI
+    let meta = MetadataUri::new(MetadataScheme::Ipfs, [0xAAu8; 32], "ipfs://QmMeta".to_string());
+    assert!(meta.is_ok());
+
+    // Too long URI
+    let long_uri = "a".repeat(257);
+    let meta = MetadataUri::new(MetadataScheme::Ipfs, [0xAAu8; 32], long_uri);
+    assert!(meta.is_err());
+    assert_eq!(meta.unwrap_err(), "metadata URI exceeds 256 bytes");
+}
+
+#[test]
+fn test_kvp107_mint_price_bounds() {
+    use kovanica_state::{MIN_MINT_PRICE, MAX_MINT_PRICE, ATOM};
+
+    assert_eq!(MIN_MINT_PRICE, 1);
+    assert_eq!(MAX_MINT_PRICE, 1 * ATOM); // 1 KVNC per unit
+}
+
+// Helper to create an asset in the ledger's registry with mint price
+fn register_asset_with_mint_price(
+    asset_registry: &mut std::collections::HashMap<kovanica_state::AssetId, kovanica_state::AssetRegistryEntry>,
+    asset_id: kovanica_state::AssetId,
+    mint_price: u64,
+) {
+    use kovanica_state::{AssetKind, AssetRegistryEntry, LogoScheme, LogoUri};
+
+    let logo = LogoUri::new(LogoScheme::Ipfs, [0xAAu8; 32], "ipfs://QmTest".to_string()).unwrap();
+    let entry = AssetRegistryEntry::new_fungible_with_mint_price(
+        asset_id,
+        1_000_000_000,
+        mint_price,
+        Some(logo),
+        None,
+        Some([0xEEu8; 32]),
+    );
+    asset_registry.insert(asset_id, entry);
+}

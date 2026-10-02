@@ -104,6 +104,23 @@ pub const VAULT_ACTIVATION_SCORE: u64 = 0;
 /// **not** branch on it.
 pub const TOKENOMICS_ACTIVATION_SCORE: u64 = 0;
 
+/// KVP-107: default blue-score threshold for mint price enforcement.
+/// When blue_score > this value, mint_price_per_unit is enforced.
+pub const MINT_PRICE_ACTIVATION_SCORE: u64 = 0;
+
+/// KVP-107: default blue-score threshold for asset logo/metadata.
+/// When blue_score > this value, logo_uri and metadata_uri are validated.
+pub const ASSET_LOGO_ACTIVATION_SCORE: u64 = 0;
+
+/// KVP-107: base fee to register a new asset (1000 KVNC = 100_000_000_000 atoms).
+pub const ASSET_CREATION_FEE: u64 = 1000 * ATOM;
+
+/// KVP-107: minimum mint price per unit (1 atom KVNC per base unit).
+pub const MIN_MINT_PRICE: u64 = 1;
+
+/// KVP-107: maximum mint price per unit (1 KVNC per base unit = 100_000_000 atoms).
+pub const MAX_MINT_PRICE: u64 = 1 * ATOM;
+
 /// RFC-006 emission schedule for block subsidy.
 ///
 /// Smooth geometric decay: `s(era) = floor(s(era-1) * 3/4)` with
@@ -417,6 +434,15 @@ pub enum LedgerError {
         creation_height: u64,
         block_height: u64,
     },
+
+    // KVP-107: Mint Price Variants
+    /// Insufficient KVNC fee paid for minting an asset with a mint price.
+    InsufficientMintFee {
+        tx: TxId,
+        asset_id: AssetId,
+        required: u64,
+        paid: u64,
+    },
 }
 
 impl core::fmt::Display for LedgerError {
@@ -605,6 +631,15 @@ impl core::fmt::Display for LedgerError {
                 f,
                 "vault input {input} of {tx} locked: block height {block_height} < creation height {creation_height} + csv {required}"
             ),
+            LedgerError::InsufficientMintFee {
+                tx,
+                asset_id,
+                required,
+                paid,
+            } => write!(
+                f,
+                "insufficient mint fee for asset {asset_id} in {tx}: required {required} atoms KVNC, paid {paid}"
+            ),
         }
     }
 }
@@ -646,6 +681,8 @@ pub fn apply_block(
         SCRIPT_V2_ACTIVATION_SCORE,
         HTLC_ACTIVATION_SCORE,
         VAULT_ACTIVATION_SCORE,
+        MINT_PRICE_ACTIVATION_SCORE,
+        ASSET_LOGO_ACTIVATION_SCORE,
     )
 }
 
@@ -680,6 +717,8 @@ pub fn apply_block_at_height(
         SCRIPT_V2_ACTIVATION_SCORE,
         HTLC_ACTIVATION_SCORE,
         VAULT_ACTIVATION_SCORE,
+        MINT_PRICE_ACTIVATION_SCORE,
+        ASSET_LOGO_ACTIVATION_SCORE,
     )
 }
 
@@ -702,6 +741,8 @@ fn apply_block_inner(
     script_v2_activation_score: u64,
     htlc_activation_score: u64,
     vault_activation_score: u64,
+    mint_price_activation_score: u64,
+    asset_logo_activation_score: u64,
 ) -> Result<BlockSummary, LedgerError> {
     // Stage all changes on a copy; only commit if the whole block validates, so
     // a rejected block has no effect (atomicity).
@@ -730,6 +771,8 @@ fn apply_block_inner(
             script_v2_activation_score,
             htlc_activation_score,
             vault_activation_score,
+            mint_price_activation_score,
+            asset_logo_activation_score,
         )?;
         total_fees = total_fees
             .checked_add(fee)
@@ -780,6 +823,8 @@ fn apply_regular(
     script_v2_activation_score: u64,
     htlc_activation_score: u64,
     vault_activation_score: u64,
+    mint_price_activation_score: u64,
+    asset_logo_activation_score: u64,
 ) -> Result<u64, LedgerError> {
     if tx.inputs().is_empty() || tx.outputs().is_empty() {
         return Err(LedgerError::EmptyTransaction(tx.id()));
@@ -1428,6 +1473,44 @@ fn apply_regular(
     }
     let fee = native_in - native_out;
 
+    // KVP-107: Mint price enforcement
+    // Check each asset where outputs > inputs (minting new supply)
+    if blue_score > mint_price_activation_score {
+        for (asset_id_opt, out_val) in &asset_outputs {
+            // Skip native KVNC (asset_id = None)
+            let Some(asset_id) = *asset_id_opt else { continue; };
+            let in_val = asset_inputs.get(asset_id_opt).copied().unwrap_or(0);
+            if *out_val > in_val {
+                let minted_amount = out_val - in_val;
+                if let Some(entry) = asset_registry.get(&asset_id) {
+                    let mint_price = entry.mint_price_per_unit;
+                    if mint_price > 0 {
+                        // Validate mint price bounds
+                        if mint_price < MIN_MINT_PRICE || mint_price > MAX_MINT_PRICE {
+                            return Err(LedgerError::InsufficientMintFee {
+                                tx: tx.id(),
+                                asset_id,
+                                required: minted_amount.saturating_mul(mint_price),
+                                paid: fee,
+                            });
+                        }
+                        let required_fee = minted_amount
+                            .checked_mul(mint_price)
+                            .ok_or(LedgerError::ValueOverflow)?;
+                        if fee < required_fee {
+                            return Err(LedgerError::InsufficientMintFee {
+                                tx: tx.id(),
+                                asset_id,
+                                required: required_fee,
+                                paid: fee,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Validation passed; mutate the staging set. (Any error above returned
     // before this point, so partial mutation cannot leak — and `apply_block`
     // discards `staging` unless the whole block succeeds.)
@@ -1561,6 +1644,33 @@ fn apply_coinbase(
         }
     }
 
+    // KVP-107: Asset creation fee
+    // Check for new assets being created (not in registry) and require creation fee
+    if blue_score > MINT_PRICE_ACTIVATION_SCORE {
+        let mut new_asset_count: u64 = 0;
+        for output in cb.outputs() {
+            if let Some(asset_id) = output.asset_id {
+                if !asset_id.is_native() && !asset_registry.contains_key(&asset_id) {
+                    new_asset_count = new_asset_count.saturating_add(1);
+                }
+            }
+        }
+        // KVP-107: Asset creation fee - additional native KVNC required in coinbase
+        let required_creation_fee = new_asset_count
+            .checked_mul(ASSET_CREATION_FEE)
+            .ok_or(LedgerError::ValueOverflow)?;
+        // The coinbase can claim up to allowed + creation_fee native KVNC
+        let allowed_with_creation = allowed
+            .checked_add(required_creation_fee)
+            .ok_or(LedgerError::ValueOverflow)?;
+        if claimed_native > allowed_with_creation {
+            return Err(LedgerError::CoinbaseOverspend {
+                claimed: claimed_native,
+                allowed: allowed_with_creation,
+            });
+        }
+    }
+
     add_outputs(staging, cb.id(), cb, height, true)?;
     Ok(claimed_native)
 }
@@ -1648,6 +1758,8 @@ pub fn apply_dag(dag: &Dag, subsidy: u64) -> LedgerRun {
                 SCRIPT_V2_ACTIVATION_SCORE,
                 HTLC_ACTIVATION_SCORE,
                 VAULT_ACTIVATION_SCORE,
+                MINT_PRICE_ACTIVATION_SCORE,
+                ASSET_LOGO_ACTIVATION_SCORE,
             ) {
                 Ok(summary) => {
                     cumulative_minted = cumulative_minted.saturating_add(summary.minted);
@@ -1900,6 +2012,10 @@ pub struct Ledger {
     htlc_activation_score: u64,
     /// Blue score activation threshold for RFC-005 vault transactions.
     vault_activation_score: u64,
+    /// KVP-107: blue score activation threshold for mint price enforcement.
+    mint_price_activation_score: u64,
+    /// KVP-107: blue score activation threshold for asset logo/metadata.
+    asset_logo_activation_score: u64,
     /// RFC-006: cumulative native KVNC atoms minted on the selected chain.
     native_minted: u64,
     /// RFC-006: cumulative fee atoms burned (75% of selected-chain fees).
@@ -1974,6 +2090,8 @@ impl Ledger {
             script_v2_activation_score: SCRIPT_V2_ACTIVATION_SCORE,
             htlc_activation_score: HTLC_ACTIVATION_SCORE,
             vault_activation_score: VAULT_ACTIVATION_SCORE,
+            mint_price_activation_score: MINT_PRICE_ACTIVATION_SCORE,
+            asset_logo_activation_score: ASSET_LOGO_ACTIVATION_SCORE,
             native_minted: summary.minted,
             fees_burned: burned,
             block_minted,
@@ -2040,6 +2158,26 @@ impl Ledger {
     /// The blue-score activation threshold for RFC-005 vault transactions.
     pub fn vault_activation_score(&self) -> u64 {
         self.vault_activation_score
+    }
+
+    /// Set the blue-score activation threshold for KVP-107 mint price enforcement.
+    pub fn set_mint_price_activation_score(&mut self, score: u64) {
+        self.mint_price_activation_score = score;
+    }
+
+    /// The blue-score activation threshold for KVP-107 mint price enforcement.
+    pub fn mint_price_activation_score(&self) -> u64 {
+        self.mint_price_activation_score
+    }
+
+    /// Set the blue-score activation threshold for KVP-107 asset logo/metadata.
+    pub fn set_asset_logo_activation_score(&mut self, score: u64) {
+        self.asset_logo_activation_score = score;
+    }
+
+    /// The blue-score activation threshold for KVP-107 asset logo/metadata.
+    pub fn asset_logo_activation_score(&self) -> u64 {
+        self.asset_logo_activation_score
     }
 
     /// Like [`Ledger::new`], but with a finite finality depth: blocks more than
@@ -2670,6 +2808,8 @@ impl Ledger {
                     self.script_v2_activation_score,
                     self.htlc_activation_score,
                     self.vault_activation_score,
+                    self.mint_price_activation_score,
+                    self.asset_logo_activation_score,
                 ) {
                     view_minted = view_minted.saturating_add(merged_summary.minted);
                     // A2: each block contributes its OWN burn (fees - fees/4);
@@ -2698,6 +2838,8 @@ impl Ledger {
             self.script_v2_activation_score,
             self.htlc_activation_score,
             self.vault_activation_score,
+            self.mint_price_activation_score,
+            self.asset_logo_activation_score,
         )?;
         view_minted = view_minted.saturating_add(summary.minted);
         view_fees = view_fees.saturating_add(summary.fees - summary.fees / FEE_PRODUCER_DEN);
@@ -2890,6 +3032,8 @@ impl Ledger {
                     self.script_v2_activation_score,
                     self.htlc_activation_score,
                     self.vault_activation_score,
+                    self.mint_price_activation_score,
+                    self.asset_logo_activation_score,
                 );
             }
         }
@@ -3369,6 +3513,8 @@ impl Ledger {
             script_v2_activation_score: SCRIPT_V2_ACTIVATION_SCORE,
             htlc_activation_score: HTLC_ACTIVATION_SCORE,
             vault_activation_score: VAULT_ACTIVATION_SCORE,
+            mint_price_activation_score: MINT_PRICE_ACTIVATION_SCORE,
+            asset_logo_activation_score: ASSET_LOGO_ACTIVATION_SCORE,
             native_minted: stored_minted.unwrap_or(0),
             fees_burned: stored_burned.unwrap_or(0),
             block_minted: HashMap::new(),
@@ -4205,6 +4351,8 @@ mod tests {
             0, // script_v2_activation_score
             0, // htlc_activation_score
             VAULT_ACTIVATION_SCORE,
+            MINT_PRICE_ACTIVATION_SCORE,
+            ASSET_LOGO_ACTIVATION_SCORE,
         )
         .unwrap_err();
         assert!(matches!(err, LedgerError::CoinbaseImmature { .. }));
@@ -4224,6 +4372,8 @@ mod tests {
             0, // script_v2_activation_score
             0, // htlc_activation_score
             VAULT_ACTIVATION_SCORE,
+            MINT_PRICE_ACTIVATION_SCORE,
+            ASSET_LOGO_ACTIVATION_SCORE,
         )
         .unwrap();
         assert!(!utxo.contains(&op));
