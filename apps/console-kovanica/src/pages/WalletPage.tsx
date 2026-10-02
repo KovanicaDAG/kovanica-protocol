@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Card, Loading, Error } from '../../../shared/src/components';
-import { useBalance, useHistory } from '../../../shared/src/hooks/useKovanica';
-import { formatKVNC, shortenHex, formatTimestamp } from '../../../shared/src/utils/format';
+import { Card, Loading, Error } from '@console-shared/components';
+import { useBalance, useHistory } from '@console-shared/hooks/useKovanica';
+import { formatKVNC, shortenHex, formatTimestamp } from '@console-shared/utils/format';
 
 export function WalletPage() {
   const [address, setAddress] = useState('');

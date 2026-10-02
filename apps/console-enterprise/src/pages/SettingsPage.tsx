@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card } from '../../../shared/src/components';
+import { Card } from '@console-shared/components';
 
 export function SettingsPage() {
   const [settings, setSettings] = useState({

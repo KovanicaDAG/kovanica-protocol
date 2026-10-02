@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Card, Table, Loading, Error } from '../../../shared/src/components';
-import { useHead } from '../../../shared/src/hooks/useKovanica';
-import { formatKVNC, shortenHex } from '../../../shared/src/utils/format';
+import { Card, Table, Loading, Error } from '@console-shared/components';
+import { useHead } from '@console-shared/hooks/useKovanica';
+import { formatKVNC, shortenHex } from '@console-shared/utils/format';
 
 interface Asset {
   id: string;

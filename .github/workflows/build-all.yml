@@ -110,46 +110,46 @@ jobs:
 
       - name: Copy .so files to Android module
         run: |
-          mkdir -p mobile/android/uniffi/src/main/jniLibs/arm64-v8a
-          mkdir -p mobile/android/uniffi/src/main/jniLibs/armeabi-v7a
-          mkdir -p mobile/android/uniffi/src/main/jniLibs/x86_64
+          mkdir -p apps/android/uniffi/src/main/jniLibs/arm64-v8a
+          mkdir -p apps/android/uniffi/src/main/jniLibs/armeabi-v7a
+          mkdir -p apps/android/uniffi/src/main/jniLibs/x86_64
           cp protocol/target/aarch64-linux-android/release/libkovanica_ffi.so \
-             mobile/android/uniffi/src/main/jniLibs/arm64-v8a/
+             apps/android/uniffi/src/main/jniLibs/arm64-v8a/
           cp protocol/target/armv7-linux-androideabi/release/libkovanica_ffi.so \
-             mobile/android/uniffi/src/main/jniLibs/armeabi-v7a/
+             apps/android/uniffi/src/main/jniLibs/armeabi-v7a/
           cp protocol/target/x86_64-linux-android/release/libkovanica_ffi.so \
-             mobile/android/uniffi/src/main/jniLibs/x86_64/
+             apps/android/uniffi/src/main/jniLibs/x86_64/
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build Debug APK
-        working-directory: ./mobile/android
+        working-directory: ./apps/android
         run: ./gradlew assembleDebug
 
       - name: Build Release APK
-        working-directory: ./mobile/android
+        working-directory: ./apps/android
         run: ./gradlew assembleRelease
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: android-release-apk
-          path: mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: apps/android/app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 30
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
           name: android-aab
-          path: mobile/android/app/build/outputs/bundle/release/app-release.aab
+          path: apps/android/app/build/outputs/bundle/release/app-release.aab
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
@@ -190,17 +190,17 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: mobile/console/kovanica/package-lock.json
+          cache-dependency-path: apps/console-kovanica/package-lock.json
 
       - name: Install pnpm
         run: npm install -g pnpm
 
       - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm run tauri build
 
       - name: Upload Linux bundles
@@ -208,7 +208,7 @@ jobs:
         with:
           name: linux-tauri-bundles
           path: |
-            mobile/console/kovanica/src-tauri/target/release/bundle/
+            apps/console-kovanica/src-tauri/target/release/bundle/
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: mobile/console/kovanica/package-lock.json
+          cache-dependency-path: apps/console-kovanica/package-lock.json
 
       - name: Install pnpm
         run: npm install -g pnpm
@@ -247,18 +247,18 @@ jobs:
         run: echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm run tauri build
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: windows-tauri-installer
-          path: mobile/console/kovanica/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
+          path: apps/console-kovanica/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: mobile/console/kovanica/package-lock.json
+          cache-dependency-path: apps/console-kovanica/package-lock.json
 
       - name: Install pnpm
         run: npm install -g pnpm
@@ -293,18 +293,18 @@ jobs:
         run: cargo install tauri-cli
 
       - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri (macOS DMG)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm run tauri build
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: macos-tauri-dmg
-          path: mobile/console/kovanica/src-tauri/target/release/bundle/dmg/*.dmg
+          path: apps/console-kovanica/src-tauri/target/release/bundle/dmg/*.dmg
           retention-days: 30
 
       # iOS build (needs Xcode, signing certs — placeholder for now)
@@ -314,7 +314,7 @@ jobs:
           echo "  - Xcode (available on macos-latest)"
           echo "  - Apple Developer account + signing certs"
           echo "  - Provisioning profiles"
-          echo "  - Run: cd mobile/ios && xcodebuild -scheme KovanicaWallet -configuration Release"
+          echo "  - Run: cd apps/ios && xcodebuild -scheme KovanicaWallet -configuration Release"
         shell: bash
 
       - name: Download Swift bindings

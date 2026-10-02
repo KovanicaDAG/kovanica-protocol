@@ -1,0 +1,43 @@
+# action	old	new	note
+# Actions: MOVE/ARCHIVE are executed by apply-move-map.sh --apply. MERGE/DECIDE/KEEP are only reported.
+# A DECIDE row is flipped to MOVE/ARCHIVE by a human after Phase 0.
+# PROPOSED EDITS FROM PHASE 0 — NOT YET APPLIED
+MOVE	mobile/android	apps/android	likely canonical Android app; fix refs to protocol/crates/kovanica-ffi build scripts
+MOVE	mobile/ios	apps/ios	xcodegen project; see BUILD.md; update FFI paths
+MOVE	mobile/console/kovanica	apps/console-kovanica	Tauri; check import of ../shared
+MOVE	mobile/console/enterprise	apps/console-enterprise	Tauri; shared node_modules symlink lives here
+MOVE	mobile/console/shared	packages/console-shared	interim; split into api-client + ui in Phase 4
+MERGE	mobile/.gitignore	.gitignore	merge into root, then delete
+MOVE	wallet/extension	apps/extension	browser extension (Vite)
+MOVE	wallet/shared	packages/brand-assets	logo only
+MERGE	wallet/.gitignore	.gitignore	merge into root
+ARCHIVE	wallet/android	archive/wallet-android	Phase 0: same applicationId as mobile/android; 4 unique files are app-shell only; mobile/android has UniFFI + lightnode packages (superset). Archive after class diff confirmation.
+ARCHIVE	wallet/ios	archive/wallet-ios	Phase 0: mobile/ios uses xcodegen (maintained); wallet/ios hand-made xcodeproj; 4 unique files are wallet-specific UI. Archive after class diff confirmation.
+ARCHIVE	android-light-node	archive/android-light-node	Phase 0: mobile/android contains com.kovanica.lightnode packages; separate applicationId but redundant. Archive after confirming no unique screens.
+MOVE	dashboard	apps/dashboard	frontend (Vite) + backend/server.py; check systemd/pm2 refs
+MOVE	web/site	apps/web	has nested .github (inert) and DEPLOY.md; check deploy refs
+MOVE	ledger-app	apps/ledger-app	own Cargo workspace + C sources; Makefile
+MOVE	protocol/desktop-app	apps/desktop-node	Cargo path deps ../crates/* must become ../../protocol/crates/*; gitignore desktop-app/data/
+ARCHIVE	protocol/web-playground	archive/web-playground	Phase 0: 0 refs; superseded by web/site playground components.
+MOVE	installer	ops/installer	install scripts are curl-piped from public URLs; check hard-coded repo paths
+MOVE	deploy	ops/deploy	systemd units, runbooks, preflight/validate scripts; check config-gate and deploy workflows
+MOVE	protocol/deploy	ops/deploy-protocol	Caddy/nginx/explorer service; merge into ops/deploy later
+MOVE	protocol/alerting_rules.yml	ops/monitoring/alerting_rules.yml	check references in deploy
+MOVE	deploy-consoles.sh	tools/deploy-consoles.sh	fix relative paths inside
+MOVE	test-android-apk.sh	tools/test-android-apk.sh	fix relative paths inside
+KEEP	node	node	Phase 0: thin wrapper (95 lines) path-depends on protocol/crates; NOT a duplicate. Used by sync-public-node.yml. Do not delete. Option: fold node-bin into protocol workspace in Phase 3.
+ARCHIVE	protocol/bindings	archive/protocol-bindings	Phase 0: duplicate of crates/kovanica-ffi/bindings/ + nested kotlin duplicate. Consolidate in Phase 3 per bindings-drift guard.
+ARCHIVE	protocol/patch	archive/protocol-patch	Phase 0: 0 refs; one-off patch files; confirm obsolete.
+ARCHIVE	protocol/rfc006-step7-api-head.patch	archive/rfc006-step7-api-head.patch	Phase 0: 0 refs; confirm obsolete.
+MERGE	protocol/.github/workflows	.github/workflows	Phase 2, one file at a time; several deploy/publish; never bulk-move
+MERGE	node/.github/workflows	.github/workflows	Phase 2
+MERGE	web/site/.github	.github	Phase 2 (path becomes apps/web/.github until then)
+KEEP	protocol	protocol	Rust core stays: name used by sync-public-node, AGENTS.md, RFCs
+KEEP	sdk	sdk	published to crates.io/npm; revisit in Phase 3
+KEEP	scripts	scripts	vault tooling tied to .vault-managed
+KEEP	TODO	TODO	vault content
+KEEP	plans	plans	vault content
+KEEP	99-Unfiled	99-Unfiled	vault content
+KEEP	config	config	used by config-gate.yml
+KEEP	data	data	runtime data, unversioned
+KEEP	dev.sh	dev.sh	stays at root; update component_dirs and android loop

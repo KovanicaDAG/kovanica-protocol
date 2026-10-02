@@ -42,7 +42,7 @@ services:
   devnet-1:
     build:
       context: ../..
-      dockerfile: installer/docker/Dockerfile
+      dockerfile: ops/installer/docker/Dockerfile
     container_name: kovanica-devnet-1
     restart: unless-stopped
     ports:

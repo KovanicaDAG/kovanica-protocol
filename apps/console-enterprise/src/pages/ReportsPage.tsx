@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Card, StatCard, Loading, Error } from '../../../shared/src/components';
-import { useHead } from '../../../shared/src/hooks/useKovanica';
-import { formatKVNC, formatNumber } from '../../../shared/src/utils/format';
+import { Card, StatCard, Loading, Error } from '@console-shared/components';
+import { useHead } from '@console-shared/hooks/useKovanica';
+import { formatKVNC, formatNumber } from '@console-shared/utils/format';
 
 export function ReportsPage() {
   const { head, loading, error } = useHead();

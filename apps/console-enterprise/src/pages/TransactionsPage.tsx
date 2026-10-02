@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
-import { Card, Table, Loading, Error } from '../../../shared/src/components';
-import { useBlocks } from '../../../shared/src/hooks/useKovanica';
-import { shortenHex, formatKVNC, formatTimestamp } from '../../../shared/src/utils/format';
+import { Card, Table, Loading, Error } from '@console-shared/components';
+import { useBlocks } from '@console-shared/hooks/useKovanica';
+import { shortenHex, formatKVNC, formatTimestamp } from '@console-shared/utils/format';
 
 interface Transaction {
   id: string;

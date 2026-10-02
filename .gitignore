@@ -22,7 +22,7 @@ dist/
 # (possibly a 12/24-word BIP-39 phrase), validator seeds, faucet ledgers and
 # peer ban state. All regenerable; set KOVANICA_DATA outside the checkout.
 crates/*/data/
-desktop-app/data/
+apps/desktop-node/data/
 # Anchorless so it also covers protocol/data/ and any other nested crate —
 # a pattern with a slash is anchored to this file's directory, which silently
 # misses nested trees (this is what let protocol/data/alpha.snap get committed).
@@ -35,12 +35,12 @@ desktop-app/data/
 # must agree on the set. Never add a secret to it.
 authority-keys/*.env
 mainnet-authority-keys/*.env
-deploy/*/data/
-deploy/*/keys/
-deploy/*/logs/
-deploy/*/seeds/*/keys/
-deploy/testnet/authority-keys/*.env
-deploy/mainnet/authority-keys/*.env
+ops/deploy/*/data/
+ops/deploy/*/keys/
+ops/deploy/*/logs/
+ops/deploy/*/seeds/*/keys/
+ops/deploy/testnet/authority-keys/*.env
+ops/deploy/mainnet/authority-keys/*.env
 
 # Local environment. *.example files are the documented exception.
 .env

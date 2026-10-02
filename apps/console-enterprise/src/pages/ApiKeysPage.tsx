@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { Card, Table } from '../../../shared/src/components';
-import { shortenHex } from '../../../shared/src/utils/format';
+import { Card, Table } from '@console-shared/components';
+import { shortenHex } from '@console-shared/utils/format';
 
 interface ApiKey {
   id: string;

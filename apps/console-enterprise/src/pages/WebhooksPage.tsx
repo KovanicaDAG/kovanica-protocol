@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card, Table } from '../../../shared/src/components';
+import { Card, Table } from '@console-shared/components';
 
 interface Webhook {
   id: string;

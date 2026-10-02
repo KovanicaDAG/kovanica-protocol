@@ -50,7 +50,7 @@ Kovanica owns `127.0.0.1:3000` (web), `127.0.0.1:8080` (node API),
 > > only if it is an authority with a signing key. The rotation *mechanism* is
 > > settled (RFC-POA §0.7.2), but the *inputs* — who may join, key ceremony —
 > > remain `[OPEN]`. The web-surface deploy steps below are otherwise unchanged
-> > — none of this touches PM2, ports, or the `web/site` build.
+> > — none of this touches PM2, ports, or the `apps/web` build.
 > >
 > > `[CURRENT]` The block is accurate for the pre-reset PoW testnet. Do not change
 > > it on a live host without the `genesis-testnet` role, because the transition

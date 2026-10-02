@@ -25,7 +25,7 @@ brew install xcodegen
 ./protocol/crates/kovanica-ffi/build-apple.sh
 
 # 2. Generate the Xcode project.
-cd mobile/ios
+cd apps/ios
 xcodegen generate --spec xcodegen.yml
 
 # 3. Open it.
@@ -44,7 +44,7 @@ fully-hardened SLIP-0010 ed25519 path `m/44'/3007'/0'/0'/i'`. It has exactly one
 implementation, in Rust (`protocol/crates/kovanica-wallet`), pinned by
 known-answer tests there and re-asserted across the FFI boundary in
 `protocol/crates/kovanica-ffi/tests/ffi_deriv.rs` and
-`mobile/ios/KovanicaWalletTests/KovanicaKeysTests.swift`.
+`apps/ios/KovanicaWalletTests/KovanicaKeysTests.swift`.
 
 The app calls it through the light-node FFI
 (`protocol/crates/kovanica-ffi/src/deriv.rs`) from

@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { Layout } from '../../shared/src/components';
+import { Layout } from '@console-shared/components';
 import { DashboardPage } from './pages/DashboardPage';
 import { WalletsPage } from './pages/WalletsPage';
 import { AssetsPage } from './pages/AssetsPage';

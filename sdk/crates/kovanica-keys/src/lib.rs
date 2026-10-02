@@ -121,7 +121,7 @@ pub const DERIVATION_ACCOUNT: u32 = 0;
 ///
 /// Port of the reference implementation; known-answer vectors live in
 /// `tests/slip10_vectors.rs` and match the TypeScript mirror in
-/// `web/site/src/lib/wallet/keys.ts` (WebCrypto).
+/// `apps/web/src/lib/wallet/keys.ts` (WebCrypto).
 pub mod slip10 {
     use hmac::{Hmac, Mac};
     use sha2::Sha512;

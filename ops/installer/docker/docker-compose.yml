@@ -28,7 +28,7 @@ services:
     profiles: ["retired-do-not-use"]
     build:
       context: ../..
-      dockerfile: installer/docker/Dockerfile
+      dockerfile: ops/installer/docker/Dockerfile
     container_name: kovanica-node
     restart: unless-stopped
     ports:

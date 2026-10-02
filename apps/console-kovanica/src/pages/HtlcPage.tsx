@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card } from '../../../shared/src/components';
+import { Card } from '@console-shared/components';
 
 export function HtlcPage() {
   const [activeTab, setActiveTab] = useState<'create' | 'redeem' | 'refund'>('create');

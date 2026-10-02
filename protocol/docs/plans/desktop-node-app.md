@@ -1,6 +1,6 @@
 # Desktop Node App — Implementation Plan
 
-A self-contained Tauri v2 desktop shell (`protocol/desktop-app`) that embeds a
+A self-contained Tauri v2 desktop shell (`apps/desktop-node`) that embeds a
 live `kovanica-node` peer in a worker thread and drives it through typed
 commands/events. The master roadmap mirror lives at
 [`plans/desktop-node-app.md`](../../../plans/desktop-node-app.md).

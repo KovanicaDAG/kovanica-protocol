@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-APK_PATH="${1:-/root/kovanica/mobile/android/app/build/outputs/apk/release/app-release.apk}"
+APK_PATH="${1:-/root/kovanica/apps/android/app/build/outputs/apk/release/app-release.apk}"
 ADB="/tmp/opencode/android-sdk/platform-tools/adb"
 
 if [[ ! -f "${APK_PATH}" ]]; then

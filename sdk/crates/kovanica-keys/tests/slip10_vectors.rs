@@ -3,7 +3,7 @@
 //! Official SLIP-0010 vectors 1 & 2 (public spec) plus the **frozen**
 //! Kovanica path `m/44'/3007'/0'/0'/i'` vectors from
 //! `docs/backlog/DERIVATION.md`. These constants are shared with the
-//! TypeScript web wallet (`web/site/src/lib/wallet/keys.ts`) — if either side
+//! TypeScript web wallet (`apps/web/src/lib/wallet/keys.ts`) — if either side
 //! drifts, this suite (or the web suite) fails loudly.
 //!
 //! The frozen-path inputs use the standard **zero-entropy 128-bit phrase**

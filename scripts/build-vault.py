@@ -88,7 +88,7 @@ CATEGORIES: list[tuple[str, list[str]]] = [
         "protocol/docs/RAM-REDUCTION.md", "protocol/docs/TESTNET-SOAK.md",
         "protocol/docs/soak-snapshot-*.md", "protocol/docs/api/**",
         "protocol/TESTNET*.md", "protocol/HOWTO_*.md", "protocol/docs/TESTNET-RESET-POLICY.md",
-        "protocol/deploy/**", "installer/**", "web/site/DEPLOY.md",
+        "ops/deploy/**", "ops/installer/**", "apps/web/DEPLOY.md",
         "protocol/docs/RFC-008-OraclePruning.md",
     ]),
     ("40-Node", [
@@ -96,9 +96,10 @@ CATEGORIES: list[tuple[str, list[str]]] = [
         "protocol/MERGE_PREVIEW.md",
     ]),
     ("50-Components", [
-        "web/**", "wallet/**", "mobile/**", "android-light-node/**",
-        "cli/**", "sdk/**", "ledger-app/**", "data/README.md",
-        "protocol/desktop-app/**",
+        "apps/web/**", "apps/extension/**", "apps/android/**", "apps/ios/**",
+        "apps/console-kovanica/**", "apps/console-enterprise/**", "apps/dashboard/**",
+        "apps/desktop-node/**", "apps/ledger-app/**",
+        "packages/**", "sdk/**", "data/README.md",
     ]),
     ("60-Planning", [
         "60-Planning/**",

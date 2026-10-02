@@ -233,7 +233,7 @@ Declaring a different minor pulls a second `crossterm` into the tree, which
 makes `crossterm::event::KeyEvent` and `ratatui::crossterm::event::KeyEvent`
 distinct types and silently breaks `Screen::handle_key`'s trait/impl match.
 
-⚠️ **`crates/*/data/` and `desktop-app/data/` are gitignored and hold secrets.**
+⚠️ **`crates/*/data/` and `apps/desktop-node/data/` are gitignored and hold secrets.**
 `Node::data_dir()` defaults to a relative `data/`, so test runs drop the founder
 premine key, the operator wallet (possibly a BIP-39 phrase) and validator seeds
 into the source tree. Point `KOVANICA_DATA` outside the checkout.

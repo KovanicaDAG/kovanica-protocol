@@ -8,8 +8,8 @@ VPS_USER="${1:-kovanica}"
 VPS_HOST="${2:-explorer.kovanica.online}"
 SSH_KEY="${3:-~/.ssh/kovanica-deploy}"
 
-LOCAL_CONSOLE_DIR="/root/kovanica/mobile/console/kovanica"
-LOCAL_ENTERPRISE_DIR="/root/kovanica/mobile/console/enterprise"
+LOCAL_CONSOLE_DIR="/root/kovanica/apps/console-kovanica"
+LOCAL_ENTERPRISE_DIR="/root/kovanica/apps/console-enterprise"
 REMOTE_BASE="/opt/kovanica"
 
 echo "=== Deploying Kovanica Web Consoles ==="

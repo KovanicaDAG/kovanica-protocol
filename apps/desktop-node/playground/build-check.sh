@@ -2,7 +2,7 @@
 set -euo pipefail
 
 echo "=== DESKTOP BUILD CHECK ==="
-cd /root/kovanica/protocol/desktop-app
+cd /root/kovanica/apps/desktop-node
 
 # Library
 cargo check --offline --lib 2>&1 | tail -1

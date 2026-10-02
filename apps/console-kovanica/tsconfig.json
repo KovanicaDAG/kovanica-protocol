@@ -22,8 +22,9 @@
       "react-dom": ["./node_modules/@types/react-dom"],
       "react-dom/*": ["./node_modules/@types/react-dom/*"],
       "react-router-dom": ["./node_modules/react-router-dom"],
-      "react-router-dom/*": ["./node_modules/react-router-dom/*"]
+      "react-router-dom/*": ["./node_modules/react-router-dom/*"],
+      "@console-shared/*": ["../../packages/console-shared/src/*"]
     }
   },
-  "include": ["src", "../shared/src"]
+  "include": ["src", "../../packages/console-shared/src"]
 }

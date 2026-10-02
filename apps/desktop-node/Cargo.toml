@@ -21,9 +21,9 @@ tauri = ["dep:tauri", "dep:tauri-plugin-shell", "dep:tauri-plugin-dialog", "dep:
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-kovanica-dag = { path = "../crates/kovanica-dag" }
-kovanica-node = { path = "../crates/kovanica-node" }
-kovanica-state = { path = "../crates/kovanica-state" }
+kovanica-dag = { path = "../../protocol/crates/kovanica-dag" }
+kovanica-node = { path = "../../protocol/crates/kovanica-node" }
+kovanica-state = { path = "../../protocol/crates/kovanica-state" }
 ureq = "2"
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt-multi-thread", "macros", "time"] }

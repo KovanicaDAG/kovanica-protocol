@@ -1,12 +1,12 @@
 # KovanicaWallet iOS Project Configuration for xcodegen
-# Generate with: xcodegen generate --spec mobile/ios/xcodegen.yml
+# Generate with: xcodegen generate --spec apps/ios/xcodegen.yml
 #
 # ⚠️ Build order: the light-node FFI is a **binary** dependency. Run
 #    protocol/crates/kovanica-ffi/build-apple.sh on macOS first — it produces
 #    `target/kovanica.xcframework` and the generated Swift bindings this target
 #    compiles. Without it the build fails at link time, which is the intended
 #    signal: the app has exactly one key-derivation implementation and it lives
-#    in that framework. See mobile/ios/BUILD.md.
+#    in that framework. See apps/ios/BUILD.md.
 
 name: KovanicaWallet
 options:

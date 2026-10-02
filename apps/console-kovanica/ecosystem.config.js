@@ -4,7 +4,7 @@ module.exports = {
       name: 'kovanica-console',
       script: 'npx',
       args: 'serve -s dist -l 3000',
-      cwd: '/root/kovanica/mobile/console/kovanica',
+      cwd: '/root/kovanica/apps/console-kovanica',
       env: {
         NODE_ENV: 'production',
         PORT: 3000

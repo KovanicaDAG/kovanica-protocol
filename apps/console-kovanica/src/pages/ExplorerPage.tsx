@@ -1,7 +1,7 @@
 import React from 'react';
-import { Card, StatCard, Loading, Error } from '../../../shared/src/components';
-import { useHead, useBlocks } from '../../../shared/src/hooks/useKovanica';
-import { formatKVNC, shortenHex, formatNumber } from '../../../shared/src/utils/format';
+import { Card, StatCard, Loading, Error } from '@console-shared/components';
+import { useHead, useBlocks } from '@console-shared/hooks/useKovanica';
+import { formatKVNC, shortenHex, formatNumber } from '@console-shared/utils/format';
 
 export function ExplorerPage() {
   const { head, loading, error, refresh } = useHead();

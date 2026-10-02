@@ -13,8 +13,8 @@
 #   ABIS="arm64-v8a" ./build-android.sh   # subset, space-separated
 #
 # Output:
-#   android/src/main/jniLibs/<abi>/libkovanica_ffi.so   (consumed by the
-#     Gradle module in android/, packaged into the AAR alongside the
+#   ../../../apps/android/uniffi/src/main/jniLibs/<abi>/libkovanica_ffi.so   (consumed by the
+#     Gradle module in apps/android/, packaged into the AAR alongside the
 #     committed Kotlin bindings under bindings/kotlin)
 #
 # The Kotlin side needs the `uniffi` runtime helpers — they are generated
@@ -49,10 +49,10 @@ done
 # Targets are pinned above via `rustup target add`; -o lays the .so files
 # straight into jniLibs.
 cargo ndk --platform 24 \
-  "${ARGS[@]}" -o android/src/main/jniLibs \
+  "${ARGS[@]}" -o ../../../apps/android/uniffi/src/main/jniLibs \
   build --release -p kovanica-ffi
 
 echo
 echo "jniLibs layout:"
-find android/src/main/jniLibs -name '*.so' | sort
-echo "Next: cd android && ./gradlew assembleRelease  (AAR bundles jniLibs + bindings)"
+find ../../../apps/android/uniffi/src/main/jniLibs -name '*.so' | sort
+echo "Next: cd ../../../apps/android && ./gradlew assembleRelease  (AAR bundles jniLibs + bindings)"

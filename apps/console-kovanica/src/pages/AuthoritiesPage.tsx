@@ -1,7 +1,7 @@
 import React from 'react';
-import { Card, Loading, Error } from '../../../shared/src/components';
-import { useHead } from '../../../shared/src/hooks/useKovanica';
-import { shortenHex } from '../../../shared/src/utils/format';
+import { Card, Loading, Error } from '@console-shared/components';
+import { useHead } from '@console-shared/hooks/useKovanica';
+import { shortenHex } from '@console-shared/utils/format';
 
 export function AuthoritiesPage() {
   const { head, loading, error, refresh } = useHead();

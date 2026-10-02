@@ -1,0 +1,183 @@
+
+## git state
+chore/unify-structure
+05ec3d7 docs: PoA-only migration — update all docs, deploy scripts, and README for testnet port 8000 (#5)
+?? .unify-kit/
+?? docs/
+?? kovanica-unify-kit.zip
+
+## tracked files that look like secrets (PATHS ONLY, contents never shown)
+mobile/android/keystore/release.keystore
+
+## keystore ignored by .gitignore? (--no-index so tracked files are evaluated too)
+NOT ignored by any pattern
+TRACKED
+
+## Android apps: Kotlin file counts and basename overlap
+mobile/android: 56 files
+wallet/android: 13 files
+android-light-node: 11 files
+-- only in wallet/android (not in mobile/android):
+KovApi.kt
+KovanicaWalletApp.kt
+Models.kt
+SeedStore.kt
+-- only in android-light-node (not in mobile/android):
+Screens.kt
+
+## iOS apps: Swift basename overlap
+-- only in wallet/ios (not in mobile/ios):
+HistoryView.swift
+KovAPIClient.swift
+WalletModels.swift
+WalletRepository.swift
+
+## node/ wrapper: size and path deps
+95 node/kovanica-node-bin/src/main.rs
+node/Cargo.toml:61:kovanica-dag = { path = "../protocol/crates/kovanica-dag" }
+node/Cargo.toml:62:kovanica-state = { path = "../protocol/crates/kovanica-state" }
+node/Cargo.toml:63:kovanica-node = { path = "../protocol/crates/kovanica-node" }
+node/Cargo.toml:64:kovanica-cli = { path = "../protocol/crates/kovanica-cli" }
+node/Cargo.toml:65:kovanica-ffi = { path = "../protocol/crates/kovanica-ffi" }
+node/kovanica-node-bin/Cargo.toml:12:path = "src/main.rs"
+node/kovanica-node-bin/Cargo.toml:15:kovanica-node = { path = "../../protocol/crates/kovanica-node" }
+
+## relative path dependencies that will break on move
+node/Cargo.toml:61:kovanica-dag = { path = "../protocol/crates/kovanica-dag" }
+node/Cargo.toml:62:kovanica-state = { path = "../protocol/crates/kovanica-state" }
+node/Cargo.toml:63:kovanica-node = { path = "../protocol/crates/kovanica-node" }
+node/Cargo.toml:64:kovanica-cli = { path = "../protocol/crates/kovanica-cli" }
+node/Cargo.toml:65:kovanica-ffi = { path = "../protocol/crates/kovanica-ffi" }
+node/kovanica-node-bin/Cargo.toml:15:kovanica-node = { path = "../../protocol/crates/kovanica-node" }
+protocol/crates/kovanica-chat/Cargo.toml:18:kovanica-state = { path = "../kovanica-state" }
+protocol/crates/kovanica-cli/Cargo.toml:26:kovanica-state = { path = "../kovanica-state" }
+protocol/crates/kovanica-cli/Cargo.toml:27:kovanica-airdrop = { path = "../../../sdk/crates/kovanica-airdrop" }
+protocol/crates/kovanica-cli/Cargo.toml:28:kovanica-types = { path = "../../../sdk/crates/kovanica-types" }
+protocol/crates/kovanica-cli/Cargo.toml:31:kovanica-wallet = { path = "../kovanica-wallet" }
+protocol/crates/kovanica-ffi/Cargo.toml:17:kovanica-dag = { path = "../kovanica-dag" }
+protocol/crates/kovanica-ffi/Cargo.toml:18:kovanica-state = { path = "../kovanica-state" }
+protocol/crates/kovanica-ffi/Cargo.toml:19:kovanica-node = { path = "../kovanica-node" }
+protocol/crates/kovanica-ffi/Cargo.toml:20:kovanica-wallet = { path = "../kovanica-wallet" }
+protocol/crates/kovanica-node/Cargo.toml:11:kovanica-dag = { path = "../kovanica-dag" }
+protocol/crates/kovanica-node/Cargo.toml:12:kovanica-state = { path = "../kovanica-state" }
+protocol/crates/kovanica-node/Cargo.toml:13:kovanica-types = { path = "../../../sdk/crates/kovanica-types" }
+protocol/crates/kovanica-node/Cargo.toml:17:kovanica-wallet = { path = "../kovanica-wallet" }
+protocol/crates/kovanica-state/Cargo.toml:11:kovanica-dag = { path = "../kovanica-dag" }
+protocol/crates/kovanica-wallet/Cargo.toml:17:kovanica-state = { path = "../kovanica-state" }
+protocol/crates/kovanica-wallet/Cargo.toml:22:kovanica-state = { path = "../kovanica-state" }
+protocol/desktop-app/Cargo.toml:24:kovanica-dag = { path = "../crates/kovanica-dag" }
+protocol/desktop-app/Cargo.toml:25:kovanica-node = { path = "../crates/kovanica-node" }
+protocol/desktop-app/Cargo.toml:26:kovanica-state = { path = "../crates/kovanica-state" }
+sdk/bindings/kovanica-wasm/Cargo.toml:15:kovanica-sdk = { path = "../../crates/kovanica-sdk" }
+sdk/crates/kovanica-airdrop/Cargo.toml:10:kovanica-types = { path = "../kovanica-types" }
+sdk/crates/kovanica-bridge/Cargo.toml:10:kovanica-types = { path = "../kovanica-types" }
+sdk/crates/kovanica-bridge/Cargo.toml:11:kovanica-tx = { path = "../kovanica-tx" }
+sdk/crates/kovanica-dex/Cargo.toml:11:kovanica-types = { path = "../kovanica-types" }
+sdk/crates/kovanica-dex/Cargo.toml:12:kovanica-keys = { path = "../kovanica-keys" }
+sdk/crates/kovanica-dex/Cargo.toml:13:kovanica-tx = { path = "../kovanica-tx" }
+sdk/crates/kovanica-merchant/Cargo.toml:10:kovanica-types = { path = "../kovanica-types" }
+sdk/crates/kovanica-merchant/Cargo.toml:11:kovanica-tx = { path = "../kovanica-tx" }
+sdk/crates/kovanica-merchant/Cargo.toml:12:kovanica-bridge = { path = "../kovanica-bridge" }
+sdk/crates/kovanica-sdk/Cargo.toml:26:kovanica-airdrop = { path = "../kovanica-airdrop" }
+sdk/crates/kovanica-sdk/Cargo.toml:30:path = "../../examples/generate_wallet.rs"
+sdk/crates/kovanica-sdk/Cargo.toml:34:path = "../../examples/htlc_swap.rs"
+sdk/crates/kovanica-sdk/Cargo.toml:38:path = "../../examples/create_asset.rs"
+sdk/crates/kovanica-sdk/Cargo.toml:42:path = "../../examples/transfer_asset.rs"
+android-light-node/settings.gradle.kts:27:    project(":kovanica-ffi").projectDir = ffiAarDir
+-- symlinks:
+
+## workflows: every .github/workflows dir (only root is active)
+./.github/workflows
+./node/.github/workflows
+./protocol/.github/workflows
+./web/site/.github/workflows
+-- workflows mentioning deploy/publish/secrets (review before porting):
+./.github/workflows/bindings-drift.yml
+./.github/workflows/build-all.yml
+./.github/workflows/ci-cd.yml
+./.github/workflows/config-gate.yml
+./.github/workflows/publish-sdk.yml
+./.github/workflows/releases.yml
+./.github/workflows/rust-gate.yml
+./.github/workflows/sdk-wasm.yml
+./.github/workflows/secret-scan.yml
+./node/.github/workflows/ci.yml
+./protocol/.github/workflows/README.md
+./protocol/.github/workflows/bindings.yml
+./protocol/.github/workflows/deploy-kovi.yml
+./protocol/.github/workflows/deploy.yml
+./protocol/.github/workflows/sync-public-node.yml
+./protocol/.github/workflows/web-deploy.yml
+
+## reference counts for every path in the move map (git-tracked text only)
+10097	node
+285	deploy
+44	installer
+40	dashboard
+36	android-light-node
+33	mobile/console/kovanica
+20	mobile/android
+13	web/site
+10	mobile/ios
+10	mobile/console/enterprise
+6	wallet/android
+6	ledger-app
+5	wallet/ios
+5	protocol/desktop-app
+5	protocol/bindings
+5	protocol/.github/workflows
+3	wallet/extension
+2	wallet/shared
+2	wallet/.gitignore
+2	mobile/console/shared
+2	mobile/.gitignore
+1	web/site/.github
+1	test-android-apk.sh
+1	protocol/deploy
+1	deploy-consoles.sh
+0	protocol/web-playground
+0	protocol/rfc006-step7-api-head.patch
+0	protocol/patch
+0	protocol/alerting_rules.yml
+0	node/.github/workflows
+
+## files that cite old top-level dirs (hard-coded paths), by file
+.github/workflows/bindings-drift.yml
+.github/workflows/build-all.yml
+.github/workflows/build-android.yml
+.github/workflows/ci-cd.yml
+.gitignore
+.gitleaks.toml
+deploy-consoles.sh
+dev.sh
+installer/docker/docker-compose.devnet.yml
+installer/docker/docker-compose.yml
+mobile/console/enterprise/ecosystem.config.js
+mobile/console/enterprise/vite.config.ts
+mobile/console/kovanica/ecosystem.config.js
+mobile/console/kovanica/vite.config.ts
+mobile/ios/BUILD.md
+mobile/ios/xcodegen.yml
+protocol/.github/workflows/Android-light-node
+protocol/.github/workflows/README.md
+protocol/.github/workflows/android.yml
+protocol/AGENTS.md
+protocol/crates/kovanica-ffi/android/build.gradle.kts
+protocol/desktop-app/Cargo.toml
+protocol/desktop-app/playground/build-check.sh
+protocol/docs/AUDIT-PLAN.md
+protocol/docs/BUG-BOUNTY.md
+protocol/docs/FAQ.md
+protocol/docs/NETWORK-LAUNCH-PLAN.md
+protocol/docs/PRODUCT-POLISH.md
+protocol/docs/RFC-POA-Migration.md
+protocol/docs/plans/android-light-node-app.md
+protocol/docs/plans/desktop-node-app.md
+protocol/docs/upgrades/01-RepoRestructure/Restructure-plan.md.txt
+protocol/docs/upgrades/01-RepoRestructure/Restructure.md.txt
+protocol/web-playground/build-check.sh
+scripts/build-vault.py
+sdk/crates/kovanica-keys/src/lib.rs
+sdk/crates/kovanica-keys/tests/slip10_vectors.rs
+test-android-apk.sh
+web/site/DEPLOY.md
