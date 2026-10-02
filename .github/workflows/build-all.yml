@@ -31,29 +31,29 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
 
-      - name: Install uniffi-bindgen
-        run: cargo install uniffi-bindgen
-
       - name: Build kovanica-ffi
         working-directory: ./protocol
         run: cargo build -p kovanica-ffi --release
 
+      # uniffi-bindgen reads the UDL/metadata out of the built library, so
+      # this works on Linux for both target languages. Run it through the
+      # workspace so the generator version is the one pinned by kovanica-ffi
+      # rather than whatever `cargo install` resolved that day.
       - name: Generate Kotlin bindings
-        working-directory: ./protocol/crates/kovanica-ffi
+        working-directory: ./protocol
         run: |
-          cargo run --bin uniffi-bindgen generate \
+          cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \
             --library ./target/release/libkovanica_ffi.so \
             --language kotlin \
-            --out-dir ../../../protocol/bindings/kotlin/uniffi
+            --out-dir ./bindings/kotlin/uniffi
 
       - name: Generate Swift bindings
-        if: runner.os == 'macOS'
-        working-directory: ./protocol/crates/kovanica-ffi
+        working-directory: ./protocol
         run: |
-          cargo run --bin uniffi-bindgen generate \
-            --library ./target/release/libkovanica_ffi.dylib \
+          cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \
+            --library ./target/release/libkovanica_ffi.so \
             --language swift \
-            --out-dir ../../../protocol/bindings/swift
+            --out-dir ./bindings/swift
 
       - name: Upload Kotlin bindings
         uses: actions/upload-artifact@v4
@@ -63,7 +63,6 @@ jobs:
           retention-days: 7
 
       - name: Upload Swift bindings
-        if: runner.os == 'macOS'
         uses: actions/upload-artifact@v4
         with:
           name: swift-bindings
@@ -114,11 +113,11 @@ jobs:
           mkdir -p mobile/android/uniffi/src/main/jniLibs/arm64-v8a
           mkdir -p mobile/android/uniffi/src/main/jniLibs/armeabi-v7a
           mkdir -p mobile/android/uniffi/src/main/jniLibs/x86_64
-          cp protocol/crates/kovanica-ffi/target/aarch64-linux-android/release/libkovanica_ffi.so \
+          cp protocol/target/aarch64-linux-android/release/libkovanica_ffi.so \
              mobile/android/uniffi/src/main/jniLibs/arm64-v8a/
-          cp protocol/crates/kovanica-ffi/target/armv7-linux-androideabi/release/libkovanica_ffi.so \
+          cp protocol/target/armv7-linux-androideabi/release/libkovanica_ffi.so \
              mobile/android/uniffi/src/main/jniLibs/armeabi-v7a/
-          cp protocol/crates/kovanica-ffi/target/x86_64-linux-android/release/libkovanica_ffi.so \
+          cp protocol/target/x86_64-linux-android/release/libkovanica_ffi.so \
              mobile/android/uniffi/src/main/jniLibs/x86_64/
 
       - name: Setup Gradle

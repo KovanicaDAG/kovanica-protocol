@@ -58,8 +58,8 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            protocol/crates/kovanica-ffi/target
-            protocol/crates/kovanica-ffi/android/src/main/jniLibs
+            protocol/target
+            mobile/android/uniffi/src/main/jniLibs
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-
