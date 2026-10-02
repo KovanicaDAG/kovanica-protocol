@@ -63,6 +63,10 @@ ops/deploy/mainnet/authority-keys/*.env
 /kovanica_dev_setup.sh
 /PRE-MIGRATION-LS.txt
 
+# Unify kit — unzipped at .unify-kit/, never commit it.
+/.unify-kit/
+/kovanica-unify-kit.zip
+
 # Editor / OS noise
 .DS_Store
 *.swp
