@@ -1,0 +1,99 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Kovanica Node",
+    "tags": ["kovanica", "blockdag", "testnet"],
+    "timezone": "browser",
+    "schemaVersion": 39,
+    "version": 1,
+    "refresh": "15s",
+    "time": {"from": "now-6h", "to": "now"},
+    "panels": [
+      {
+        "id": 1, "title": "Block Height", "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+        "targets": [{"expr": "kovanica_block_height", "refId": "A"}],
+        "fieldConfig": {"defaults": {"unit": "none"}}
+      },
+      {
+        "id": 2, "title": "Blue Score", "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+        "targets": [{"expr": "kovanica_dag_blue_score", "refId": "A"}],
+        "fieldConfig": {"defaults": {"unit": "none"}}
+      },
+      {
+        "id": 3, "title": "Peer Count", "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+        "targets": [{"expr": "kovanica_peer_count", "refId": "A"}],
+        "fieldConfig": {"defaults": {"unit": "none"}}
+      },
+      {
+        "id": 4, "title": "Mempool TX Count", "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+        "targets": [{"expr": "kovanica_mempool_tx_count", "refId": "A"}],
+        "fieldConfig": {"defaults": {"unit": "none"}}
+      },
+      {
+        "id": 5, "title": "Blocks Produced", "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "targets": [{"expr": "rate(kovanica_blocks_produced_total[5m])", "refId": "A", "legendFormat": "blocks/s"}],
+        "fieldConfig": {"defaults": {"unit": "ops"}}
+      },
+      {
+        "id": 6, "title": "P2P Messages", "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+        "targets": [
+          {"expr": "rate(kovanica_p2p_messages_sent_total[5m])", "refId": "A", "legendFormat": "sent"},
+          {"expr": "rate(kovanica_p2p_messages_received_total[5m])", "refId": "B", "legendFormat": "received"}
+        ],
+        "fieldConfig": {"defaults": {"unit": "ops"}}
+      },
+      {
+        "id": 7, "title": "RPC Requests", "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+        "targets": [{"expr": "rate(kovanica_rpc_requests_total[5m])", "refId": "A", "legendFormat": "{{method}}"}],
+        "fieldConfig": {"defaults": {"unit": "ops"}}
+      },
+      {
+        "id": 8, "title": "Supply (KVNC)", "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+        "targets": [
+          {"expr": "kovanica_supply_circulating / 100000000", "refId": "A", "legendFormat": "circulating"},
+          {"expr": "kovanica_supply_minted / 100000000", "refId": "B", "legendFormat": "minted"},
+          {"expr": "kovanica_supply_burned / 100000000", "refId": "C", "legendFormat": "burned"}
+        ],
+        "fieldConfig": {"defaults": {"unit": "KVNC"}}
+      },
+      {
+        "id": 9, "title": "DHT Routing Table", "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+        "targets": [{"expr": "kovanica_dht_routing_table_size", "refId": "A", "legendFormat": "peers"}],
+        "fieldConfig": {"defaults": {"unit": "none"}}
+      },
+      {
+        "id": 10, "title": "Sync Duration", "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+        "targets": [{"expr": "kovanica_sync_duration_seconds", "refId": "A", "legendFormat": "duration"}],
+        "fieldConfig": {"defaults": {"unit": "s"}}
+      },
+      {
+        "id": 11, "title": "Reorg Depth", "type": "timeseries",
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 28},
+        "targets": [{"expr": "kovanica_dag_reorg_depth_total", "refId": "A", "legendFormat": "depth"}],
+        "fieldConfig": {"defaults": {"unit": "none"}}
+      },
+      {
+        "id": 12, "title": "WS Clients", "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 28},
+        "targets": [{"expr": "kovanica_explorer_ws_clients", "refId": "A"}],
+        "fieldConfig": {"defaults": {"unit": "none"}}
+      },
+      {
+        "id": 13, "title": "Snapshot Size", "type": "stat",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 28},
+        "targets": [{"expr": "kovanica_snapshot_size_bytes", "refId": "A"}],
+        "fieldConfig": {"defaults": {"unit": "bytes"}}
+      }
+    ]
+  }
+}

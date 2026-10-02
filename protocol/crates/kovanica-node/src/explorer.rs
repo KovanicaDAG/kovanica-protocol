@@ -461,20 +461,54 @@ pub fn serve(addr: impl ToSocketAddrs) -> std::io::Result<()> {
     // A node that cannot replay its own log has no correct state to serve.
     // Abort the listener rather than come up on a fallback chain: the caller
     // gets the reason on stderr and a non-zero exit.
-    let mut app =
+    let app =
         Explorer::boot_persist().map_err(|e| std::io::Error::other(format!("kovanica: {e}")))?;
     eprintln!(
         "kovanica explorer state loaded from {}",
         data_dir().display()
     );
+    // Wrap Explorer in Arc<Mutex<>> so connection handler threads can share
+    // it. The accept loop stays on the main thread; each connection runs on
+    // its own spawned thread so slow clients never block new accepts.
+    let app = Arc::new(Mutex::new(app));
+
     loop {
         match listener.accept() {
-            Ok((stream, _)) => {
-                if let Err(e) = handle(&mut app, stream) {
-                    eprintln!("explorer: {e}");
-                }
+            Ok((mut stream, _)) => {
+                let app = Arc::clone(&app);
+                thread::spawn(move || {
+                    // Phase 1 — read, with no lock held. This is the only part
+                    // of a request that can block on an uncooperative peer, so
+                    // it must not hold the explorer's lock: doing so let one
+                    // silent client stall every other request and the tick loop
+                    // for the whole read timeout.
+                    let req = match read_request(&mut stream) {
+                        Ok(Some(req)) => req,
+                        // Peer hung up / sent nothing: nothing to reply to.
+                        Ok(None) => return,
+                        Err(e) => {
+                            eprintln!("explorer: read: {e}");
+                            return;
+                        }
+                    };
+                    // Phase 2 — dispatch, under the lock. Short by construction:
+                    // every wait for the network happens in phase 1.
+                    let mut app = match app.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    if let Err(e) = dispatch_request(&mut app, stream, req) {
+                        eprintln!("explorer: {e}");
+                    }
+                });
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // Tick on the main thread — no contention with request handlers
+                // because the lock is only held for the duration of a request.
+                let mut app = match app.lock() {
+                    Ok(guard) => guard,
+                    Err(poisoned) => poisoned.into_inner(),
+                };
                 app.tick();
                 // Refresh peer gauge periodically so the standalone :9090
                 // metrics listener serves fresh values between scrapes.
@@ -482,6 +516,7 @@ pub fn serve(addr: impl ToSocketAddrs) -> std::io::Result<()> {
                     set_peer_count(app.live_peers.len());
                 }
                 app.ws_broadcast_state();
+                drop(app);
                 thread::sleep(Duration::from_millis(40));
             }
             Err(e) => return Err(e),
@@ -1765,14 +1800,41 @@ fn parse_json_u64(val: &serde_json::Value) -> Option<u64> {
     }
 }
 
-pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> {
+/// One fully-received HTTP request, parsed off the socket.
+///
+/// Reading is deliberately a separate phase from dispatch. The read blocks for
+/// up to `REQUEST_READ_TIMEOUT` waiting on a peer that may never send anything,
+/// so it must run *before* any shared [`Explorer`] state is locked — otherwise a
+/// single silent client stalls every other request and the tick loop for the
+/// whole timeout.
+struct Request {
+    method: String,
+    path: String,
+    query: HashMap<String, String>,
+    headers: String,
+    /// Raw body bytes, for endpoints that take wire-format payloads.
+    body: Vec<u8>,
+    /// Lossy UTF-8 view of `body`, for JSON endpoints.
+    body_text: String,
+}
+
+/// How long to wait for a client to finish sending its request. Generous for a
+/// real HTTP client, short enough that a stalled connection cannot tie up a
+/// handler thread for long.
+const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Read and parse one HTTP request from `stream`.
+///
+/// Returns `Ok(None)` when the peer hung up, sent nothing, or errored — all
+/// client-side conditions with no reply to send. Touches no shared state.
+fn read_request(stream: &mut TcpStream) -> std::io::Result<Option<Request>> {
     stream.set_nonblocking(false)?;
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_read_timeout(Some(REQUEST_READ_TIMEOUT))?;
     let mut buf = [0u8; 8192];
     let n = match stream.read(&mut buf) {
-        Ok(0) => return Ok(()),
+        Ok(0) => return Ok(None),
         Ok(n) => n,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
     };
 
     // Extract headers and body
@@ -1785,7 +1847,7 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
             (&buf[..n], &[][..])
         };
 
-    let headers_str = String::from_utf8_lossy(headers_raw);
+    let headers_str = String::from_utf8_lossy(headers_raw).into_owned();
 
     let mut content_length = None;
     for line in headers_str.lines() {
@@ -1815,15 +1877,55 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
         }
     }
 
-    let body_str = String::from_utf8_lossy(&body_bytes);
+    let body_text = String::from_utf8_lossy(&body_bytes).into_owned();
     let first = headers_str.lines().next().unwrap_or("");
     let mut parts = first.split_whitespace();
-    let method = parts.next().unwrap_or("GET");
+    let method = parts.next().unwrap_or("GET").to_string();
     let target = parts.next().unwrap_or("/");
     let (path, query) = split_query(target);
 
+    Ok(Some(Request {
+        method,
+        path: path.to_string(),
+        query,
+        headers: headers_str,
+        body: body_bytes,
+        body_text,
+    }))
+}
+
+/// Read a request off `stream`, then dispatch it against `app`.
+///
+/// Kept as a single call for callers that just want "serve this connection";
+/// [`serve`] splits the two phases so the read happens outside the lock.
+pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> {
+    match read_request(&mut stream)? {
+        Some(req) => dispatch_request(app, stream, req),
+        None => Ok(()),
+    }
+}
+
+/// Route an already-parsed [`Request`] and write the reply.
+///
+/// The destructuring below restores the request to the local names the routing
+/// arms expect, so the body of this function is unchanged by the read/dispatch
+/// split.
+fn dispatch_request(
+    app: &mut Explorer,
+    mut stream: TcpStream,
+    req: Request,
+) -> std::io::Result<()> {
+    let Request {
+        method,
+        path,
+        query,
+        headers: headers_str,
+        body: body_bytes,
+        body_text: body_str,
+    } = req;
+
     // Record HTTP request metric
-    record_explorer_http_request(path, 200); // Will update with actual status later
+    record_explorer_http_request(&path, 200); // Will update with actual status later
 
     // Per-IP token-bucket rate limiting (D1): a misbehaving client cannot
     // hammer the API. Every request counts — static assets, the WS upgrade,

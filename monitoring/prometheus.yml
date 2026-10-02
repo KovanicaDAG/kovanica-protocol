@@ -1,0 +1,72 @@
+# Prometheus scrape config for Kovanica nodes.
+#
+# One Prometheus per seed, scraping its own loopback endpoints. This is not a
+# convenience — it is forced by the node's security model:
+#
+#   * `/metrics` on the explorer listener is bound to 127.0.0.1, not a
+#     routable interface (see `KOVANICA_METRICS_LISTEN` in the seed env files).
+#     A remote scrape cannot reach it at all; the target just reports `down`.
+#   * The standalone metrics listener has the same loopback binding.
+#
+# Exposing either on a routable interface would publish the full DAG/peer/supply
+# internals to the internet, so the alternative was rejected on security grounds
+# rather than on effort.
+#
+# Result: there is no centralized scrape. To see a seed's metrics you query that
+# seed's own Prometheus (SSH-forward its 9090/9091 to your laptop). Aggregate
+# views are built in Grafana by adding one datasource per seed.
+#
+# Aggregate across seeds with Prometheus *federation* if you later add it: each
+# seed exposes its local `prometheus_federate` endpoint to a central instance,
+# which pulls instead of being pushed to, so nothing new has to be routable.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+alerting:
+  alertmanagers: []
+
+rule_files: []
+
+scrape_configs:
+  # Node metrics served by the explorer HTTP listener itself. On this deployment
+  # that listener is 127.0.0.1:3001 (see the seed service's ExecStart); change
+  # the port if yours differs.
+  - job_name: kovanica-node
+    static_configs:
+      - targets:
+          - 127.0.0.1:3001
+        labels:
+          network: kovanica-testnet
+          role: seed
+    metrics_path: /metrics
+    scheme: http
+
+  # Standalone metrics listener (KOVANICA_METRICS_LISTEN), which serves the same
+  # Prometheus exposition at `/`. NOTE: the node owns 127.0.0.1:9090 and its own
+  # Prometheus must therefore listen on 9091 — sharing 9090 makes the node log
+  # "Address already in use" and serve no metrics at all. `kovanica-node`
+  # above scrapes 3001/metrics and works regardless of whether this listener
+  # came up, which is why a 9090 collision can go unnoticed.
+  - job_name: kovanica-metrics
+    static_configs:
+      - targets:
+          - 127.0.0.1:9090
+        labels:
+          network: kovanica-testnet
+          role: seed
+    metrics_path: /
+    scheme: http
+
+  # Prometheus scrapes itself, so `up` and TSDB health are visible alongside
+  # node metrics. Port matches this Prometheus's own --web.listen-address.
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - 127.0.0.1:9091
+        labels:
+          network: kovanica-testnet
+          role: seed
+    metrics_path: /metrics
+    scheme: http

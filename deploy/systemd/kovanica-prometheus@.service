@@ -1,0 +1,49 @@
+[Unit]
+Description=Kovanica Prometheus (seed%i) — local-only scraper
+Documentation=https://github.com/KovanicaDAG/kovanica-protocol
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root
+
+# Scrape config lives in the repo so it is reviewed with the code. Copy it to
+# /etc on install; Prometheus runs sandboxed and cannot read $HOME.
+ExecStartPre=/usr/bin/test -f /etc/prometheus/kovanica.yml
+
+# --web.listen-address must NOT be 9090. The node's own metrics listener
+# (KOVANICA_METRICS_LISTEN) already owns 127.0.0.1:9090, and both processes
+# binding the same port makes the node log
+#   metrics scrape endpoint on 127.0.0.1:9090: Address already in use
+# and silently serve no metrics at all. Prometheus gets 9091; the node keeps 9090.
+ExecStart=/usr/local/bin/prometheus \
+  --config.file=/etc/prometheus/kovanica.yml \
+  --storage.tsdb.path=/var/lib/prometheus-seed%i \
+  --web.listen-address=127.0.0.1:9091 \
+  --web.enable-lifecycle
+
+Restart=always
+RestartSec=10
+LimitNOFILE=65536
+
+# Same memory ceiling rationale as the node unit: two instances share one host.
+MemoryMax=1G
+MemoryAccounting=yes
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/prometheus-seed%i
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

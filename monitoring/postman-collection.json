@@ -1,0 +1,178 @@
+{
+  "info": {
+    "name": "Kovanica Node API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Kovanica BlockDAG node HTTP API. Base URL: https://explorer.kovanica.online"
+  },
+  "variable": [
+    {"key": "baseUrl", "value": "https://explorer.kovanica.online"}
+  ],
+  "item": [
+    {
+      "name": "Bootstrap",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/bootstrap"}
+    },
+    {
+      "name": "Head",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/head"}
+    },
+    {
+      "name": "State",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/state"}
+    },
+    {
+      "name": "Network",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/network"}
+    },
+    {
+      "name": "P2P",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/p2p"}
+    },
+    {
+      "name": "Origins",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/origins"}
+    },
+    {
+      "name": "Blocks",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/blocks"}
+    },
+    {
+      "name": "Light Sync",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/light_sync"}
+    },
+    {
+      "name": "Light Proof",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/light_proof"}
+    },
+    {
+      "name": "History",
+      "request": {
+        "method": "GET",
+        "url": {"raw": "{{baseUrl}}/api/history?address=kvnc...&limit=50&offset=0", "host": ["{{baseUrl}}"], "path": ["api", "history"], "query": [{"key": "address", "value": "kvnc..."}, {"key": "limit", "value": "50"}, {"key": "offset", "value": "0"}]}
+      }
+    },
+    {
+      "name": "UTXOs",
+      "request": {
+        "method": "GET",
+        "url": {"raw": "{{baseUrl}}/api/utxos?address=kvnc...&limit=50&offset=0", "host": ["{{baseUrl}}"], "path": ["api", "utxos"], "query": [{"key": "address", "value": "kvnc..."}, {"key": "limit", "value": "50"}, {"key": "offset", "value": "0"}]}
+      }
+    },
+    {
+      "name": "Block by ID",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/block/{blockId}"}
+    },
+    {
+      "name": "Tx by ID",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/tx/{txId}"}
+    },
+    {
+      "name": "Address",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/address/{address}"}
+    },
+    {
+      "name": "NFT",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/nft/{assetId}"}
+    },
+    {
+      "name": "RWA",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/rwa/{assetId}"}
+    },
+    {
+      "name": "Collection",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/collection/{collectionId}"}
+    },
+    {
+      "name": "DEX Tokens",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/dex/tokens"}
+    },
+    {
+      "name": "Token",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/token/{assetId}"}
+    },
+    {
+      "name": "Fee Estimate",
+      "request": {"method": "GET", "url": "{{baseUrl}}/api/fee_estimate"}
+    },
+    {
+      "name": "Submit Tx",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/submit_tx",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"tx_hex\": \"...\"}"}
+      }
+    },
+    {
+      "name": "Mine Submit",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/mine/submit",
+        "header": [{"key": "Content-Type", "value": "application/octet-stream"}],
+        "body": {"mode": "raw", "raw": "<block-blob>"}
+      }
+    },
+    {
+      "name": "Multisig Create",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/multisig/create",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"keys\": [...], \"threshold\": 2}"}
+      }
+    },
+    {
+      "name": "Multisig Build",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/multisig/build",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"inputs\": [...], \"outputs\": [...], \"script\": \"...\"}"}
+      }
+    },
+    {
+      "name": "Multisig Sign",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/multisig/sign",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"tx\": \"...\", \"key\": \"...\"}"}
+      }
+    },
+    {
+      "name": "Multisig Combine",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/multisig/combine",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"tx\": \"...\", \"signatures\": [...]}"}
+      }
+    },
+    {
+      "name": "Multisig Submit",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/multisig/submit",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"tx\": \"...\"}"}
+      }
+    },
+    {
+      "name": "RWA Derive",
+      "request": {
+        "method": "POST",
+        "url": "{{baseUrl}}/api/rwa/derive",
+        "header": [{"key": "Content-Type", "value": "application/json"}],
+        "body": {"mode": "raw", "raw": "{\"metadata\": {...}}"}
+      }
+    },
+    {
+      "name": "WebSocket",
+      "request": {
+        "method": "GET",
+        "url": "{{baseUrl}}/ws",
+        "description": "WebSocket endpoint for real-time block/tx updates"
+      }
+    }
+  ]
+}
