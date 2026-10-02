@@ -30,3 +30,8 @@ uniffi.workspace = true
 # The zero-entropy known-answer phrase is built from entropy bytes, so no
 # mnemonic appears in the derivation tests.
 bip39 = { workspace = true, features = ["std"] }
+# Only the chat round-trip tests need this, to turn an Ed25519 seed into the
+# X25519 public key that `ChatPayload::encrypt` expects as its recipient.
+# kovanica-chat has it as a real dependency, so no new crate enters the build
+# graph or the shipped staticlib.
+x25519-dalek = { workspace = true }

@@ -2339,3 +2339,549 @@ fn parse_outpoint(tx_hex: &str, index: u32) -> Result<OutPoint, LightNodeError> 
     );
     Ok(OutPoint::new(tx, index))
 }
+
+#[cfg(test)]
+mod chat_tests {
+    //! Round-trip and rejection tests for the chat surface exported to mobile
+    //! clients: messages, contacts, payment requests, file chunks, voice notes,
+    //! call signals, and tipped chats.
+    //!
+    //! These live inline rather than in `tests/` because the methods are private
+    //! to this module. UniFFI exports them to Kotlin/Swift, but an integration
+    //! test is a separate crate and cannot reach them; `deriv.rs` sets the
+    //! precedent for inline `#[cfg(test)]` coverage in this crate.
+    //!
+    //! None of these methods read node state — they are codecs over the
+    //! `kovanica-chat` primitives — so the node here exists only because the
+    //! methods take `&self`. Building one still requires a named authority set:
+    //! a light node that cannot name the set refuses to boot rather than trust
+    //! whichever peer served it a block.
+
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use x25519_dalek::PublicKey as X25519PublicKey;
+
+    /// The PoA authority set these tests boot against (3 keys, the RFC-POA
+    /// minimum). Mirrors `tests/ffi_multisig.rs`.
+    const AUTHORITY_BASE: u8 = 0xB1;
+
+    fn node() -> LightNode {
+        LightNode::new(LightConfig {
+            authority_public_keys: (0..3usize)
+                .map(|i| {
+                    let seed = [AUTHORITY_BASE + i as u8; 32];
+                    hex::encode(SigningKey::from_bytes(&seed).verifying_key().as_bytes())
+                })
+                .collect(),
+            ..LightConfig::default()
+        })
+        .expect("genesis ok")
+    }
+
+    /// A distinct identity per tag, so `sender`/`recipient` never collide.
+    fn seed_bytes(tag: u8) -> [u8; 32] {
+        [tag; 32]
+    }
+
+    fn seed_hex(tag: u8) -> String {
+        hex::encode(seed_bytes(tag))
+    }
+
+    /// The chat identity for `tag`: the **X25519** public key, which is what
+    /// `ChatPayload::encrypt` and its siblings take as the recipient. An
+    /// arbitrary 32-byte value will not do — it has to be the key whose secret
+    /// `decrypt_*` will derive from the same Ed25519 seed.
+    fn chat_pk_hex(tag: u8) -> String {
+        let secret = kovanica_chat::crypto::ed25519_seed_to_x25519(&seed_bytes(tag));
+        hex::encode(X25519PublicKey::from(&secret).as_bytes())
+    }
+
+    fn message(sender: u8, recipient: u8, plaintext: &str, timestamp: u64) -> ChatMessageInfo {
+        ChatMessageInfo {
+            sender_pubkey_hex: seed_hex(sender),
+            recipient_pubkey_hex: seed_hex(recipient),
+            plaintext: plaintext.to_string(),
+            timestamp,
+        }
+    }
+
+    // ===== Message encryption =====
+
+    #[test]
+    fn chat_payload_round_trips_through_the_recipient_secret() {
+        let node = node();
+        let payload = node
+            .encrypt_chat_message(seed_hex(1), chat_pk_hex(2), "hello bob".into())
+            .expect("encrypt");
+
+        assert_eq!(hex::decode(&payload.ephemeral_pk_hex).unwrap().len(), 32);
+        assert_eq!(hex::decode(&payload.nonce_hex).unwrap().len(), 12);
+        assert!(!payload.ciphertext_hex.is_empty());
+
+        let plaintext = node
+            .decrypt_chat_message(
+                seed_hex(2),
+                payload.ephemeral_pk_hex,
+                payload.nonce_hex,
+                payload.ciphertext_hex,
+            )
+            .expect("decrypt");
+        assert_eq!(plaintext, "hello bob");
+    }
+
+    #[test]
+    fn chat_encryption_draws_a_fresh_ephemeral_key_each_call() {
+        // Identical inputs must not produce identical output, or an observer
+        // could correlate repeated messages by comparing ciphertexts.
+        let node = node();
+        let first = node
+            .encrypt_chat_message(seed_hex(1), chat_pk_hex(2), "same".into())
+            .unwrap();
+        let second = node
+            .encrypt_chat_message(seed_hex(1), chat_pk_hex(2), "same".into())
+            .unwrap();
+
+        assert_ne!(first.ephemeral_pk_hex, second.ephemeral_pk_hex);
+        assert_ne!(first.ciphertext_hex, second.ciphertext_hex);
+    }
+
+    #[test]
+    fn chat_payload_will_not_open_for_a_different_recipient() {
+        let node = node();
+        let payload = node
+            .encrypt_chat_message(seed_hex(1), chat_pk_hex(2), "for your eyes".into())
+            .unwrap();
+
+        let err = node
+            .decrypt_chat_message(
+                seed_hex(3),
+                payload.ephemeral_pk_hex,
+                payload.nonce_hex,
+                payload.ciphertext_hex,
+            )
+            .unwrap_err();
+        // Must fail authentication, not merely fail to parse: the only thing
+        // standing between a wrong key and the plaintext is the Poly1305 tag.
+        assert!(
+            err.to_string().contains("decryption failed"),
+            "expected an auth failure, got: {err}"
+        );
+    }
+
+    #[test]
+    fn chat_payload_rejects_a_ciphertext_tampered_in_flight() {
+        // ChaCha20-Poly1305 authenticates the ciphertext. Flip the low bit of
+        // the final byte — the Poly1305 tag must catch it.
+        let node = node();
+        let payload = node
+            .encrypt_chat_message(seed_hex(1), chat_pk_hex(2), "do not edit".into())
+            .unwrap();
+
+        let mut bytes = hex::decode(&payload.ciphertext_hex).unwrap();
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0x01;
+
+        assert!(
+            node.decrypt_chat_message(
+                seed_hex(2),
+                payload.ephemeral_pk_hex,
+                payload.nonce_hex,
+                hex::encode(bytes),
+            )
+            .is_err(),
+            "a modified ciphertext must not authenticate"
+        );
+    }
+
+    #[test]
+    fn chat_payload_rejects_a_nonce_that_is_not_12_bytes() {
+        let node = node();
+        let err = node
+            .decrypt_chat_message(seed_hex(2), seed_hex(1), hex::encode([0u8; 8]), "00".to_string())
+            .unwrap_err();
+        assert!(err.to_string().contains("nonce"), "{err}");
+    }
+
+    // ===== Message wire format =====
+
+    #[test]
+    fn chat_message_survives_encode_and_decode() {
+        let node = node();
+        let original = message(1, 2, "meet at 8", 1_700_000_000);
+
+        let wire = node.encode_chat_message(original.clone()).expect("encode");
+        // sender(32) || recipient(32) || timestamp(8) || plaintext
+        assert_eq!(
+            hex::decode(&wire).unwrap().len(),
+            72 + original.plaintext.len()
+        );
+
+        let back = node.decode_chat_message(wire).expect("decode");
+        assert_eq!(back.sender_pubkey_hex, original.sender_pubkey_hex);
+        assert_eq!(back.recipient_pubkey_hex, original.recipient_pubkey_hex);
+        assert_eq!(back.plaintext, original.plaintext);
+        assert_eq!(back.timestamp, original.timestamp);
+    }
+
+    #[test]
+    fn chat_message_with_empty_plaintext_is_exactly_the_header() {
+        // 72 bytes is the minimum accepted length; empty text must survive it
+        // rather than being rejected as truncated.
+        let node = node();
+        let wire = node
+            .encode_chat_message(message(1, 2, "", 7))
+            .expect("encode");
+        assert_eq!(hex::decode(&wire).unwrap().len(), 72);
+
+        let back = node.decode_chat_message(wire).expect("decode");
+        assert_eq!(back.plaintext, "");
+        assert_eq!(back.timestamp, 7);
+    }
+
+    #[test]
+    fn decode_chat_message_rejects_a_truncated_frame() {
+        let node = node();
+        let err = node
+            .decode_chat_message(hex::encode([0u8; 71]))
+            .unwrap_err();
+        assert!(err.to_string().contains("too short"), "{err}");
+    }
+
+    #[test]
+    fn chat_encode_rejects_a_malformed_sender_key_instead_of_panicking() {
+        let node = node();
+        let bad = message(1, 2, "hi", 1);
+        let err = node.encode_chat_message(ChatMessageInfo {
+            sender_pubkey_hex: "not-hex".into(),
+            ..bad
+        });
+        assert!(err.is_err(), "malformed key must not encode");
+    }
+
+    // ===== Contacts =====
+
+    #[test]
+    fn contact_book_round_trips() {
+        let node = node();
+        let contacts = vec![
+            ChatContact {
+                pubkey_hex: seed_hex(1),
+                name: "Alice".into(),
+                note: "met at the consensus summit".into(),
+            },
+            ChatContact {
+                pubkey_hex: seed_hex(2),
+                name: "Bob".into(),
+                note: String::new(),
+            },
+        ];
+
+        let json = node.contact_book_to_json(contacts).expect("to json");
+        let mut back = node.contact_book_from_json(json).expect("from json");
+        assert_eq!(back.len(), 2);
+
+        // Ordering is not part of the contract, so compare as a set.
+        back.sort_by(|a, b| a.pubkey_hex.cmp(&b.pubkey_hex));
+        assert_eq!(back[0].pubkey_hex, seed_hex(1));
+        assert_eq!(back[0].name, "Alice");
+        assert_eq!(back[0].note, "met at the consensus summit");
+        assert_eq!(back[1].pubkey_hex, seed_hex(2));
+        assert_eq!(back[1].name, "Bob");
+        assert_eq!(back[1].note, "");
+    }
+
+    #[test]
+    fn contact_book_upserts_a_repeated_pubkey_rather_than_duplicating() {
+        let node = node();
+        let json = node
+            .contact_book_to_json(vec![
+                ChatContact {
+                    pubkey_hex: seed_hex(1),
+                    name: "Stale".into(),
+                    note: "old".into(),
+                },
+                ChatContact {
+                    pubkey_hex: seed_hex(1),
+                    name: "Alice".into(),
+                    note: "updated".into(),
+                },
+            ])
+            .expect("to json");
+
+        let back = node.contact_book_from_json(json).expect("from json");
+        assert_eq!(back.len(), 1, "a repeated pubkey must replace, not append");
+        assert_eq!(back[0].name, "Alice");
+        assert_eq!(back[0].note, "updated");
+    }
+
+    #[test]
+    fn contact_book_rejects_malformed_json() {
+        let node = node();
+        assert!(node.contact_book_from_json("{not json".into()).is_err());
+    }
+
+    // ===== Payment requests =====
+
+    #[test]
+    fn payment_request_round_trips() {
+        let node = node();
+        let wire = node
+            .encode_payment_request(seed_hex(2), 1_500_000, "invoice for june".into())
+            .expect("encode");
+
+        let back = node.decode_payment_request(wire).expect("decode");
+        assert_eq!(back.recipient_pubkey_hex, seed_hex(2));
+        assert_eq!(back.amount, 1_500_000);
+        assert_eq!(back.message, "invoice for june");
+    }
+
+    #[test]
+    fn payment_request_carries_a_zero_amount() {
+        // A tip of zero is a legitimate "no payment attached" message; it must
+        // round-trip rather than being treated as missing.
+        let node = node();
+        let wire = node
+            .encode_payment_request(seed_hex(2), 0, String::new())
+            .expect("encode");
+        let back = node.decode_payment_request(wire).expect("decode");
+        assert_eq!(back.amount, 0);
+        assert_eq!(back.message, "");
+    }
+
+    // ===== File chunks =====
+
+    #[test]
+    fn file_chunk_round_trips_its_plaintext() {
+        let node = node();
+        let chunk = node
+            .encrypt_file_chunk(
+                chat_pk_hex(2),
+                hex::encode([7u8; 16]),
+                3,
+                10,
+                hex::encode(b"the quick brown fox"),
+            )
+            .expect("encrypt");
+
+        assert_eq!(chunk.chunk_index, 3);
+        assert_eq!(chunk.total_chunks, 10);
+        assert_eq!(hex::decode(&chunk.file_id_hex).unwrap(), [7u8; 16]);
+
+        let data = node
+            .decrypt_file_chunk(
+                seed_hex(2),
+                chunk.ephemeral_pk_hex,
+                chunk.nonce_hex,
+                chunk.ciphertext_hex,
+            )
+            .expect("decrypt");
+        assert_eq!(hex::decode(data).unwrap(), b"the quick brown fox");
+    }
+
+    #[test]
+    fn file_chunk_wire_format_preserves_the_chunking_metadata() {
+        // `decrypt_file_chunk` deliberately hardcodes file_id/index/total to
+        // zero — they are routing hints, not crypto inputs. The wire format is
+        // the only place they survive, so it has to carry all of them.
+        let node = node();
+        let chunk = node
+            .encrypt_file_chunk(chat_pk_hex(2), hex::encode([9u8; 16]), 65535, 65535, "abcd".to_string())
+            .expect("encrypt");
+
+        let wire = node.encode_file_chunk(chunk.clone()).expect("encode");
+        let back = node.decode_file_chunk(wire).expect("decode");
+
+        assert_eq!(back.file_id_hex, hex::encode([9u8; 16]));
+        assert_eq!(back.chunk_index, 65535);
+        assert_eq!(back.total_chunks, 65535);
+        assert_eq!(back.ephemeral_pk_hex, chunk.ephemeral_pk_hex);
+        assert_eq!(back.nonce_hex, chunk.nonce_hex);
+        assert_eq!(back.ciphertext_hex, chunk.ciphertext_hex);
+    }
+
+    #[test]
+    fn file_chunk_rejects_a_file_id_that_is_not_16_bytes() {
+        let node = node();
+        let err = node
+            .encrypt_file_chunk(chat_pk_hex(2), hex::encode([0u8; 8]), 0, 1, "ff".to_string())
+            .unwrap_err();
+        assert!(err.to_string().contains("16 bytes"), "{err}");
+    }
+
+    #[test]
+    fn file_chunk_will_not_open_for_a_different_recipient() {
+        let node = node();
+        let chunk = node
+            .encrypt_file_chunk(chat_pk_hex(2), hex::encode([1u8; 16]), 0, 1, "aabbcc".to_string())
+            .expect("encrypt");
+
+        assert!(node
+            .decrypt_file_chunk(
+                seed_hex(3),
+                chunk.ephemeral_pk_hex,
+                chunk.nonce_hex,
+                chunk.ciphertext_hex,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("decryption failed"));
+    }
+
+    #[test]
+    fn voice_message_will_not_open_for_a_different_recipient() {
+        let node = node();
+        let msg = node
+            .encrypt_voice_message(chat_pk_hex(2), 1_000, hex::encode([9u8, 9u8]))
+            .expect("encrypt");
+
+        assert!(node
+            .decrypt_voice_message(
+                seed_hex(3),
+                msg.ephemeral_pk_hex,
+                msg.nonce_hex,
+                msg.ciphertext_hex,
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("decryption failed"));
+    }
+
+    // ===== Voice messages =====
+
+    #[test]
+    fn voice_message_round_trips_its_audio() {
+        let node = node();
+        let audio = [0xAAu8, 0x55, 0x00, 0xFF, 0x01];
+        let msg = node
+            .encrypt_voice_message(chat_pk_hex(2), 4_250, hex::encode(audio))
+            .expect("encrypt");
+        assert_eq!(msg.duration_ms, 4_250);
+
+        let data = node
+            .decrypt_voice_message(
+                seed_hex(2),
+                msg.ephemeral_pk_hex,
+                msg.nonce_hex,
+                msg.ciphertext_hex,
+            )
+            .expect("decrypt");
+        assert_eq!(hex::decode(data).unwrap(), audio);
+    }
+
+    #[test]
+    fn voice_wire_format_preserves_duration() {
+        // Audio bytes are authenticated; `duration_ms` is not bound as AAD, so
+        // the encoded frame is the only place it is carried.
+        let node = node();
+        let msg = node
+            .encrypt_voice_message(chat_pk_hex(2), 4_250, hex::encode([1, 2, 3]))
+            .expect("encrypt");
+
+        let wire = node.encode_voice_message(msg).expect("encode");
+        let back = node.decode_voice_message(wire).expect("decode");
+        assert_eq!(back.duration_ms, 4_250);
+    }
+
+    #[test]
+    fn voice_message_rejects_a_malformed_nonce() {
+        let node = node();
+        let err = node
+            .encode_voice_message(VoiceMessageInfo {
+                duration_ms: 1,
+                ephemeral_pk_hex: seed_hex(1),
+                nonce_hex: hex::encode([0u8; 4]),
+                ciphertext_hex: "00".into(),
+            })
+            .unwrap_err();
+        assert!(err.to_string().contains("nonce"), "{err}");
+    }
+
+    // ===== Call signals =====
+
+    #[test]
+    fn every_call_signal_type_survives_a_round_trip() {
+        let node = node();
+        let call_id = hex::encode([4u8; 16]);
+        for signal_type in [
+            CallSignalType::Offer,
+            CallSignalType::Answer,
+            CallSignalType::IceCandidate,
+            CallSignalType::Hangup,
+        ] {
+            let wire = node
+                .encode_call_signal(call_id.clone(), signal_type, hex::encode(b"sdp-body"))
+                .expect("encode");
+            let back = node.decode_call_signal(wire).expect("decode");
+
+            assert_eq!(back.signal_type, signal_type, "{signal_type:?}");
+            assert_eq!(back.call_id_hex, call_id);
+            assert_eq!(back.data_hex, hex::encode(b"sdp-body"));
+        }
+    }
+
+    #[test]
+    fn hangup_signal_carries_no_payload() {
+        let node = node();
+        let wire = node
+            .encode_call_signal(hex::encode([0u8; 16]), CallSignalType::Hangup, String::new())
+            .expect("encode");
+        let back = node.decode_call_signal(wire).expect("decode");
+        assert_eq!(back.signal_type, CallSignalType::Hangup);
+        assert!(back.data_hex.is_empty());
+    }
+
+    #[test]
+    fn call_signal_rejects_a_call_id_that_is_not_16_bytes() {
+        let node = node();
+        let err = node
+            .encode_call_signal(hex::encode([0u8; 4]), CallSignalType::Offer, String::new())
+            .unwrap_err();
+        assert!(err.to_string().contains("16 bytes"), "{err}");
+    }
+
+    // ===== Tipped chats =====
+
+    #[test]
+    fn tipped_chat_round_trips_with_its_tip_amount() {
+        let node = node();
+        let original = message(1, 2, "thanks for the patch", 1_700_000_000);
+
+        let wire = node
+            .encode_tipped_chat(original.clone(), 250_000)
+            .expect("encode");
+        let back = node.decode_tipped_chat(wire).expect("decode");
+
+        assert_eq!(back.tip_amount, 250_000);
+        assert_eq!(back.message.plaintext, original.plaintext);
+        assert_eq!(back.message.timestamp, original.timestamp);
+        assert_eq!(back.message.sender_pubkey_hex, original.sender_pubkey_hex);
+        assert_eq!(back.message.recipient_pubkey_hex, original.recipient_pubkey_hex);
+    }
+
+    #[test]
+    fn tipped_chat_encrypts_to_a_well_formed_payload() {
+        let node = node();
+        let payload = node
+            .encrypt_tipped_chat(
+                seed_hex(1),
+                chat_pk_hex(2),
+                "here you go".into(),
+                1_700_000_000,
+                100_000_000,
+            )
+            .expect("encrypt");
+
+        assert_eq!(hex::decode(&payload.ephemeral_pk_hex).unwrap().len(), 32);
+        assert_eq!(hex::decode(&payload.nonce_hex).unwrap().len(), 12);
+        assert!(!payload.ciphertext_hex.is_empty());
+    }
+
+    #[test]
+    fn tipped_chat_rejects_a_malformed_recipient_key() {
+        let node = node();
+        let err = node
+            .encrypt_tipped_chat("zz".into(), chat_pk_hex(2), "hi".into(), 1, 1)
+            .unwrap_err();
+        assert!(err.to_string().contains("hex"), "{err}");
+    }
+}

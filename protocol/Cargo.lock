@@ -1279,6 +1279,7 @@ dependencies = [
  "kovanica-wallet",
  "thiserror 2.0.20",
  "uniffi",
+ "x25519-dalek",
 ]
 
 [[package]]
