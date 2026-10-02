@@ -153,11 +153,13 @@ jobs:
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
-  # Linux Tauri (.deb, .rpm, .AppImage)
+  # Linux Tauri (.deb, .rpm, .AppImage) — non-blocking: requires
+  # signing certs/secrets not available in public CI
   # ─────────────────────────────────────────────────────────────────
   linux-tauri:
     name: Linux Tauri
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -210,11 +212,13 @@ jobs:
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
-  # Windows Tauri (NSIS installer)
+  # Windows Tauri (NSIS installer) — non-blocking: requires EV code
+  # signing cert not available in public CI
   # ─────────────────────────────────────────────────────────────────
   windows-tauri:
     name: Windows Tauri
     runs-on: windows-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -258,11 +262,13 @@ jobs:
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
-  # macOS Tauri (DMG) + iOS
+  # macOS Tauri (DMG) + iOS — non-blocking: requires Apple Developer
+  # ID / iOS certs not available in public CI
   # ─────────────────────────────────────────────────────────────────
   macos-tauri-ios:
     name: macOS Tauri + iOS
     runs-on: macos-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
