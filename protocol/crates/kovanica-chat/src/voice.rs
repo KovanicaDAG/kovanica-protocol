@@ -49,8 +49,9 @@ impl VoiceMessage {
             return Err(VoiceError::AudioTooLong);
         }
 
-        let (ephemeral_pk, nonce_and_ciphertext) = crypto::encrypt(recipient_pk, audio_data)
-            .map_err(|e| VoiceError::Crypto(e.to_string()))?;
+        let (ephemeral_pk, nonce_and_ciphertext) =
+            crypto::encrypt(recipient_pk, audio_data, &duration_ms.to_le_bytes())
+                .map_err(|e| VoiceError::Crypto(e.to_string()))?;
 
         if nonce_and_ciphertext.len() < 12 {
             return Err(VoiceError::Crypto("ciphertext too short".into()));
@@ -69,6 +70,11 @@ impl VoiceMessage {
     }
 
     /// Decrypt this voice message with the recipient's X25519 secret.
+    /// Decrypt this voice message with the recipient's X25519 secret.
+    ///
+    /// `duration_ms` is authenticated as AAD, so a message whose duration was
+    /// altered after encryption fails to open rather than playing back at the
+    /// wrong length.
     pub fn decrypt(
         &self,
         recipient_secret: &x25519_dalek::StaticSecret,
@@ -78,6 +84,7 @@ impl VoiceMessage {
             &self.ephemeral_pk,
             &self.nonce,
             &self.ciphertext,
+            &self.duration_ms.to_le_bytes(),
         )
         .map_err(|e| VoiceError::Crypto(e.to_string()))
     }
@@ -230,5 +237,35 @@ mod tests {
         msg.ciphertext[0] ^= 0xFF;
 
         assert!(msg.decrypt(&recipient_secret).is_err());
+    }
+
+    #[test]
+    fn voice_message_tampered_duration_rejected() {
+        // `duration_ms` is authenticated as AAD, so it cannot be rewritten in
+        // transit. Without this a peer could shorten the note and the client
+        // would play a clipped recording under a duration it never sent.
+        let sk = test_keypair(16);
+        let recipient_secret = crypto::ed25519_seed_to_x25519(&sk.to_bytes());
+        let recipient_pk = x25519_dalek::PublicKey::from(&recipient_secret);
+
+        let audio_data = vec![0xAAu8; 60];
+        let mut msg = VoiceMessage::encrypt(recipient_pk.as_bytes(), 2000, &audio_data).unwrap();
+        msg.duration_ms = 1;
+
+        assert!(msg.decrypt(&recipient_secret).is_err());
+    }
+
+    #[test]
+    fn voice_message_original_duration_still_opens() {
+        // Counterpart to the tamper test: the honest duration still opens, so
+        // the AAD binding rejects edits rather than everything.
+        let sk = test_keypair(17);
+        let recipient_secret = crypto::ed25519_seed_to_x25519(&sk.to_bytes());
+        let recipient_pk = x25519_dalek::PublicKey::from(&recipient_secret);
+
+        let audio_data = vec![0xAAu8; 60];
+        let msg = VoiceMessage::encrypt(recipient_pk.as_bytes(), 2000, &audio_data).unwrap();
+
+        assert_eq!(msg.decrypt(&recipient_secret).unwrap(), audio_data);
     }
 }

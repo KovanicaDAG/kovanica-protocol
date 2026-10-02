@@ -84,6 +84,20 @@ impl TippedChat {
     pub fn encrypt(&self, recipient_pk: &[u8; 32]) -> Result<ChatPayload, ChatError> {
         ChatPayload::encrypt(&self.message.sender, recipient_pk, &self.encode())
     }
+
+    /// Recover a tipped chat from a payload produced by [`Self::encrypt`].
+    ///
+    /// The whole `TippedChat` — message *and* tip amount — is what gets
+    /// encrypted, so the tip is authenticated by the same Poly1305 tag as the
+    /// text. A client that rewrites the tip in flight cannot make the payload
+    /// open; the tag check fails before [`Self::decode`] is ever reached.
+    pub fn decrypt(
+        payload: &ChatPayload,
+        recipient_secret: &x25519_dalek::StaticSecret,
+    ) -> Result<Self, ChatError> {
+        let plaintext = payload.decrypt(recipient_secret)?;
+        Self::decode(&plaintext)
+    }
 }
 
 /// Build a signed transaction that carries a tipped chat message.
@@ -189,11 +203,24 @@ mod tests {
         let tipped = TippedChat::new(msg, 500_000);
         let payload = tipped.encrypt(recipient_pk.as_bytes()).unwrap();
 
-        // Decrypt with recipient's X25519 secret
-        let decrypted = payload.decrypt(&recipient_secret).unwrap();
-        let decoded = TippedChat::decode(&decrypted).unwrap();
+        let decoded = TippedChat::decrypt(&payload, &recipient_secret).unwrap();
         assert_eq!(decoded.message.plaintext, "Secret tipped message");
         assert_eq!(decoded.tip_amount, 500_000);
+    }
+
+    #[test]
+    fn tipped_chat_will_not_recover_for_a_different_recipient() {
+        use ed25519_dalek::SigningKey;
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let other = SigningKey::from_bytes(&[9u8; 32]);
+        let recipient_secret = crate::crypto::ed25519_seed_to_x25519(&sk.to_bytes());
+        let recipient_pk = x25519_dalek::PublicKey::from(&recipient_secret);
+        let other_secret = crate::crypto::ed25519_seed_to_x25519(&other.to_bytes());
+
+        let tipped = TippedChat::new(test_message("not yours"), 500_000);
+        let payload = tipped.encrypt(recipient_pk.as_bytes()).unwrap();
+
+        assert!(TippedChat::decrypt(&payload, &other_secret).is_err());
     }
 
     #[test]

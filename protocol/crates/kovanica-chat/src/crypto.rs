@@ -6,7 +6,7 @@
 //! and decrypt.
 
 use blake3::Hasher;
-use chacha20poly1305::aead::{Aead, KeyInit};
+use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Nonce};
 use rand::rngs::OsRng;
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -49,9 +49,16 @@ fn derive_key(epk: &[u8; 32], recipient_pk: &[u8; 32], shared: &[u8]) -> [u8; 32
 ///
 /// The caller is responsible for generating a random 12-byte nonce and
 /// concatenating the output: `epk || nonce || ciphertext`.
+///
+/// `aad` is authenticated but not encrypted: it is covered by the Poly1305 tag
+/// yet never appears in the output. Pass any metadata that travels beside the
+/// ciphertext — a message duration, a chunk index — so it cannot be altered in
+/// transit. Pass `&[]` when there is nothing to bind; that is byte-for-byte
+/// identical to encrypting without AAD.
 pub fn encrypt(
     recipient_pk: &[u8; 32],
     plaintext: &[u8],
+    aad: &[u8],
 ) -> Result<([u8; 32], Vec<u8>), CryptoError> {
     // Ephemeral X25519 keypair
     let ephemeral_secret = EphemeralSecret::random_from_rng(OsRng);
@@ -76,7 +83,7 @@ pub fn encrypt(
 
     // Encrypt
     let ciphertext = cipher
-        .encrypt(nonce, plaintext)
+        .encrypt(nonce, Payload { msg: plaintext, aad })
         .map_err(|_| CryptoError::DecryptionFailed)?;
 
     // Concatenate nonce || ciphertext
@@ -91,11 +98,15 @@ pub fn encrypt(
 ///
 /// `ephemeral_pk` is the 32-byte ephemeral public key, `nonce` is the
 /// 12-byte nonce, and `ciphertext` includes the 16-byte Poly1305 tag.
+///
+/// `aad` must be byte-identical to the value passed to [`encrypt`], or the
+/// Poly1305 tag check fails and the payload is rejected.
 pub fn decrypt(
     recipient_secret: &x25519_dalek::StaticSecret,
     ephemeral_pk: &[u8; 32],
     nonce: &[u8],
     ciphertext: &[u8],
+    aad: &[u8],
 ) -> Result<Vec<u8>, CryptoError> {
     if ciphertext.len() < 16 {
         return Err(CryptoError::CiphertextTooShort);
@@ -113,7 +124,7 @@ pub fn decrypt(
     let nonce = Nonce::from_slice(nonce);
 
     cipher
-        .decrypt(nonce, ciphertext)
+        .decrypt(nonce, Payload { msg: ciphertext, aad })
         .map_err(|_| CryptoError::DecryptionFailed)
 }
 
@@ -129,4 +140,60 @@ pub fn ed25519_seed_to_x25519(ed25519_seed: &[u8; 32]) -> x25519_dalek::StaticSe
     clamped[31] &= 127;
     clamped[31] |= 64;
     x25519_dalek::StaticSecret::from(clamped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A payload encrypted with empty AAD must be byte-for-byte identical to
+    /// one encrypted with no AAD argument at all.
+    ///
+    /// Plain chat messages bind nothing, so this is what keeps every already
+    /// sent payload decryptable after AAD support landed. If a future AEAD
+    /// change made empty AAD differ, this test fails rather than the wire
+    /// format quietly breaking for clients holding old messages.
+    #[test]
+    fn empty_aad_matches_the_no_aad_ciphertext() {
+        let key = [0x5Au8; 32];
+        let nonce_bytes = [0x17u8; 12];
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let cipher = ChaCha20Poly1305::new_from_slice(&key).unwrap();
+        let plaintext = b"a plain chat message";
+
+        let without_aad = cipher.encrypt(nonce, plaintext.as_ref()).unwrap();
+        let with_empty_aad = cipher
+            .encrypt(nonce, Payload { msg: plaintext.as_ref(), aad: &[] })
+            .unwrap();
+
+        assert_eq!(without_aad, with_empty_aad);
+        assert_eq!(
+            cipher
+                .decrypt(nonce, Payload { msg: with_empty_aad.as_ref(), aad: &[] })
+                .unwrap(),
+            plaintext
+        );
+    }
+
+    #[test]
+    fn non_empty_aad_is_authenticated() {
+        let key = [0x5Au8; 32];
+        let nonce_bytes = [0x17u8; 12];
+        let nonce = Nonce::from_slice(&nonce_bytes);
+        let cipher = ChaCha20Poly1305::new_from_slice(&key).unwrap();
+        let plaintext = b"metadata-bound";
+
+        let sealed = cipher
+            .encrypt(nonce, Payload { msg: plaintext.as_ref(), aad: b"index=3" })
+            .unwrap();
+
+        assert!(cipher
+            .decrypt(nonce, Payload { msg: sealed.as_ref(), aad: b"index=3" })
+            .is_ok());
+        // A different AAD must fail: this is the property that makes bound
+        // metadata tamper-evident rather than merely encrypted.
+        assert!(cipher
+            .decrypt(nonce, Payload { msg: sealed.as_ref(), aad: b"index=4" })
+            .is_err());
+    }
 }

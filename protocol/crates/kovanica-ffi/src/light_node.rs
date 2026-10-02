@@ -1781,26 +1781,35 @@ impl LightNode {
     }
 
     /// Decrypt a file chunk with the recipient's secret.
+    ///
+    /// `chunk` is the record as it arrived — from `encrypt_file_chunk` locally
+    /// or `decode_file_chunk` off the wire. Its `file_id_hex`, `chunk_index`
+    /// and `total_chunks` are authenticated as AAD, so a chunk that was
+    /// renumbered or re-pointed at another transfer in transit fails the tag
+    /// check here instead of reassembling into a corrupt file.
     fn decrypt_file_chunk(
         &self,
         recipient_secret_hex: String,
-        ephemeral_pk_hex: String,
-        nonce_hex: String,
-        ciphertext_hex: String,
+        chunk: FileChunkInfo,
     ) -> Result<String, LightNodeError> {
         let secret_bytes = decode_32(&recipient_secret_hex, "recipient secret")?;
         let recipient_secret = kovanica_chat::crypto::ed25519_seed_to_x25519(&secret_bytes);
-        let ephemeral_pk = decode_32(&ephemeral_pk_hex, "ephemeral pk")?;
-        let nonce_bytes = decode_hex(&nonce_hex, "nonce")?;
+        let file_id_bytes = decode_hex(&chunk.file_id_hex, "file id")?;
+        let file_id: [u8; 16] = file_id_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("file id must be 16 bytes"))?;
+        let ephemeral_pk = decode_32(&chunk.ephemeral_pk_hex, "ephemeral pk")?;
+        let nonce_bytes = decode_hex(&chunk.nonce_hex, "nonce")?;
         let nonce: [u8; 12] = nonce_bytes
             .as_slice()
             .try_into()
             .map_err(|_| invalid("nonce must be 12 bytes"))?;
-        let ciphertext = decode_hex(&ciphertext_hex, "ciphertext")?;
+        let ciphertext = decode_hex(&chunk.ciphertext_hex, "ciphertext")?;
         let chunk = FileChunk {
-            file_id: [0u8; 16],
-            chunk_index: 0,
-            total_chunks: 0,
+            file_id,
+            chunk_index: chunk.chunk_index,
+            total_chunks: chunk.total_chunks,
             ephemeral_pk,
             nonce,
             ciphertext,
@@ -1869,24 +1878,28 @@ impl LightNode {
     }
 
     /// Decrypt a voice message with the recipient's secret.
+    ///
+    /// `message` is the record as it arrived — from `encrypt_voice_message`
+    /// locally or `decode_voice_message` off the wire. Its `duration_ms` is
+    /// authenticated as AAD, so a duration altered in transit fails the tag
+    /// check here rather than yielding audio that plays back at the wrong
+    /// length.
     fn decrypt_voice_message(
         &self,
         recipient_secret_hex: String,
-        ephemeral_pk_hex: String,
-        nonce_hex: String,
-        ciphertext_hex: String,
+        message: VoiceMessageInfo,
     ) -> Result<String, LightNodeError> {
         let secret_bytes = decode_32(&recipient_secret_hex, "recipient secret")?;
         let recipient_secret = kovanica_chat::crypto::ed25519_seed_to_x25519(&secret_bytes);
-        let ephemeral_pk = decode_32(&ephemeral_pk_hex, "ephemeral pk")?;
-        let nonce_bytes = decode_hex(&nonce_hex, "nonce")?;
+        let ephemeral_pk = decode_32(&message.ephemeral_pk_hex, "ephemeral pk")?;
+        let nonce_bytes = decode_hex(&message.nonce_hex, "nonce")?;
         let nonce: [u8; 12] = nonce_bytes
             .as_slice()
             .try_into()
             .map_err(|_| invalid("nonce must be 12 bytes"))?;
-        let ciphertext = decode_hex(&ciphertext_hex, "ciphertext")?;
+        let ciphertext = decode_hex(&message.ciphertext_hex, "ciphertext")?;
         let msg = VoiceMessage {
-            duration_ms: 0,
+            duration_ms: message.duration_ms,
             ephemeral_pk,
             nonce,
             ciphertext,
@@ -2015,6 +2028,44 @@ impl LightNode {
             ephemeral_pk_hex: hex::encode(payload.ephemeral_pk),
             nonce_hex: hex::encode(payload.nonce),
             ciphertext_hex: hex::encode(&payload.ciphertext),
+        })
+    }
+
+    /// Decrypt a tipped chat message with the recipient's secret.
+    ///
+    /// The counterpart to [`Self::encrypt_tipped_chat`]. Both the text and the
+    /// tip amount are inside the authenticated payload, so neither can be
+    /// altered in transit without the tag check failing.
+    fn decrypt_tipped_chat(
+        &self,
+        recipient_secret_hex: String,
+        ephemeral_pk_hex: String,
+        nonce_hex: String,
+        ciphertext_hex: String,
+    ) -> Result<TippedChatInfo, LightNodeError> {
+        let secret_bytes = decode_32(&recipient_secret_hex, "recipient secret")?;
+        let recipient_secret = kovanica_chat::crypto::ed25519_seed_to_x25519(&secret_bytes);
+        let ephemeral_pk = decode_32(&ephemeral_pk_hex, "ephemeral pk")?;
+        let nonce_bytes = decode_hex(&nonce_hex, "nonce")?;
+        let nonce: [u8; 12] = nonce_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("nonce must be 12 bytes"))?;
+        let ciphertext = decode_hex(&ciphertext_hex, "ciphertext")?;
+        let payload = ChatPayload {
+            ephemeral_pk,
+            nonce,
+            ciphertext,
+        };
+        let tipped = TippedChat::decrypt(&payload, &recipient_secret)?;
+        Ok(TippedChatInfo {
+            message: ChatMessageInfo {
+                sender_pubkey_hex: hex::encode(tipped.message.sender),
+                recipient_pubkey_hex: hex::encode(tipped.message.recipient),
+                plaintext: tipped.message.plaintext,
+                timestamp: tipped.message.timestamp,
+            },
+            tip_amount: tipped.tip_amount,
         })
     }
 }
@@ -2668,14 +2719,40 @@ mod chat_tests {
         assert_eq!(hex::decode(&chunk.file_id_hex).unwrap(), [7u8; 16]);
 
         let data = node
-            .decrypt_file_chunk(
-                seed_hex(2),
-                chunk.ephemeral_pk_hex,
-                chunk.nonce_hex,
-                chunk.ciphertext_hex,
-            )
+            .decrypt_file_chunk(seed_hex(2), chunk.clone())
             .expect("decrypt");
         assert_eq!(hex::decode(data).unwrap(), b"the quick brown fox");
+    }
+
+    #[test]
+    fn file_chunk_will_not_decrypt_with_a_swapped_chunk_index() {
+        // The routing metadata is authenticated: renumbering a chunk in
+        // transit must break the tag, not silently reassemble a corrupt file.
+        let node = node();
+        let mut chunk = node
+            .encrypt_file_chunk(chat_pk_hex(2), hex::encode([7u8; 16]), 3, 10, "aabb".into())
+            .expect("encrypt");
+        chunk.chunk_index += 1;
+
+        let err = node
+            .decrypt_file_chunk(seed_hex(2), chunk)
+            .unwrap_err();
+        assert!(err.to_string().contains("decryption failed"), "{err}");
+    }
+
+    #[test]
+    fn file_chunk_will_not_decrypt_under_a_different_file_id() {
+        // Re-pointing a chunk at another transfer must be rejected too.
+        let node = node();
+        let mut chunk = node
+            .encrypt_file_chunk(chat_pk_hex(2), hex::encode([7u8; 16]), 0, 1, "aabb".into())
+            .expect("encrypt");
+        chunk.file_id_hex = hex::encode([8u8; 16]);
+
+        let err = node
+            .decrypt_file_chunk(seed_hex(2), chunk)
+            .unwrap_err();
+        assert!(err.to_string().contains("decryption failed"), "{err}");
     }
 
     #[test]
@@ -2716,12 +2793,7 @@ mod chat_tests {
             .expect("encrypt");
 
         assert!(node
-            .decrypt_file_chunk(
-                seed_hex(3),
-                chunk.ephemeral_pk_hex,
-                chunk.nonce_hex,
-                chunk.ciphertext_hex,
-            )
+            .decrypt_file_chunk(seed_hex(3), chunk)
             .unwrap_err()
             .to_string()
             .contains("decryption failed"));
@@ -2735,15 +2807,27 @@ mod chat_tests {
             .expect("encrypt");
 
         assert!(node
-            .decrypt_voice_message(
-                seed_hex(3),
-                msg.ephemeral_pk_hex,
-                msg.nonce_hex,
-                msg.ciphertext_hex,
-            )
+            .decrypt_voice_message(seed_hex(3), msg)
             .unwrap_err()
             .to_string()
             .contains("decryption failed"));
+    }
+
+    #[test]
+    fn voice_message_will_not_decrypt_with_an_altered_duration() {
+        // The duration is authenticated. Before this was AAD-bound a peer
+        // could rewrite it and the audio still opened, so the client would
+        // show a note of the wrong length.
+        let node = node();
+        let mut msg = node
+            .encrypt_voice_message(chat_pk_hex(2), 1_000, hex::encode([9u8, 9u8]))
+            .expect("encrypt");
+        msg.duration_ms += 500;
+
+        let err = node
+            .decrypt_voice_message(seed_hex(2), msg)
+            .unwrap_err();
+        assert!(err.to_string().contains("decryption failed"), "{err}");
     }
 
     // ===== Voice messages =====
@@ -2758,12 +2842,7 @@ mod chat_tests {
         assert_eq!(msg.duration_ms, 4_250);
 
         let data = node
-            .decrypt_voice_message(
-                seed_hex(2),
-                msg.ephemeral_pk_hex,
-                msg.nonce_hex,
-                msg.ciphertext_hex,
-            )
+            .decrypt_voice_message(seed_hex(2), msg)
             .expect("decrypt");
         assert_eq!(hex::decode(data).unwrap(), audio);
     }
@@ -2874,6 +2953,54 @@ mod chat_tests {
         assert_eq!(hex::decode(&payload.ephemeral_pk_hex).unwrap().len(), 32);
         assert_eq!(hex::decode(&payload.nonce_hex).unwrap().len(), 12);
         assert!(!payload.ciphertext_hex.is_empty());
+    }
+
+    #[test]
+    fn tipped_chat_round_trips_back_to_the_recipient() {
+        // `encrypt_tipped_chat` had no counterpart: a client could send a
+        // tipped chat and never read one. The tip amount is inside the
+        // authenticated payload, so it must survive the trip intact.
+        let node = node();
+        let payload = node
+            .encrypt_tipped_chat(
+                seed_hex(1),
+                chat_pk_hex(2),
+                "thanks for the patch".into(),
+                1_700_000_000,
+                250_000,
+            )
+            .expect("encrypt");
+
+        let back = node
+            .decrypt_tipped_chat(
+                seed_hex(2),
+                payload.ephemeral_pk_hex,
+                payload.nonce_hex,
+                payload.ciphertext_hex,
+            )
+            .expect("decrypt");
+
+        assert_eq!(back.tip_amount, 250_000);
+        assert_eq!(back.message.plaintext, "thanks for the patch");
+        assert_eq!(back.message.timestamp, 1_700_000_000);
+        assert_eq!(back.message.sender_pubkey_hex, seed_hex(1));
+    }
+
+    #[test]
+    fn tipped_chat_will_not_open_for_a_different_recipient() {
+        let node = node();
+        let payload = node
+            .encrypt_tipped_chat(seed_hex(1), chat_pk_hex(2), "mine".into(), 1, 1_000)
+            .expect("encrypt");
+
+        assert!(node
+            .decrypt_tipped_chat(
+                seed_hex(3),
+                payload.ephemeral_pk_hex,
+                payload.nonce_hex,
+                payload.ciphertext_hex,
+            )
+            .is_err());
     }
 
     #[test]

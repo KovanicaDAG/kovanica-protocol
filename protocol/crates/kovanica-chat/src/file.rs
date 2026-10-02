@@ -43,6 +43,20 @@ pub struct FileChunk {
     pub ciphertext: Vec<u8>,
 }
 
+/// The chunk's routing metadata, authenticated but not encrypted.
+///
+/// Binding these means a relay cannot renumber a chunk, reorder it inside a
+/// transfer, or redirect it into a different file without the Poly1305 tag
+/// rejecting the payload. Encrypt and decrypt must agree on this byte string
+/// exactly; it is never transmitted.
+fn chunk_aad(file_id: &[u8; 16], chunk_index: u16, total_chunks: u16) -> [u8; 20] {
+    let mut aad = [0u8; 20];
+    aad[..16].copy_from_slice(file_id);
+    aad[16..18].copy_from_slice(&chunk_index.to_le_bytes());
+    aad[18..].copy_from_slice(&total_chunks.to_le_bytes());
+    aad
+}
+
 impl FileChunk {
     /// Encrypt a file chunk for a recipient.
     ///
@@ -55,13 +69,16 @@ impl FileChunk {
         chunk_index: u16,
         total_chunks: u16,
         chunk_data: &[u8],
-    ) -> Result<Self, FileError> {
-        if chunk_data.len() > MAX_PLAINTEXT_LEN {
+    ) -> Result<Self, FileError> {        if chunk_data.len() > MAX_PLAINTEXT_LEN {
             return Err(FileError::ChunkTooLong);
         }
 
-        let (ephemeral_pk, nonce_and_ciphertext) = crypto::encrypt(recipient_pk, chunk_data)
-            .map_err(|e| FileError::Crypto(e.to_string()))?;
+        let (ephemeral_pk, nonce_and_ciphertext) = crypto::encrypt(
+            recipient_pk,
+            chunk_data,
+            &chunk_aad(&file_id, chunk_index, total_chunks),
+        )
+        .map_err(|e| FileError::Crypto(e.to_string()))?;
 
         if nonce_and_ciphertext.len() < 12 {
             return Err(FileError::Crypto("ciphertext too short".into()));
@@ -91,6 +108,7 @@ impl FileChunk {
             &self.ephemeral_pk,
             &self.nonce,
             &self.ciphertext,
+            &chunk_aad(&self.file_id, self.chunk_index, self.total_chunks),
         )
         .map_err(|e| FileError::Crypto(e.to_string()))
     }
@@ -427,5 +445,50 @@ mod tests {
             FileTransfer::new([0u8; 16], &[0u8; MAX_FILE_SIZE + 1], "big.bin".to_string());
         });
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn file_chunk_tampered_chunk_index_rejected() {
+        // Renumbering a chunk must break the tag. Otherwise a relay could
+        // reorder or duplicate chunks and the transfer would still assemble,
+        // silently corrupting the file.
+        let sk = test_keypair(21);
+        let recipient_secret = crate::crypto::ed25519_seed_to_x25519(&sk.to_bytes());
+        let recipient_pk = x25519_dalek::PublicKey::from(&recipient_secret);
+
+        let mut chunk =
+            FileChunk::encrypt(recipient_pk.as_bytes(), [3u8; 16], 2, 5, b"payload").unwrap();
+        chunk.chunk_index = 3;
+
+        assert!(chunk.decrypt(&recipient_secret).is_err());
+    }
+
+    #[test]
+    fn file_chunk_tampered_file_id_rejected() {
+        // Re-pointing a chunk at a different transfer must break the tag too.
+        let sk = test_keypair(22);
+        let recipient_secret = crate::crypto::ed25519_seed_to_x25519(&sk.to_bytes());
+        let recipient_pk = x25519_dalek::PublicKey::from(&recipient_secret);
+
+        let mut chunk =
+            FileChunk::encrypt(recipient_pk.as_bytes(), [3u8; 16], 0, 1, b"payload").unwrap();
+        chunk.file_id = [4u8; 16];
+
+        assert!(chunk.decrypt(&recipient_secret).is_err());
+    }
+
+    #[test]
+    fn file_chunk_tampered_total_chunks_rejected() {
+        // Truncating a transfer by shrinking `total_chunks` would drop the
+        // tail of a file without breaking any other check.
+        let sk = test_keypair(23);
+        let recipient_secret = crate::crypto::ed25519_seed_to_x25519(&sk.to_bytes());
+        let recipient_pk = x25519_dalek::PublicKey::from(&recipient_secret);
+
+        let mut chunk =
+            FileChunk::encrypt(recipient_pk.as_bytes(), [3u8; 16], 0, 5, b"payload").unwrap();
+        chunk.total_chunks = 1;
+
+        assert!(chunk.decrypt(&recipient_secret).is_err());
     }
 }

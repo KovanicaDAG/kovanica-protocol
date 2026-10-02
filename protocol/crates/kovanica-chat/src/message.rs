@@ -107,7 +107,7 @@ impl ChatPayload {
             return Err(ChatError::PlaintextTooLong);
         }
 
-        let (ephemeral_pk, nonce_and_ciphertext) = crypto::encrypt(recipient_pk, plaintext)
+        let (ephemeral_pk, nonce_and_ciphertext) = crypto::encrypt(recipient_pk, plaintext, &[])
             .map_err(|e| ChatError::Crypto(e.to_string()))?;
 
         if nonce_and_ciphertext.len() < 12 {
@@ -126,6 +126,9 @@ impl ChatPayload {
     }
 
     /// Decrypt this payload with the recipient's X25519 secret.
+    ///
+    /// A plain chat payload binds no AAD: everything it carries is either in
+    /// the ciphertext or authenticated by the tag.
     pub fn decrypt(
         &self,
         recipient_secret: &x25519_dalek::StaticSecret,
@@ -135,6 +138,7 @@ impl ChatPayload {
             &self.ephemeral_pk,
             &self.nonce,
             &self.ciphertext,
+            &[],
         )
         .map_err(|e| ChatError::Crypto(e.to_string()))
     }

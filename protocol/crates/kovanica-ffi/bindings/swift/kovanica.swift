@@ -728,6 +728,21 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
     func combineMultisigSigs(txBlob: Data, partialSigs: [Data]) throws  -> Data
     
     /**
+     * Parse a contact book from JSON.
+     */
+    func contactBookFromJson(json: String) throws  -> [ChatContact]
+    
+    /**
+     * Convert a list of contacts to JSON.
+     */
+    func contactBookToJson(contacts: [ChatContact]) throws  -> String
+    
+    /**
+     * Create a new chat message.
+     */
+    func createChatMessage(senderPubkeyHex: String, recipientPubkeyHex: String, plaintext: String, timestamp: UInt64) throws  -> ChatMessageInfo
+    
+    /**
      * Create an HTLC output locking `amount` (of `asset_id_hex`, or native
      * KVNC when `None`) to a Version 0x04 address committing to
      * `preimage_hash`, `recipient_pk`, this signer as sender, and `timeout`.
@@ -752,6 +767,122 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
      * Returns the template, address, and funding outpoint.
      */
     func createVault(signingSecretHex: String, amount: UInt64, unlockHeight: UInt32, csv: UInt32, ownerPkHex: String) throws  -> VaultInfo
+    
+    /**
+     * Decode a call signal from hex.
+     */
+    func decodeCallSignal(hexStr: String) throws  -> CallSignalInfo
+    
+    /**
+     * Decode a chat message from hex.
+     */
+    func decodeChatMessage(hexStr: String) throws  -> ChatMessageInfo
+    
+    /**
+     * Decode a file chunk from hex.
+     */
+    func decodeFileChunk(hexStr: String) throws  -> FileChunkInfo
+    
+    /**
+     * Decode a payment request from hex.
+     */
+    func decodePaymentRequest(hexStr: String) throws  -> PaymentRequestInfo
+    
+    /**
+     * Decode a tipped chat message from hex.
+     */
+    func decodeTippedChat(hexStr: String) throws  -> TippedChatInfo
+    
+    /**
+     * Decode a voice message from hex.
+     */
+    func decodeVoiceMessage(hexStr: String) throws  -> VoiceMessageInfo
+    
+    /**
+     * Decrypt a chat message with the recipient's secret.
+     */
+    func decryptChatMessage(recipientSecretHex: String, ephemeralPkHex: String, nonceHex: String, ciphertextHex: String) throws  -> String
+    
+    /**
+     * Decrypt a file chunk with the recipient's secret.
+     *
+     * `chunk` is the record as it arrived — from `encrypt_file_chunk` locally
+     * or `decode_file_chunk` off the wire. Its `file_id_hex`, `chunk_index`
+     * and `total_chunks` are authenticated as AAD, so a chunk that was
+     * renumbered or re-pointed at another transfer in transit fails the tag
+     * check here instead of reassembling into a corrupt file.
+     */
+    func decryptFileChunk(recipientSecretHex: String, chunk: FileChunkInfo) throws  -> String
+    
+    /**
+     * Decrypt a tipped chat message with the recipient's secret.
+     *
+     * The counterpart to [`Self::encrypt_tipped_chat`]. Both the text and the
+     * tip amount are inside the authenticated payload, so neither can be
+     * altered in transit without the tag check failing.
+     */
+    func decryptTippedChat(recipientSecretHex: String, ephemeralPkHex: String, nonceHex: String, ciphertextHex: String) throws  -> TippedChatInfo
+    
+    /**
+     * Decrypt a voice message with the recipient's secret.
+     *
+     * `message` is the record as it arrived — from `encrypt_voice_message`
+     * locally or `decode_voice_message` off the wire. Its `duration_ms` is
+     * authenticated as AAD, so a duration altered in transit fails the tag
+     * check here rather than yielding audio that plays back at the wrong
+     * length.
+     */
+    func decryptVoiceMessage(recipientSecretHex: String, message: VoiceMessageInfo) throws  -> String
+    
+    /**
+     * Encode a call signal to hex.
+     */
+    func encodeCallSignal(callIdHex: String, signalType: CallSignalType, dataHex: String) throws  -> String
+    
+    /**
+     * Encode a chat message to hex.
+     */
+    func encodeChatMessage(message: ChatMessageInfo) throws  -> String
+    
+    /**
+     * Encode a file chunk to hex.
+     */
+    func encodeFileChunk(chunk: FileChunkInfo) throws  -> String
+    
+    /**
+     * Encode a payment request to hex.
+     */
+    func encodePaymentRequest(recipientPubkeyHex: String, amount: UInt64, message: String) throws  -> String
+    
+    /**
+     * Encode a tipped chat message to hex.
+     */
+    func encodeTippedChat(message: ChatMessageInfo, tipAmount: UInt64) throws  -> String
+    
+    /**
+     * Encode a voice message to hex.
+     */
+    func encodeVoiceMessage(msg: VoiceMessageInfo) throws  -> String
+    
+    /**
+     * Encrypt a chat message for a recipient.
+     */
+    func encryptChatMessage(senderPubkeyHex: String, recipientPubkeyHex: String, plaintext: String) throws  -> ChatPayloadInfo
+    
+    /**
+     * Encrypt a file chunk for a recipient.
+     */
+    func encryptFileChunk(recipientPubkeyHex: String, fileIdHex: String, chunkIndex: UInt16, totalChunks: UInt16, chunkDataHex: String) throws  -> FileChunkInfo
+    
+    /**
+     * Encrypt a tipped chat message for a recipient.
+     */
+    func encryptTippedChat(senderPubkeyHex: String, recipientPubkeyHex: String, plaintext: String, timestamp: UInt64, tipAmount: UInt64) throws  -> ChatPayloadInfo
+    
+    /**
+     * Encrypt a voice message for a recipient.
+     */
+    func encryptVoiceMessage(recipientPubkeyHex: String, durationMs: UInt32, audioDataHex: String) throws  -> VoiceMessageInfo
     
     /**
      * Export a single block as a one-record wire-format blob. `None` if the
@@ -1322,6 +1453,48 @@ open func combineMultisigSigs(txBlob: Data, partialSigs: [Data])throws  -> Data 
 }
     
     /**
+     * Parse a contact book from JSON.
+     */
+open func contactBookFromJson(json: String)throws  -> [ChatContact]  {
+    return try  FfiConverterSequenceTypeChatContact.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_contact_book_from_json(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(json),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Convert a list of contacts to JSON.
+     */
+open func contactBookToJson(contacts: [ChatContact])throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_contact_book_to_json(
+            self.uniffiCloneHandle(),
+        FfiConverterSequenceTypeChatContact.lower(contacts),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Create a new chat message.
+     */
+open func createChatMessage(senderPubkeyHex: String, recipientPubkeyHex: String, plaintext: String, timestamp: UInt64)throws  -> ChatMessageInfo  {
+    return try  FfiConverterTypeChatMessageInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_create_chat_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(senderPubkeyHex),
+        FfiConverterString.lower(recipientPubkeyHex),
+        FfiConverterString.lower(plaintext),
+        FfiConverterUInt64.lower(timestamp),uniffiCallStatus
+    )
+})
+}
+    
+    /**
      * Create an HTLC output locking `amount` (of `asset_id_hex`, or native
      * KVNC when `None`) to a Version 0x04 address committing to
      * `preimage_hash`, `recipient_pk`, this signer as sender, and `timeout`.
@@ -1377,6 +1550,307 @@ open func createVault(signingSecretHex: String, amount: UInt64, unlockHeight: UI
         FfiConverterUInt32.lower(unlockHeight),
         FfiConverterUInt32.lower(csv),
         FfiConverterString.lower(ownerPkHex),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decode a call signal from hex.
+     */
+open func decodeCallSignal(hexStr: String)throws  -> CallSignalInfo  {
+    return try  FfiConverterTypeCallSignalInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decode_call_signal(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hexStr),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decode a chat message from hex.
+     */
+open func decodeChatMessage(hexStr: String)throws  -> ChatMessageInfo  {
+    return try  FfiConverterTypeChatMessageInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decode_chat_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hexStr),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decode a file chunk from hex.
+     */
+open func decodeFileChunk(hexStr: String)throws  -> FileChunkInfo  {
+    return try  FfiConverterTypeFileChunkInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decode_file_chunk(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hexStr),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decode a payment request from hex.
+     */
+open func decodePaymentRequest(hexStr: String)throws  -> PaymentRequestInfo  {
+    return try  FfiConverterTypePaymentRequestInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decode_payment_request(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hexStr),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decode a tipped chat message from hex.
+     */
+open func decodeTippedChat(hexStr: String)throws  -> TippedChatInfo  {
+    return try  FfiConverterTypeTippedChatInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decode_tipped_chat(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hexStr),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decode a voice message from hex.
+     */
+open func decodeVoiceMessage(hexStr: String)throws  -> VoiceMessageInfo  {
+    return try  FfiConverterTypeVoiceMessageInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decode_voice_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(hexStr),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decrypt a chat message with the recipient's secret.
+     */
+open func decryptChatMessage(recipientSecretHex: String, ephemeralPkHex: String, nonceHex: String, ciphertextHex: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decrypt_chat_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(recipientSecretHex),
+        FfiConverterString.lower(ephemeralPkHex),
+        FfiConverterString.lower(nonceHex),
+        FfiConverterString.lower(ciphertextHex),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decrypt a file chunk with the recipient's secret.
+     *
+     * `chunk` is the record as it arrived — from `encrypt_file_chunk` locally
+     * or `decode_file_chunk` off the wire. Its `file_id_hex`, `chunk_index`
+     * and `total_chunks` are authenticated as AAD, so a chunk that was
+     * renumbered or re-pointed at another transfer in transit fails the tag
+     * check here instead of reassembling into a corrupt file.
+     */
+open func decryptFileChunk(recipientSecretHex: String, chunk: FileChunkInfo)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decrypt_file_chunk(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(recipientSecretHex),
+        FfiConverterTypeFileChunkInfo_lower(chunk),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decrypt a tipped chat message with the recipient's secret.
+     *
+     * The counterpart to [`Self::encrypt_tipped_chat`]. Both the text and the
+     * tip amount are inside the authenticated payload, so neither can be
+     * altered in transit without the tag check failing.
+     */
+open func decryptTippedChat(recipientSecretHex: String, ephemeralPkHex: String, nonceHex: String, ciphertextHex: String)throws  -> TippedChatInfo  {
+    return try  FfiConverterTypeTippedChatInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decrypt_tipped_chat(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(recipientSecretHex),
+        FfiConverterString.lower(ephemeralPkHex),
+        FfiConverterString.lower(nonceHex),
+        FfiConverterString.lower(ciphertextHex),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Decrypt a voice message with the recipient's secret.
+     *
+     * `message` is the record as it arrived — from `encrypt_voice_message`
+     * locally or `decode_voice_message` off the wire. Its `duration_ms` is
+     * authenticated as AAD, so a duration altered in transit fails the tag
+     * check here rather than yielding audio that plays back at the wrong
+     * length.
+     */
+open func decryptVoiceMessage(recipientSecretHex: String, message: VoiceMessageInfo)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_decrypt_voice_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(recipientSecretHex),
+        FfiConverterTypeVoiceMessageInfo_lower(message),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encode a call signal to hex.
+     */
+open func encodeCallSignal(callIdHex: String, signalType: CallSignalType, dataHex: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encode_call_signal(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(callIdHex),
+        FfiConverterTypeCallSignalType_lower(signalType),
+        FfiConverterString.lower(dataHex),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encode a chat message to hex.
+     */
+open func encodeChatMessage(message: ChatMessageInfo)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encode_chat_message(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeChatMessageInfo_lower(message),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encode a file chunk to hex.
+     */
+open func encodeFileChunk(chunk: FileChunkInfo)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encode_file_chunk(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeFileChunkInfo_lower(chunk),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encode a payment request to hex.
+     */
+open func encodePaymentRequest(recipientPubkeyHex: String, amount: UInt64, message: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encode_payment_request(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(recipientPubkeyHex),
+        FfiConverterUInt64.lower(amount),
+        FfiConverterString.lower(message),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encode a tipped chat message to hex.
+     */
+open func encodeTippedChat(message: ChatMessageInfo, tipAmount: UInt64)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encode_tipped_chat(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeChatMessageInfo_lower(message),
+        FfiConverterUInt64.lower(tipAmount),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encode a voice message to hex.
+     */
+open func encodeVoiceMessage(msg: VoiceMessageInfo)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encode_voice_message(
+            self.uniffiCloneHandle(),
+        FfiConverterTypeVoiceMessageInfo_lower(msg),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encrypt a chat message for a recipient.
+     */
+open func encryptChatMessage(senderPubkeyHex: String, recipientPubkeyHex: String, plaintext: String)throws  -> ChatPayloadInfo  {
+    return try  FfiConverterTypeChatPayloadInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encrypt_chat_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(senderPubkeyHex),
+        FfiConverterString.lower(recipientPubkeyHex),
+        FfiConverterString.lower(plaintext),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encrypt a file chunk for a recipient.
+     */
+open func encryptFileChunk(recipientPubkeyHex: String, fileIdHex: String, chunkIndex: UInt16, totalChunks: UInt16, chunkDataHex: String)throws  -> FileChunkInfo  {
+    return try  FfiConverterTypeFileChunkInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encrypt_file_chunk(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(recipientPubkeyHex),
+        FfiConverterString.lower(fileIdHex),
+        FfiConverterUInt16.lower(chunkIndex),
+        FfiConverterUInt16.lower(totalChunks),
+        FfiConverterString.lower(chunkDataHex),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encrypt a tipped chat message for a recipient.
+     */
+open func encryptTippedChat(senderPubkeyHex: String, recipientPubkeyHex: String, plaintext: String, timestamp: UInt64, tipAmount: UInt64)throws  -> ChatPayloadInfo  {
+    return try  FfiConverterTypeChatPayloadInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encrypt_tipped_chat(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(senderPubkeyHex),
+        FfiConverterString.lower(recipientPubkeyHex),
+        FfiConverterString.lower(plaintext),
+        FfiConverterUInt64.lower(timestamp),
+        FfiConverterUInt64.lower(tipAmount),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Encrypt a voice message for a recipient.
+     */
+open func encryptVoiceMessage(recipientPubkeyHex: String, durationMs: UInt32, audioDataHex: String)throws  -> VoiceMessageInfo  {
+    return try  FfiConverterTypeVoiceMessageInfo_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_encrypt_voice_message(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(recipientPubkeyHex),
+        FfiConverterUInt32.lower(durationMs),
+        FfiConverterString.lower(audioDataHex),uniffiCallStatus
     )
 })
 }
@@ -2125,6 +2599,332 @@ public func FfiConverterTypeBlockInfo_lower(_ value: BlockInfo) -> RustBuffer {
 
 
 /**
+ * A call signaling message.
+ */
+public struct CallSignalInfo: Equatable, Hashable {
+    /**
+     * Unique call identifier (16 bytes, lowercase hex).
+     */
+    public var callIdHex: String
+    /**
+     * Signal type.
+     */
+    public var signalType: CallSignalType
+    /**
+     * Signal-specific payload (SDP, ICE candidate, etc., lowercase hex).
+     */
+    public var dataHex: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Unique call identifier (16 bytes, lowercase hex).
+         */callIdHex: String, 
+        /**
+         * Signal type.
+         */signalType: CallSignalType, 
+        /**
+         * Signal-specific payload (SDP, ICE candidate, etc., lowercase hex).
+         */dataHex: String) {
+        self.callIdHex = callIdHex
+        self.signalType = signalType
+        self.dataHex = dataHex
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension CallSignalInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCallSignalInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CallSignalInfo {
+        return
+            try CallSignalInfo(
+                callIdHex: FfiConverterString.read(from: &buf), 
+                signalType: FfiConverterTypeCallSignalType.read(from: &buf), 
+                dataHex: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: CallSignalInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.callIdHex, into: &buf)
+        FfiConverterTypeCallSignalType.write(value.signalType, into: &buf)
+        FfiConverterString.write(value.dataHex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCallSignalInfo_lift(_ buf: RustBuffer) throws -> CallSignalInfo {
+    return try FfiConverterTypeCallSignalInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCallSignalInfo_lower(_ value: CallSignalInfo) -> RustBuffer {
+    return FfiConverterTypeCallSignalInfo.lower(value)
+}
+
+
+/**
+ * A contact in the chat contact book.
+ */
+public struct ChatContact: Equatable, Hashable {
+    /**
+     * Contact's Ed25519 public key (32 bytes, lowercase hex).
+     */
+    public var pubkeyHex: String
+    /**
+     * Human-readable name (max 64 bytes).
+     */
+    public var name: String
+    /**
+     * Optional note (max 200 bytes).
+     */
+    public var note: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Contact's Ed25519 public key (32 bytes, lowercase hex).
+         */pubkeyHex: String, 
+        /**
+         * Human-readable name (max 64 bytes).
+         */name: String, 
+        /**
+         * Optional note (max 200 bytes).
+         */note: String) {
+        self.pubkeyHex = pubkeyHex
+        self.name = name
+        self.note = note
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ChatContact: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChatContact: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatContact {
+        return
+            try ChatContact(
+                pubkeyHex: FfiConverterString.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                note: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChatContact, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.pubkeyHex, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.note, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatContact_lift(_ buf: RustBuffer) throws -> ChatContact {
+    return try FfiConverterTypeChatContact.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatContact_lower(_ value: ChatContact) -> RustBuffer {
+    return FfiConverterTypeChatContact.lower(value)
+}
+
+
+/**
+ * A decrypted chat message.
+ */
+public struct ChatMessageInfo: Equatable, Hashable {
+    /**
+     * Sender's Ed25519 public key (32 bytes, lowercase hex).
+     */
+    public var senderPubkeyHex: String
+    /**
+     * Recipient's Ed25519 public key (32 bytes, lowercase hex).
+     */
+    public var recipientPubkeyHex: String
+    /**
+     * Decrypted plaintext (max 200 bytes).
+     */
+    public var plaintext: String
+    /**
+     * Unix timestamp (seconds since epoch).
+     */
+    public var timestamp: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Sender's Ed25519 public key (32 bytes, lowercase hex).
+         */senderPubkeyHex: String, 
+        /**
+         * Recipient's Ed25519 public key (32 bytes, lowercase hex).
+         */recipientPubkeyHex: String, 
+        /**
+         * Decrypted plaintext (max 200 bytes).
+         */plaintext: String, 
+        /**
+         * Unix timestamp (seconds since epoch).
+         */timestamp: UInt64) {
+        self.senderPubkeyHex = senderPubkeyHex
+        self.recipientPubkeyHex = recipientPubkeyHex
+        self.plaintext = plaintext
+        self.timestamp = timestamp
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ChatMessageInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChatMessageInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatMessageInfo {
+        return
+            try ChatMessageInfo(
+                senderPubkeyHex: FfiConverterString.read(from: &buf), 
+                recipientPubkeyHex: FfiConverterString.read(from: &buf), 
+                plaintext: FfiConverterString.read(from: &buf), 
+                timestamp: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChatMessageInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.senderPubkeyHex, into: &buf)
+        FfiConverterString.write(value.recipientPubkeyHex, into: &buf)
+        FfiConverterString.write(value.plaintext, into: &buf)
+        FfiConverterUInt64.write(value.timestamp, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatMessageInfo_lift(_ buf: RustBuffer) throws -> ChatMessageInfo {
+    return try FfiConverterTypeChatMessageInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatMessageInfo_lower(_ value: ChatMessageInfo) -> RustBuffer {
+    return FfiConverterTypeChatMessageInfo.lower(value)
+}
+
+
+/**
+ * An encrypted chat payload (on-chain wire format).
+ */
+public struct ChatPayloadInfo: Equatable, Hashable {
+    /**
+     * Ephemeral X25519 public key (32 bytes, lowercase hex).
+     */
+    public var ephemeralPkHex: String
+    /**
+     * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+     */
+    public var nonceHex: String
+    /**
+     * Ciphertext including 16-byte Poly1305 tag (lowercase hex).
+     */
+    public var ciphertextHex: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Ephemeral X25519 public key (32 bytes, lowercase hex).
+         */ephemeralPkHex: String, 
+        /**
+         * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+         */nonceHex: String, 
+        /**
+         * Ciphertext including 16-byte Poly1305 tag (lowercase hex).
+         */ciphertextHex: String) {
+        self.ephemeralPkHex = ephemeralPkHex
+        self.nonceHex = nonceHex
+        self.ciphertextHex = ciphertextHex
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ChatPayloadInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeChatPayloadInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ChatPayloadInfo {
+        return
+            try ChatPayloadInfo(
+                ephemeralPkHex: FfiConverterString.read(from: &buf), 
+                nonceHex: FfiConverterString.read(from: &buf), 
+                ciphertextHex: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ChatPayloadInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.ephemeralPkHex, into: &buf)
+        FfiConverterString.write(value.nonceHex, into: &buf)
+        FfiConverterString.write(value.ciphertextHex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatPayloadInfo_lift(_ buf: RustBuffer) throws -> ChatPayloadInfo {
+    return try FfiConverterTypeChatPayloadInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeChatPayloadInfo_lower(_ value: ChatPayloadInfo) -> RustBuffer {
+    return FfiConverterTypeChatPayloadInfo.lower(value)
+}
+
+
+/**
  * An output specification for CoinJoin.
  */
 public struct CoinJoinOutput: Equatable, Hashable {
@@ -2482,6 +3282,214 @@ public func FfiConverterTypeDerivedAccount_lift(_ buf: RustBuffer) throws -> Der
 #endif
 public func FfiConverterTypeDerivedAccount_lower(_ value: DerivedAccount) -> RustBuffer {
     return FfiConverterTypeDerivedAccount.lower(value)
+}
+
+
+/**
+ * An encrypted file chunk.
+ */
+public struct FileChunkInfo: Equatable, Hashable {
+    /**
+     * Unique file identifier (16 bytes, lowercase hex).
+     */
+    public var fileIdHex: String
+    /**
+     * Zero-based chunk index.
+     */
+    public var chunkIndex: UInt16
+    /**
+     * Total number of chunks.
+     */
+    public var totalChunks: UInt16
+    /**
+     * Ephemeral X25519 public key (32 bytes, lowercase hex).
+     */
+    public var ephemeralPkHex: String
+    /**
+     * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+     */
+    public var nonceHex: String
+    /**
+     * Encrypted chunk data (includes 16-byte Poly1305 tag, lowercase hex).
+     */
+    public var ciphertextHex: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Unique file identifier (16 bytes, lowercase hex).
+         */fileIdHex: String, 
+        /**
+         * Zero-based chunk index.
+         */chunkIndex: UInt16, 
+        /**
+         * Total number of chunks.
+         */totalChunks: UInt16, 
+        /**
+         * Ephemeral X25519 public key (32 bytes, lowercase hex).
+         */ephemeralPkHex: String, 
+        /**
+         * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+         */nonceHex: String, 
+        /**
+         * Encrypted chunk data (includes 16-byte Poly1305 tag, lowercase hex).
+         */ciphertextHex: String) {
+        self.fileIdHex = fileIdHex
+        self.chunkIndex = chunkIndex
+        self.totalChunks = totalChunks
+        self.ephemeralPkHex = ephemeralPkHex
+        self.nonceHex = nonceHex
+        self.ciphertextHex = ciphertextHex
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FileChunkInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFileChunkInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FileChunkInfo {
+        return
+            try FileChunkInfo(
+                fileIdHex: FfiConverterString.read(from: &buf), 
+                chunkIndex: FfiConverterUInt16.read(from: &buf), 
+                totalChunks: FfiConverterUInt16.read(from: &buf), 
+                ephemeralPkHex: FfiConverterString.read(from: &buf), 
+                nonceHex: FfiConverterString.read(from: &buf), 
+                ciphertextHex: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FileChunkInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.fileIdHex, into: &buf)
+        FfiConverterUInt16.write(value.chunkIndex, into: &buf)
+        FfiConverterUInt16.write(value.totalChunks, into: &buf)
+        FfiConverterString.write(value.ephemeralPkHex, into: &buf)
+        FfiConverterString.write(value.nonceHex, into: &buf)
+        FfiConverterString.write(value.ciphertextHex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFileChunkInfo_lift(_ buf: RustBuffer) throws -> FileChunkInfo {
+    return try FfiConverterTypeFileChunkInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFileChunkInfo_lower(_ value: FileChunkInfo) -> RustBuffer {
+    return FfiConverterTypeFileChunkInfo.lower(value)
+}
+
+
+/**
+ * A file transfer session.
+ */
+public struct FileTransferInfo: Equatable, Hashable {
+    /**
+     * Unique file identifier (16 bytes, lowercase hex).
+     */
+    public var fileIdHex: String
+    /**
+     * Total file size in bytes.
+     */
+    public var totalSize: UInt64
+    /**
+     * Chunk size in bytes.
+     */
+    public var chunkSize: UInt32
+    /**
+     * Number of chunks.
+     */
+    public var numChunks: UInt32
+    /**
+     * File name.
+     */
+    public var filename: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Unique file identifier (16 bytes, lowercase hex).
+         */fileIdHex: String, 
+        /**
+         * Total file size in bytes.
+         */totalSize: UInt64, 
+        /**
+         * Chunk size in bytes.
+         */chunkSize: UInt32, 
+        /**
+         * Number of chunks.
+         */numChunks: UInt32, 
+        /**
+         * File name.
+         */filename: String) {
+        self.fileIdHex = fileIdHex
+        self.totalSize = totalSize
+        self.chunkSize = chunkSize
+        self.numChunks = numChunks
+        self.filename = filename
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FileTransferInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFileTransferInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FileTransferInfo {
+        return
+            try FileTransferInfo(
+                fileIdHex: FfiConverterString.read(from: &buf), 
+                totalSize: FfiConverterUInt64.read(from: &buf), 
+                chunkSize: FfiConverterUInt32.read(from: &buf), 
+                numChunks: FfiConverterUInt32.read(from: &buf), 
+                filename: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FileTransferInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.fileIdHex, into: &buf)
+        FfiConverterUInt64.write(value.totalSize, into: &buf)
+        FfiConverterUInt32.write(value.chunkSize, into: &buf)
+        FfiConverterUInt32.write(value.numChunks, into: &buf)
+        FfiConverterString.write(value.filename, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFileTransferInfo_lift(_ buf: RustBuffer) throws -> FileTransferInfo {
+    return try FfiConverterTypeFileTransferInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFileTransferInfo_lower(_ value: FileTransferInfo) -> RustBuffer {
+    return FfiConverterTypeFileTransferInfo.lower(value)
 }
 
 
@@ -2998,6 +4006,85 @@ public func FfiConverterTypeMultisigSpendOutput_lower(_ value: MultisigSpendOutp
 
 
 /**
+ * A payment request (PREQ tag).
+ */
+public struct PaymentRequestInfo: Equatable, Hashable {
+    /**
+     * Requester's Ed25519 public key (32 bytes, lowercase hex).
+     */
+    public var recipientPubkeyHex: String
+    /**
+     * Requested amount in atoms.
+     */
+    public var amount: UInt64
+    /**
+     * Optional note (max 200 bytes).
+     */
+    public var message: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Requester's Ed25519 public key (32 bytes, lowercase hex).
+         */recipientPubkeyHex: String, 
+        /**
+         * Requested amount in atoms.
+         */amount: UInt64, 
+        /**
+         * Optional note (max 200 bytes).
+         */message: String) {
+        self.recipientPubkeyHex = recipientPubkeyHex
+        self.amount = amount
+        self.message = message
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PaymentRequestInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePaymentRequestInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PaymentRequestInfo {
+        return
+            try PaymentRequestInfo(
+                recipientPubkeyHex: FfiConverterString.read(from: &buf), 
+                amount: FfiConverterUInt64.read(from: &buf), 
+                message: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PaymentRequestInfo, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.recipientPubkeyHex, into: &buf)
+        FfiConverterUInt64.write(value.amount, into: &buf)
+        FfiConverterString.write(value.message, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaymentRequestInfo_lift(_ buf: RustBuffer) throws -> PaymentRequestInfo {
+    return try FfiConverterTypePaymentRequestInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePaymentRequestInfo_lower(_ value: PaymentRequestInfo) -> RustBuffer {
+    return FfiConverterTypePaymentRequestInfo.lower(value)
+}
+
+
+/**
  * Result of an immediate send: which block sealed the transfer and its tx id.
  */
 public struct SendReceipt: Equatable, Hashable {
@@ -3051,6 +4138,75 @@ public func FfiConverterTypeSendReceipt_lift(_ buf: RustBuffer) throws -> SendRe
 #endif
 public func FfiConverterTypeSendReceipt_lower(_ value: SendReceipt) -> RustBuffer {
     return FfiConverterTypeSendReceipt.lower(value)
+}
+
+
+/**
+ * A tipped chat message (chat + KVNC tip).
+ */
+public struct TippedChatInfo: Equatable, Hashable {
+    /**
+     * The underlying chat message.
+     */
+    public var message: ChatMessageInfo
+    /**
+     * Tip amount in atoms (1 KVNC = 100_000_000 atoms).
+     */
+    public var tipAmount: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The underlying chat message.
+         */message: ChatMessageInfo, 
+        /**
+         * Tip amount in atoms (1 KVNC = 100_000_000 atoms).
+         */tipAmount: UInt64) {
+        self.message = message
+        self.tipAmount = tipAmount
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension TippedChatInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTippedChatInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> TippedChatInfo {
+        return
+            try TippedChatInfo(
+                message: FfiConverterTypeChatMessageInfo.read(from: &buf), 
+                tipAmount: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: TippedChatInfo, into buf: inout [UInt8]) {
+        FfiConverterTypeChatMessageInfo.write(value.message, into: &buf)
+        FfiConverterUInt64.write(value.tipAmount, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTippedChatInfo_lift(_ buf: RustBuffer) throws -> TippedChatInfo {
+    return try FfiConverterTypeTippedChatInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTippedChatInfo_lower(_ value: TippedChatInfo) -> RustBuffer {
+    return FfiConverterTypeTippedChatInfo.lower(value)
 }
 
 
@@ -3212,6 +4368,190 @@ public func FfiConverterTypeVaultInfo_lower(_ value: VaultInfo) -> RustBuffer {
 
 
 /**
+ * An encrypted voice message.
+ */
+public struct VoiceMessageInfo: Equatable, Hashable {
+    /**
+     * Audio duration in milliseconds.
+     */
+    public var durationMs: UInt32
+    /**
+     * Ephemeral X25519 public key (32 bytes, lowercase hex).
+     */
+    public var ephemeralPkHex: String
+    /**
+     * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+     */
+    public var nonceHex: String
+    /**
+     * Encrypted audio data (includes 16-byte Poly1305 tag, lowercase hex).
+     */
+    public var ciphertextHex: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Audio duration in milliseconds.
+         */durationMs: UInt32, 
+        /**
+         * Ephemeral X25519 public key (32 bytes, lowercase hex).
+         */ephemeralPkHex: String, 
+        /**
+         * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+         */nonceHex: String, 
+        /**
+         * Encrypted audio data (includes 16-byte Poly1305 tag, lowercase hex).
+         */ciphertextHex: String) {
+        self.durationMs = durationMs
+        self.ephemeralPkHex = ephemeralPkHex
+        self.nonceHex = nonceHex
+        self.ciphertextHex = ciphertextHex
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension VoiceMessageInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeVoiceMessageInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> VoiceMessageInfo {
+        return
+            try VoiceMessageInfo(
+                durationMs: FfiConverterUInt32.read(from: &buf), 
+                ephemeralPkHex: FfiConverterString.read(from: &buf), 
+                nonceHex: FfiConverterString.read(from: &buf), 
+                ciphertextHex: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: VoiceMessageInfo, into buf: inout [UInt8]) {
+        FfiConverterUInt32.write(value.durationMs, into: &buf)
+        FfiConverterString.write(value.ephemeralPkHex, into: &buf)
+        FfiConverterString.write(value.nonceHex, into: &buf)
+        FfiConverterString.write(value.ciphertextHex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMessageInfo_lift(_ buf: RustBuffer) throws -> VoiceMessageInfo {
+    return try FfiConverterTypeVoiceMessageInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeVoiceMessageInfo_lower(_ value: VoiceMessageInfo) -> RustBuffer {
+    return FfiConverterTypeVoiceMessageInfo.lower(value)
+}
+
+
+/**
+ * Call signal type.
+ */
+
+public enum CallSignalType: Equatable, Hashable {
+    
+    /**
+     * Call offer (SDP offer).
+     */
+    case offer
+    /**
+     * Call answer (SDP answer).
+     */
+    case answer
+    /**
+     * ICE candidate.
+     */
+    case iceCandidate
+    /**
+     * Hang up.
+     */
+    case hangup
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension CallSignalType: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeCallSignalType: FfiConverterRustBuffer {
+    typealias SwiftType = CallSignalType
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> CallSignalType {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .offer
+        
+        case 2: return .answer
+        
+        case 3: return .iceCandidate
+        
+        case 4: return .hangup
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: CallSignalType, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .offer:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .answer:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .iceCandidate:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .hangup:
+            writeInt(&buf, Int32(4))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCallSignalType_lift(_ buf: RustBuffer) throws -> CallSignalType {
+    return try FfiConverterTypeCallSignalType.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeCallSignalType_lower(_ value: CallSignalType) -> RustBuffer {
+    return FfiConverterTypeCallSignalType.lower(value)
+}
+
+
+
+/**
  * Failure modes of the derivation helpers.
  */
 public 
@@ -3324,6 +4664,18 @@ enum LightNodeError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError
     )
     case Node(msg: String
     )
+    case Chat(msg: String
+    )
+    case Contact(msg: String
+    )
+    case File(msg: String
+    )
+    case Voice(msg: String
+    )
+    case Call(msg: String
+    )
+    case PaymentRequest(msg: String
+    )
 
     
 
@@ -3370,6 +4722,24 @@ public struct FfiConverterTypeLightNodeError: FfiConverterRustBuffer {
         case 6: return .Node(
             msg: try FfiConverterString.read(from: &buf)
             )
+        case 7: return .Chat(
+            msg: try FfiConverterString.read(from: &buf)
+            )
+        case 8: return .Contact(
+            msg: try FfiConverterString.read(from: &buf)
+            )
+        case 9: return .File(
+            msg: try FfiConverterString.read(from: &buf)
+            )
+        case 10: return .Voice(
+            msg: try FfiConverterString.read(from: &buf)
+            )
+        case 11: return .Call(
+            msg: try FfiConverterString.read(from: &buf)
+            )
+        case 12: return .PaymentRequest(
+            msg: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -3409,6 +4779,36 @@ public struct FfiConverterTypeLightNodeError: FfiConverterRustBuffer {
         
         case let .Node(msg):
             writeInt(&buf, Int32(6))
+            FfiConverterString.write(msg, into: &buf)
+            
+        
+        case let .Chat(msg):
+            writeInt(&buf, Int32(7))
+            FfiConverterString.write(msg, into: &buf)
+            
+        
+        case let .Contact(msg):
+            writeInt(&buf, Int32(8))
+            FfiConverterString.write(msg, into: &buf)
+            
+        
+        case let .File(msg):
+            writeInt(&buf, Int32(9))
+            FfiConverterString.write(msg, into: &buf)
+            
+        
+        case let .Voice(msg):
+            writeInt(&buf, Int32(10))
+            FfiConverterString.write(msg, into: &buf)
+            
+        
+        case let .Call(msg):
+            writeInt(&buf, Int32(11))
+            FfiConverterString.write(msg, into: &buf)
+            
+        
+        case let .PaymentRequest(msg):
+            writeInt(&buf, Int32(12))
             FfiConverterString.write(msg, into: &buf)
             
         }
@@ -3670,6 +5070,31 @@ fileprivate struct FfiConverterSequenceData: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterData.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeChatContact: FfiConverterRustBuffer {
+    typealias SwiftType = [ChatContact]
+
+    public static func write(_ value: [ChatContact], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeChatContact.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ChatContact] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ChatContact]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeChatContact.read(from: &buf))
         }
         return seq
     }
@@ -3965,6 +5390,15 @@ private let initializationResult: InitializationResult = {
     if (uniffi_kovanica_ffi_checksum_method_lightnode_combine_multisig_sigs() != 55489) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_contact_book_from_json() != 28885) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_contact_book_to_json() != 50249) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_create_chat_message() != 30088) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_create_htlc() != 45579) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -3972,6 +5406,66 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_create_vault() != 44270) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decode_call_signal() != 38907) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decode_chat_message() != 48277) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decode_file_chunk() != 43973) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decode_payment_request() != 56891) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decode_tipped_chat() != 28636) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decode_voice_message() != 9439) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_chat_message() != 20996) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_file_chunk() != 48509) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_tipped_chat() != 48549) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_voice_message() != 54687) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encode_call_signal() != 53728) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encode_chat_message() != 21402) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encode_file_chunk() != 62397) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encode_payment_request() != 29324) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encode_tipped_chat() != 18799) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encode_voice_message() != 46914) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_chat_message() != 11962) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_file_chunk() != 21183) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_tipped_chat() != 64098) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_voice_message() != 9215) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_export_block() != 44821) {

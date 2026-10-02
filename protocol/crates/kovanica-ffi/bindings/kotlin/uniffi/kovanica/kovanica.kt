@@ -719,11 +719,57 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_combine_multisig_sigs(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_contact_book_from_json(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_contact_book_to_json(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_create_chat_message(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_create_htlc(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_create_multisig_address(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_create_vault(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decode_call_signal(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decode_chat_message(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decode_file_chunk(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decode_payment_request(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decode_tipped_chat(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decode_voice_message(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_chat_message(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_file_chunk(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_tipped_chat(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_voice_message(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encode_call_signal(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encode_chat_message(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encode_file_chunk(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encode_payment_request(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encode_tipped_chat(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encode_voice_message(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_chat_message(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_file_chunk(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_tipped_chat(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_voice_message(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_block(
     ): Int
@@ -857,11 +903,57 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_combine_multisig_sigs(`ptr`: Long,`txBlob`: RustBuffer.ByValue,`partialSigs`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_contact_book_from_json(`ptr`: Long,`json`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_contact_book_to_json(`ptr`: Long,`contacts`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_create_chat_message(`ptr`: Long,`senderPubkeyHex`: RustBuffer.ByValue,`recipientPubkeyHex`: RustBuffer.ByValue,`plaintext`: RustBuffer.ByValue,`timestamp`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_create_htlc(`ptr`: Long,`signingSecretHex`: RustBuffer.ByValue,`amount`: Long,`assetIdHex`: RustBuffer.ByValue,`recipientPkHex`: RustBuffer.ByValue,`preimageHashHex`: RustBuffer.ByValue,`timeout`: Int,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_create_multisig_address(`ptr`: Long,`threshold`: Byte,`pubkeysHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_create_vault(`ptr`: Long,`signingSecretHex`: RustBuffer.ByValue,`amount`: Long,`unlockHeight`: Int,`csv`: Int,`ownerPkHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decode_call_signal(`ptr`: Long,`hexStr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decode_chat_message(`ptr`: Long,`hexStr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decode_file_chunk(`ptr`: Long,`hexStr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decode_payment_request(`ptr`: Long,`hexStr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decode_tipped_chat(`ptr`: Long,`hexStr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decode_voice_message(`ptr`: Long,`hexStr`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decrypt_chat_message(`ptr`: Long,`recipientSecretHex`: RustBuffer.ByValue,`ephemeralPkHex`: RustBuffer.ByValue,`nonceHex`: RustBuffer.ByValue,`ciphertextHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decrypt_file_chunk(`ptr`: Long,`recipientSecretHex`: RustBuffer.ByValue,`chunk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decrypt_tipped_chat(`ptr`: Long,`recipientSecretHex`: RustBuffer.ByValue,`ephemeralPkHex`: RustBuffer.ByValue,`nonceHex`: RustBuffer.ByValue,`ciphertextHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_decrypt_voice_message(`ptr`: Long,`recipientSecretHex`: RustBuffer.ByValue,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encode_call_signal(`ptr`: Long,`callIdHex`: RustBuffer.ByValue,`signalType`: RustBuffer.ByValue,`dataHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encode_chat_message(`ptr`: Long,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encode_file_chunk(`ptr`: Long,`chunk`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encode_payment_request(`ptr`: Long,`recipientPubkeyHex`: RustBuffer.ByValue,`amount`: Long,`message`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encode_tipped_chat(`ptr`: Long,`message`: RustBuffer.ByValue,`tipAmount`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encode_voice_message(`ptr`: Long,`msg`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encrypt_chat_message(`ptr`: Long,`senderPubkeyHex`: RustBuffer.ByValue,`recipientPubkeyHex`: RustBuffer.ByValue,`plaintext`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encrypt_file_chunk(`ptr`: Long,`recipientPubkeyHex`: RustBuffer.ByValue,`fileIdHex`: RustBuffer.ByValue,`chunkIndex`: Short,`totalChunks`: Short,`chunkDataHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encrypt_tipped_chat(`ptr`: Long,`senderPubkeyHex`: RustBuffer.ByValue,`recipientPubkeyHex`: RustBuffer.ByValue,`plaintext`: RustBuffer.ByValue,`timestamp`: Long,`tipAmount`: Long,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_encrypt_voice_message(`ptr`: Long,`recipientPubkeyHex`: RustBuffer.ByValue,`durationMs`: Int,`audioDataHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_export_block(`ptr`: Long,`blockIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
@@ -1143,6 +1235,15 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_combine_multisig_sigs() != 55489) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_contact_book_from_json() != 28885) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_contact_book_to_json() != 50249) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_create_chat_message() != 30088) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_create_htlc() != 45579) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1150,6 +1251,66 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_create_vault() != 44270) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decode_call_signal() != 38907) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decode_chat_message() != 48277) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decode_file_chunk() != 43973) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decode_payment_request() != 56891) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decode_tipped_chat() != 28636) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decode_voice_message() != 9439) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_chat_message() != 20996) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_file_chunk() != 48509) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_tipped_chat() != 48549) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_decrypt_voice_message() != 54687) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encode_call_signal() != 53728) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encode_chat_message() != 21402) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encode_file_chunk() != 62397) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encode_payment_request() != 29324) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encode_tipped_chat() != 18799) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encode_voice_message() != 46914) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_chat_message() != 11962) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_file_chunk() != 21183) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_tipped_chat() != 64098) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_encrypt_voice_message() != 9215) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_block() != 44821) {
@@ -1832,6 +1993,21 @@ public interface LightNodeInterface {
     fun `combineMultisigSigs`(`txBlob`: kotlin.ByteArray, `partialSigs`: List<kotlin.ByteArray>): kotlin.ByteArray
     
     /**
+     * Parse a contact book from JSON.
+     */
+    fun `contactBookFromJson`(`json`: kotlin.String): List<ChatContact>
+    
+    /**
+     * Convert a list of contacts to JSON.
+     */
+    fun `contactBookToJson`(`contacts`: List<ChatContact>): kotlin.String
+    
+    /**
+     * Create a new chat message.
+     */
+    fun `createChatMessage`(`senderPubkeyHex`: kotlin.String, `recipientPubkeyHex`: kotlin.String, `plaintext`: kotlin.String, `timestamp`: kotlin.ULong): ChatMessageInfo
+    
+    /**
      * Create an HTLC output locking `amount` (of `asset_id_hex`, or native
      * KVNC when `None`) to a Version 0x04 address committing to
      * `preimage_hash`, `recipient_pk`, this signer as sender, and `timeout`.
@@ -1856,6 +2032,122 @@ public interface LightNodeInterface {
      * Returns the template, address, and funding outpoint.
      */
     fun `createVault`(`signingSecretHex`: kotlin.String, `amount`: kotlin.ULong, `unlockHeight`: kotlin.UInt, `csv`: kotlin.UInt, `ownerPkHex`: kotlin.String): VaultInfo
+    
+    /**
+     * Decode a call signal from hex.
+     */
+    fun `decodeCallSignal`(`hexStr`: kotlin.String): CallSignalInfo
+    
+    /**
+     * Decode a chat message from hex.
+     */
+    fun `decodeChatMessage`(`hexStr`: kotlin.String): ChatMessageInfo
+    
+    /**
+     * Decode a file chunk from hex.
+     */
+    fun `decodeFileChunk`(`hexStr`: kotlin.String): FileChunkInfo
+    
+    /**
+     * Decode a payment request from hex.
+     */
+    fun `decodePaymentRequest`(`hexStr`: kotlin.String): PaymentRequestInfo
+    
+    /**
+     * Decode a tipped chat message from hex.
+     */
+    fun `decodeTippedChat`(`hexStr`: kotlin.String): TippedChatInfo
+    
+    /**
+     * Decode a voice message from hex.
+     */
+    fun `decodeVoiceMessage`(`hexStr`: kotlin.String): VoiceMessageInfo
+    
+    /**
+     * Decrypt a chat message with the recipient's secret.
+     */
+    fun `decryptChatMessage`(`recipientSecretHex`: kotlin.String, `ephemeralPkHex`: kotlin.String, `nonceHex`: kotlin.String, `ciphertextHex`: kotlin.String): kotlin.String
+    
+    /**
+     * Decrypt a file chunk with the recipient's secret.
+     *
+     * `chunk` is the record as it arrived — from `encrypt_file_chunk` locally
+     * or `decode_file_chunk` off the wire. Its `file_id_hex`, `chunk_index`
+     * and `total_chunks` are authenticated as AAD, so a chunk that was
+     * renumbered or re-pointed at another transfer in transit fails the tag
+     * check here instead of reassembling into a corrupt file.
+     */
+    fun `decryptFileChunk`(`recipientSecretHex`: kotlin.String, `chunk`: FileChunkInfo): kotlin.String
+    
+    /**
+     * Decrypt a tipped chat message with the recipient's secret.
+     *
+     * The counterpart to [`Self::encrypt_tipped_chat`]. Both the text and the
+     * tip amount are inside the authenticated payload, so neither can be
+     * altered in transit without the tag check failing.
+     */
+    fun `decryptTippedChat`(`recipientSecretHex`: kotlin.String, `ephemeralPkHex`: kotlin.String, `nonceHex`: kotlin.String, `ciphertextHex`: kotlin.String): TippedChatInfo
+    
+    /**
+     * Decrypt a voice message with the recipient's secret.
+     *
+     * `message` is the record as it arrived — from `encrypt_voice_message`
+     * locally or `decode_voice_message` off the wire. Its `duration_ms` is
+     * authenticated as AAD, so a duration altered in transit fails the tag
+     * check here rather than yielding audio that plays back at the wrong
+     * length.
+     */
+    fun `decryptVoiceMessage`(`recipientSecretHex`: kotlin.String, `message`: VoiceMessageInfo): kotlin.String
+    
+    /**
+     * Encode a call signal to hex.
+     */
+    fun `encodeCallSignal`(`callIdHex`: kotlin.String, `signalType`: CallSignalType, `dataHex`: kotlin.String): kotlin.String
+    
+    /**
+     * Encode a chat message to hex.
+     */
+    fun `encodeChatMessage`(`message`: ChatMessageInfo): kotlin.String
+    
+    /**
+     * Encode a file chunk to hex.
+     */
+    fun `encodeFileChunk`(`chunk`: FileChunkInfo): kotlin.String
+    
+    /**
+     * Encode a payment request to hex.
+     */
+    fun `encodePaymentRequest`(`recipientPubkeyHex`: kotlin.String, `amount`: kotlin.ULong, `message`: kotlin.String): kotlin.String
+    
+    /**
+     * Encode a tipped chat message to hex.
+     */
+    fun `encodeTippedChat`(`message`: ChatMessageInfo, `tipAmount`: kotlin.ULong): kotlin.String
+    
+    /**
+     * Encode a voice message to hex.
+     */
+    fun `encodeVoiceMessage`(`msg`: VoiceMessageInfo): kotlin.String
+    
+    /**
+     * Encrypt a chat message for a recipient.
+     */
+    fun `encryptChatMessage`(`senderPubkeyHex`: kotlin.String, `recipientPubkeyHex`: kotlin.String, `plaintext`: kotlin.String): ChatPayloadInfo
+    
+    /**
+     * Encrypt a file chunk for a recipient.
+     */
+    fun `encryptFileChunk`(`recipientPubkeyHex`: kotlin.String, `fileIdHex`: kotlin.String, `chunkIndex`: kotlin.UShort, `totalChunks`: kotlin.UShort, `chunkDataHex`: kotlin.String): FileChunkInfo
+    
+    /**
+     * Encrypt a tipped chat message for a recipient.
+     */
+    fun `encryptTippedChat`(`senderPubkeyHex`: kotlin.String, `recipientPubkeyHex`: kotlin.String, `plaintext`: kotlin.String, `timestamp`: kotlin.ULong, `tipAmount`: kotlin.ULong): ChatPayloadInfo
+    
+    /**
+     * Encrypt a voice message for a recipient.
+     */
+    fun `encryptVoiceMessage`(`recipientPubkeyHex`: kotlin.String, `durationMs`: kotlin.UInt, `audioDataHex`: kotlin.String): VoiceMessageInfo
     
     /**
      * Export a single block as a one-record wire-format blob. `None` if the
@@ -2552,6 +2844,63 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 
     
     /**
+     * Parse a contact book from JSON.
+     */
+    @Throws(LightNodeException::class)override fun `contactBookFromJson`(`json`: kotlin.String): List<ChatContact> {
+            return FfiConverterSequenceTypeChatContact.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_contact_book_from_json(
+        it,
+        
+        FfiConverterString.lower(`json`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Convert a list of contacts to JSON.
+     */
+    @Throws(LightNodeException::class)override fun `contactBookToJson`(`contacts`: List<ChatContact>): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_contact_book_to_json(
+        it,
+        
+        FfiConverterSequenceTypeChatContact.lower(`contacts`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Create a new chat message.
+     */
+    @Throws(LightNodeException::class)override fun `createChatMessage`(`senderPubkeyHex`: kotlin.String, `recipientPubkeyHex`: kotlin.String, `plaintext`: kotlin.String, `timestamp`: kotlin.ULong): ChatMessageInfo {
+            return FfiConverterTypeChatMessageInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_create_chat_message(
+        it,
+        
+        FfiConverterString.lower(`senderPubkeyHex`),
+        FfiConverterString.lower(`recipientPubkeyHex`),
+        FfiConverterString.lower(`plaintext`),
+        FfiConverterULong.lower(`timestamp`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
      * Create an HTLC output locking `amount` (of `asset_id_hex`, or native
      * KVNC when `None`) to a Version 0x04 address committing to
      * `preimage_hash`, `recipient_pk`, this signer as sender, and `timeout`.
@@ -2619,6 +2968,407 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
         FfiConverterUInt.lower(`unlockHeight`),
         FfiConverterUInt.lower(`csv`),
         FfiConverterString.lower(`ownerPkHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decode a call signal from hex.
+     */
+    @Throws(LightNodeException::class)override fun `decodeCallSignal`(`hexStr`: kotlin.String): CallSignalInfo {
+            return FfiConverterTypeCallSignalInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decode_call_signal(
+        it,
+        
+        FfiConverterString.lower(`hexStr`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decode a chat message from hex.
+     */
+    @Throws(LightNodeException::class)override fun `decodeChatMessage`(`hexStr`: kotlin.String): ChatMessageInfo {
+            return FfiConverterTypeChatMessageInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decode_chat_message(
+        it,
+        
+        FfiConverterString.lower(`hexStr`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decode a file chunk from hex.
+     */
+    @Throws(LightNodeException::class)override fun `decodeFileChunk`(`hexStr`: kotlin.String): FileChunkInfo {
+            return FfiConverterTypeFileChunkInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decode_file_chunk(
+        it,
+        
+        FfiConverterString.lower(`hexStr`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decode a payment request from hex.
+     */
+    @Throws(LightNodeException::class)override fun `decodePaymentRequest`(`hexStr`: kotlin.String): PaymentRequestInfo {
+            return FfiConverterTypePaymentRequestInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decode_payment_request(
+        it,
+        
+        FfiConverterString.lower(`hexStr`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decode a tipped chat message from hex.
+     */
+    @Throws(LightNodeException::class)override fun `decodeTippedChat`(`hexStr`: kotlin.String): TippedChatInfo {
+            return FfiConverterTypeTippedChatInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decode_tipped_chat(
+        it,
+        
+        FfiConverterString.lower(`hexStr`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decode a voice message from hex.
+     */
+    @Throws(LightNodeException::class)override fun `decodeVoiceMessage`(`hexStr`: kotlin.String): VoiceMessageInfo {
+            return FfiConverterTypeVoiceMessageInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decode_voice_message(
+        it,
+        
+        FfiConverterString.lower(`hexStr`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decrypt a chat message with the recipient's secret.
+     */
+    @Throws(LightNodeException::class)override fun `decryptChatMessage`(`recipientSecretHex`: kotlin.String, `ephemeralPkHex`: kotlin.String, `nonceHex`: kotlin.String, `ciphertextHex`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decrypt_chat_message(
+        it,
+        
+        FfiConverterString.lower(`recipientSecretHex`),
+        FfiConverterString.lower(`ephemeralPkHex`),
+        FfiConverterString.lower(`nonceHex`),
+        FfiConverterString.lower(`ciphertextHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decrypt a file chunk with the recipient's secret.
+     *
+     * `chunk` is the record as it arrived — from `encrypt_file_chunk` locally
+     * or `decode_file_chunk` off the wire. Its `file_id_hex`, `chunk_index`
+     * and `total_chunks` are authenticated as AAD, so a chunk that was
+     * renumbered or re-pointed at another transfer in transit fails the tag
+     * check here instead of reassembling into a corrupt file.
+     */
+    @Throws(LightNodeException::class)override fun `decryptFileChunk`(`recipientSecretHex`: kotlin.String, `chunk`: FileChunkInfo): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decrypt_file_chunk(
+        it,
+        
+        FfiConverterString.lower(`recipientSecretHex`),
+        FfiConverterTypeFileChunkInfo.lower(`chunk`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decrypt a tipped chat message with the recipient's secret.
+     *
+     * The counterpart to [`Self::encrypt_tipped_chat`]. Both the text and the
+     * tip amount are inside the authenticated payload, so neither can be
+     * altered in transit without the tag check failing.
+     */
+    @Throws(LightNodeException::class)override fun `decryptTippedChat`(`recipientSecretHex`: kotlin.String, `ephemeralPkHex`: kotlin.String, `nonceHex`: kotlin.String, `ciphertextHex`: kotlin.String): TippedChatInfo {
+            return FfiConverterTypeTippedChatInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decrypt_tipped_chat(
+        it,
+        
+        FfiConverterString.lower(`recipientSecretHex`),
+        FfiConverterString.lower(`ephemeralPkHex`),
+        FfiConverterString.lower(`nonceHex`),
+        FfiConverterString.lower(`ciphertextHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Decrypt a voice message with the recipient's secret.
+     *
+     * `message` is the record as it arrived — from `encrypt_voice_message`
+     * locally or `decode_voice_message` off the wire. Its `duration_ms` is
+     * authenticated as AAD, so a duration altered in transit fails the tag
+     * check here rather than yielding audio that plays back at the wrong
+     * length.
+     */
+    @Throws(LightNodeException::class)override fun `decryptVoiceMessage`(`recipientSecretHex`: kotlin.String, `message`: VoiceMessageInfo): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_decrypt_voice_message(
+        it,
+        
+        FfiConverterString.lower(`recipientSecretHex`),
+        FfiConverterTypeVoiceMessageInfo.lower(`message`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encode a call signal to hex.
+     */
+    @Throws(LightNodeException::class)override fun `encodeCallSignal`(`callIdHex`: kotlin.String, `signalType`: CallSignalType, `dataHex`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encode_call_signal(
+        it,
+        
+        FfiConverterString.lower(`callIdHex`),
+        FfiConverterTypeCallSignalType.lower(`signalType`),
+        FfiConverterString.lower(`dataHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encode a chat message to hex.
+     */
+    @Throws(LightNodeException::class)override fun `encodeChatMessage`(`message`: ChatMessageInfo): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encode_chat_message(
+        it,
+        
+        FfiConverterTypeChatMessageInfo.lower(`message`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encode a file chunk to hex.
+     */
+    @Throws(LightNodeException::class)override fun `encodeFileChunk`(`chunk`: FileChunkInfo): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encode_file_chunk(
+        it,
+        
+        FfiConverterTypeFileChunkInfo.lower(`chunk`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encode a payment request to hex.
+     */
+    @Throws(LightNodeException::class)override fun `encodePaymentRequest`(`recipientPubkeyHex`: kotlin.String, `amount`: kotlin.ULong, `message`: kotlin.String): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encode_payment_request(
+        it,
+        
+        FfiConverterString.lower(`recipientPubkeyHex`),
+        FfiConverterULong.lower(`amount`),
+        FfiConverterString.lower(`message`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encode a tipped chat message to hex.
+     */
+    @Throws(LightNodeException::class)override fun `encodeTippedChat`(`message`: ChatMessageInfo, `tipAmount`: kotlin.ULong): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encode_tipped_chat(
+        it,
+        
+        FfiConverterTypeChatMessageInfo.lower(`message`),
+        FfiConverterULong.lower(`tipAmount`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encode a voice message to hex.
+     */
+    @Throws(LightNodeException::class)override fun `encodeVoiceMessage`(`msg`: VoiceMessageInfo): kotlin.String {
+            return FfiConverterString.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encode_voice_message(
+        it,
+        
+        FfiConverterTypeVoiceMessageInfo.lower(`msg`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encrypt a chat message for a recipient.
+     */
+    @Throws(LightNodeException::class)override fun `encryptChatMessage`(`senderPubkeyHex`: kotlin.String, `recipientPubkeyHex`: kotlin.String, `plaintext`: kotlin.String): ChatPayloadInfo {
+            return FfiConverterTypeChatPayloadInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encrypt_chat_message(
+        it,
+        
+        FfiConverterString.lower(`senderPubkeyHex`),
+        FfiConverterString.lower(`recipientPubkeyHex`),
+        FfiConverterString.lower(`plaintext`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encrypt a file chunk for a recipient.
+     */
+    @Throws(LightNodeException::class)override fun `encryptFileChunk`(`recipientPubkeyHex`: kotlin.String, `fileIdHex`: kotlin.String, `chunkIndex`: kotlin.UShort, `totalChunks`: kotlin.UShort, `chunkDataHex`: kotlin.String): FileChunkInfo {
+            return FfiConverterTypeFileChunkInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encrypt_file_chunk(
+        it,
+        
+        FfiConverterString.lower(`recipientPubkeyHex`),
+        FfiConverterString.lower(`fileIdHex`),
+        FfiConverterUShort.lower(`chunkIndex`),
+        FfiConverterUShort.lower(`totalChunks`),
+        FfiConverterString.lower(`chunkDataHex`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encrypt a tipped chat message for a recipient.
+     */
+    @Throws(LightNodeException::class)override fun `encryptTippedChat`(`senderPubkeyHex`: kotlin.String, `recipientPubkeyHex`: kotlin.String, `plaintext`: kotlin.String, `timestamp`: kotlin.ULong, `tipAmount`: kotlin.ULong): ChatPayloadInfo {
+            return FfiConverterTypeChatPayloadInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encrypt_tipped_chat(
+        it,
+        
+        FfiConverterString.lower(`senderPubkeyHex`),
+        FfiConverterString.lower(`recipientPubkeyHex`),
+        FfiConverterString.lower(`plaintext`),
+        FfiConverterULong.lower(`timestamp`),
+        FfiConverterULong.lower(`tipAmount`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Encrypt a voice message for a recipient.
+     */
+    @Throws(LightNodeException::class)override fun `encryptVoiceMessage`(`recipientPubkeyHex`: kotlin.String, `durationMs`: kotlin.UInt, `audioDataHex`: kotlin.String): VoiceMessageInfo {
+            return FfiConverterTypeVoiceMessageInfo.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_encrypt_voice_message(
+        it,
+        
+        FfiConverterString.lower(`recipientPubkeyHex`),
+        FfiConverterUInt.lower(`durationMs`),
+        FfiConverterString.lower(`audioDataHex`),_status)
 }
     }
     )
@@ -3518,6 +4268,234 @@ public object FfiConverterTypeBlockInfo: FfiConverterRustBuffer<BlockInfo> {
 
 
 /**
+ * A call signaling message.
+ */
+data class CallSignalInfo (
+    /**
+     * Unique call identifier (16 bytes, lowercase hex).
+     */
+    var `callIdHex`: kotlin.String
+    , 
+    /**
+     * Signal type.
+     */
+    var `signalType`: CallSignalType
+    , 
+    /**
+     * Signal-specific payload (SDP, ICE candidate, etc., lowercase hex).
+     */
+    var `dataHex`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCallSignalInfo: FfiConverterRustBuffer<CallSignalInfo> {
+    override fun read(buf: ByteBuffer): CallSignalInfo {
+        return CallSignalInfo(
+            FfiConverterString.read(buf),
+            FfiConverterTypeCallSignalType.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: CallSignalInfo) = (
+            FfiConverterString.allocationSize(value.`callIdHex`) +
+            FfiConverterTypeCallSignalType.allocationSize(value.`signalType`) +
+            FfiConverterString.allocationSize(value.`dataHex`)
+    )
+
+    override fun write(value: CallSignalInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`callIdHex`, buf)
+            FfiConverterTypeCallSignalType.write(value.`signalType`, buf)
+            FfiConverterString.write(value.`dataHex`, buf)
+    }
+}
+
+
+
+/**
+ * A contact in the chat contact book.
+ */
+data class ChatContact (
+    /**
+     * Contact's Ed25519 public key (32 bytes, lowercase hex).
+     */
+    var `pubkeyHex`: kotlin.String
+    , 
+    /**
+     * Human-readable name (max 64 bytes).
+     */
+    var `name`: kotlin.String
+    , 
+    /**
+     * Optional note (max 200 bytes).
+     */
+    var `note`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChatContact: FfiConverterRustBuffer<ChatContact> {
+    override fun read(buf: ByteBuffer): ChatContact {
+        return ChatContact(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ChatContact) = (
+            FfiConverterString.allocationSize(value.`pubkeyHex`) +
+            FfiConverterString.allocationSize(value.`name`) +
+            FfiConverterString.allocationSize(value.`note`)
+    )
+
+    override fun write(value: ChatContact, buf: ByteBuffer) {
+            FfiConverterString.write(value.`pubkeyHex`, buf)
+            FfiConverterString.write(value.`name`, buf)
+            FfiConverterString.write(value.`note`, buf)
+    }
+}
+
+
+
+/**
+ * A decrypted chat message.
+ */
+data class ChatMessageInfo (
+    /**
+     * Sender's Ed25519 public key (32 bytes, lowercase hex).
+     */
+    var `senderPubkeyHex`: kotlin.String
+    , 
+    /**
+     * Recipient's Ed25519 public key (32 bytes, lowercase hex).
+     */
+    var `recipientPubkeyHex`: kotlin.String
+    , 
+    /**
+     * Decrypted plaintext (max 200 bytes).
+     */
+    var `plaintext`: kotlin.String
+    , 
+    /**
+     * Unix timestamp (seconds since epoch).
+     */
+    var `timestamp`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChatMessageInfo: FfiConverterRustBuffer<ChatMessageInfo> {
+    override fun read(buf: ByteBuffer): ChatMessageInfo {
+        return ChatMessageInfo(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ChatMessageInfo) = (
+            FfiConverterString.allocationSize(value.`senderPubkeyHex`) +
+            FfiConverterString.allocationSize(value.`recipientPubkeyHex`) +
+            FfiConverterString.allocationSize(value.`plaintext`) +
+            FfiConverterULong.allocationSize(value.`timestamp`)
+    )
+
+    override fun write(value: ChatMessageInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`senderPubkeyHex`, buf)
+            FfiConverterString.write(value.`recipientPubkeyHex`, buf)
+            FfiConverterString.write(value.`plaintext`, buf)
+            FfiConverterULong.write(value.`timestamp`, buf)
+    }
+}
+
+
+
+/**
+ * An encrypted chat payload (on-chain wire format).
+ */
+data class ChatPayloadInfo (
+    /**
+     * Ephemeral X25519 public key (32 bytes, lowercase hex).
+     */
+    var `ephemeralPkHex`: kotlin.String
+    , 
+    /**
+     * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+     */
+    var `nonceHex`: kotlin.String
+    , 
+    /**
+     * Ciphertext including 16-byte Poly1305 tag (lowercase hex).
+     */
+    var `ciphertextHex`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeChatPayloadInfo: FfiConverterRustBuffer<ChatPayloadInfo> {
+    override fun read(buf: ByteBuffer): ChatPayloadInfo {
+        return ChatPayloadInfo(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ChatPayloadInfo) = (
+            FfiConverterString.allocationSize(value.`ephemeralPkHex`) +
+            FfiConverterString.allocationSize(value.`nonceHex`) +
+            FfiConverterString.allocationSize(value.`ciphertextHex`)
+    )
+
+    override fun write(value: ChatPayloadInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`ephemeralPkHex`, buf)
+            FfiConverterString.write(value.`nonceHex`, buf)
+            FfiConverterString.write(value.`ciphertextHex`, buf)
+    }
+}
+
+
+
+/**
  * An output specification for CoinJoin.
  */
 data class CoinJoinOutput (
@@ -3767,6 +4745,156 @@ public object FfiConverterTypeDerivedAccount: FfiConverterRustBuffer<DerivedAcco
             FfiConverterString.write(value.`signingSecretHex`, buf)
             FfiConverterString.write(value.`derivationPath`, buf)
             FfiConverterUInt.write(value.`addressIndex`, buf)
+    }
+}
+
+
+
+/**
+ * An encrypted file chunk.
+ */
+data class FileChunkInfo (
+    /**
+     * Unique file identifier (16 bytes, lowercase hex).
+     */
+    var `fileIdHex`: kotlin.String
+    , 
+    /**
+     * Zero-based chunk index.
+     */
+    var `chunkIndex`: kotlin.UShort
+    , 
+    /**
+     * Total number of chunks.
+     */
+    var `totalChunks`: kotlin.UShort
+    , 
+    /**
+     * Ephemeral X25519 public key (32 bytes, lowercase hex).
+     */
+    var `ephemeralPkHex`: kotlin.String
+    , 
+    /**
+     * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+     */
+    var `nonceHex`: kotlin.String
+    , 
+    /**
+     * Encrypted chunk data (includes 16-byte Poly1305 tag, lowercase hex).
+     */
+    var `ciphertextHex`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFileChunkInfo: FfiConverterRustBuffer<FileChunkInfo> {
+    override fun read(buf: ByteBuffer): FileChunkInfo {
+        return FileChunkInfo(
+            FfiConverterString.read(buf),
+            FfiConverterUShort.read(buf),
+            FfiConverterUShort.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FileChunkInfo) = (
+            FfiConverterString.allocationSize(value.`fileIdHex`) +
+            FfiConverterUShort.allocationSize(value.`chunkIndex`) +
+            FfiConverterUShort.allocationSize(value.`totalChunks`) +
+            FfiConverterString.allocationSize(value.`ephemeralPkHex`) +
+            FfiConverterString.allocationSize(value.`nonceHex`) +
+            FfiConverterString.allocationSize(value.`ciphertextHex`)
+    )
+
+    override fun write(value: FileChunkInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileIdHex`, buf)
+            FfiConverterUShort.write(value.`chunkIndex`, buf)
+            FfiConverterUShort.write(value.`totalChunks`, buf)
+            FfiConverterString.write(value.`ephemeralPkHex`, buf)
+            FfiConverterString.write(value.`nonceHex`, buf)
+            FfiConverterString.write(value.`ciphertextHex`, buf)
+    }
+}
+
+
+
+/**
+ * A file transfer session.
+ */
+data class FileTransferInfo (
+    /**
+     * Unique file identifier (16 bytes, lowercase hex).
+     */
+    var `fileIdHex`: kotlin.String
+    , 
+    /**
+     * Total file size in bytes.
+     */
+    var `totalSize`: kotlin.ULong
+    , 
+    /**
+     * Chunk size in bytes.
+     */
+    var `chunkSize`: kotlin.UInt
+    , 
+    /**
+     * Number of chunks.
+     */
+    var `numChunks`: kotlin.UInt
+    , 
+    /**
+     * File name.
+     */
+    var `filename`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeFileTransferInfo: FfiConverterRustBuffer<FileTransferInfo> {
+    override fun read(buf: ByteBuffer): FileTransferInfo {
+        return FileTransferInfo(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: FileTransferInfo) = (
+            FfiConverterString.allocationSize(value.`fileIdHex`) +
+            FfiConverterULong.allocationSize(value.`totalSize`) +
+            FfiConverterUInt.allocationSize(value.`chunkSize`) +
+            FfiConverterUInt.allocationSize(value.`numChunks`) +
+            FfiConverterString.allocationSize(value.`filename`)
+    )
+
+    override fun write(value: FileTransferInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`fileIdHex`, buf)
+            FfiConverterULong.write(value.`totalSize`, buf)
+            FfiConverterUInt.write(value.`chunkSize`, buf)
+            FfiConverterUInt.write(value.`numChunks`, buf)
+            FfiConverterString.write(value.`filename`, buf)
     }
 }
 
@@ -4135,6 +5263,61 @@ public object FfiConverterTypeMultisigSpendOutput: FfiConverterRustBuffer<Multis
 
 
 /**
+ * A payment request (PREQ tag).
+ */
+data class PaymentRequestInfo (
+    /**
+     * Requester's Ed25519 public key (32 bytes, lowercase hex).
+     */
+    var `recipientPubkeyHex`: kotlin.String
+    , 
+    /**
+     * Requested amount in atoms.
+     */
+    var `amount`: kotlin.ULong
+    , 
+    /**
+     * Optional note (max 200 bytes).
+     */
+    var `message`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePaymentRequestInfo: FfiConverterRustBuffer<PaymentRequestInfo> {
+    override fun read(buf: ByteBuffer): PaymentRequestInfo {
+        return PaymentRequestInfo(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PaymentRequestInfo) = (
+            FfiConverterString.allocationSize(value.`recipientPubkeyHex`) +
+            FfiConverterULong.allocationSize(value.`amount`) +
+            FfiConverterString.allocationSize(value.`message`)
+    )
+
+    override fun write(value: PaymentRequestInfo, buf: ByteBuffer) {
+            FfiConverterString.write(value.`recipientPubkeyHex`, buf)
+            FfiConverterULong.write(value.`amount`, buf)
+            FfiConverterString.write(value.`message`, buf)
+    }
+}
+
+
+
+/**
  * Result of an immediate send: which block sealed the transfer and its tx id.
  */
 data class SendReceipt (
@@ -4170,6 +5353,53 @@ public object FfiConverterTypeSendReceipt: FfiConverterRustBuffer<SendReceipt> {
     override fun write(value: SendReceipt, buf: ByteBuffer) {
             FfiConverterString.write(value.`blockIdHex`, buf)
             FfiConverterString.write(value.`txIdHex`, buf)
+    }
+}
+
+
+
+/**
+ * A tipped chat message (chat + KVNC tip).
+ */
+data class TippedChatInfo (
+    /**
+     * The underlying chat message.
+     */
+    var `message`: ChatMessageInfo
+    , 
+    /**
+     * Tip amount in atoms (1 KVNC = 100_000_000 atoms).
+     */
+    var `tipAmount`: kotlin.ULong
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeTippedChatInfo: FfiConverterRustBuffer<TippedChatInfo> {
+    override fun read(buf: ByteBuffer): TippedChatInfo {
+        return TippedChatInfo(
+            FfiConverterTypeChatMessageInfo.read(buf),
+            FfiConverterULong.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: TippedChatInfo) = (
+            FfiConverterTypeChatMessageInfo.allocationSize(value.`message`) +
+            FfiConverterULong.allocationSize(value.`tipAmount`)
+    )
+
+    override fun write(value: TippedChatInfo, buf: ByteBuffer) {
+            FfiConverterTypeChatMessageInfo.write(value.`message`, buf)
+            FfiConverterULong.write(value.`tipAmount`, buf)
     }
 }
 
@@ -4285,6 +5515,120 @@ public object FfiConverterTypeVaultInfo: FfiConverterRustBuffer<VaultInfo> {
             FfiConverterUInt.write(value.`outpointIndex`, buf)
     }
 }
+
+
+
+/**
+ * An encrypted voice message.
+ */
+data class VoiceMessageInfo (
+    /**
+     * Audio duration in milliseconds.
+     */
+    var `durationMs`: kotlin.UInt
+    , 
+    /**
+     * Ephemeral X25519 public key (32 bytes, lowercase hex).
+     */
+    var `ephemeralPkHex`: kotlin.String
+    , 
+    /**
+     * ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+     */
+    var `nonceHex`: kotlin.String
+    , 
+    /**
+     * Encrypted audio data (includes 16-byte Poly1305 tag, lowercase hex).
+     */
+    var `ciphertextHex`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeVoiceMessageInfo: FfiConverterRustBuffer<VoiceMessageInfo> {
+    override fun read(buf: ByteBuffer): VoiceMessageInfo {
+        return VoiceMessageInfo(
+            FfiConverterUInt.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: VoiceMessageInfo) = (
+            FfiConverterUInt.allocationSize(value.`durationMs`) +
+            FfiConverterString.allocationSize(value.`ephemeralPkHex`) +
+            FfiConverterString.allocationSize(value.`nonceHex`) +
+            FfiConverterString.allocationSize(value.`ciphertextHex`)
+    )
+
+    override fun write(value: VoiceMessageInfo, buf: ByteBuffer) {
+            FfiConverterUInt.write(value.`durationMs`, buf)
+            FfiConverterString.write(value.`ephemeralPkHex`, buf)
+            FfiConverterString.write(value.`nonceHex`, buf)
+            FfiConverterString.write(value.`ciphertextHex`, buf)
+    }
+}
+
+
+
+/**
+ * Call signal type.
+ */
+
+enum class CallSignalType {
+    
+    /**
+     * Call offer (SDP offer).
+     */
+    OFFER,
+    /**
+     * Call answer (SDP answer).
+     */
+    ANSWER,
+    /**
+     * ICE candidate.
+     */
+    ICE_CANDIDATE,
+    /**
+     * Hang up.
+     */
+    HANGUP;
+
+    
+
+
+    companion object
+}
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeCallSignalType: FfiConverterRustBuffer<CallSignalType> {
+    override fun read(buf: ByteBuffer) = try {
+        CallSignalType.values()[buf.getInt() - 1]
+    } catch (e: IndexOutOfBoundsException) {
+        throw RuntimeException("invalid enum value, something is very wrong!!", e)
+    }
+
+    override fun allocationSize(value: CallSignalType) = 4UL
+
+    override fun write(value: CallSignalType, buf: ByteBuffer) {
+        buf.putInt(value.ordinal + 1)
+    }
+}
+
+
 
 
 
@@ -4435,6 +5779,54 @@ sealed class LightNodeException: kotlin.Exception() {
             get() = "msg=${ `msg` }"
     }
     
+    class Chat(
+        
+        val `msg`: kotlin.String
+        ) : LightNodeException() {
+        override val message
+            get() = "msg=${ `msg` }"
+    }
+    
+    class Contact(
+        
+        val `msg`: kotlin.String
+        ) : LightNodeException() {
+        override val message
+            get() = "msg=${ `msg` }"
+    }
+    
+    class File(
+        
+        val `msg`: kotlin.String
+        ) : LightNodeException() {
+        override val message
+            get() = "msg=${ `msg` }"
+    }
+    
+    class Voice(
+        
+        val `msg`: kotlin.String
+        ) : LightNodeException() {
+        override val message
+            get() = "msg=${ `msg` }"
+    }
+    
+    class Call(
+        
+        val `msg`: kotlin.String
+        ) : LightNodeException() {
+        override val message
+            get() = "msg=${ `msg` }"
+    }
+    
+    class PaymentRequest(
+        
+        val `msg`: kotlin.String
+        ) : LightNodeException() {
+        override val message
+            get() = "msg=${ `msg` }"
+    }
+    
 
     
 
@@ -4469,6 +5861,24 @@ public object FfiConverterTypeLightNodeError : FfiConverterRustBuffer<LightNodeE
                 FfiConverterUInt.read(buf),
                 )
             6 -> LightNodeException.Node(
+                FfiConverterString.read(buf),
+                )
+            7 -> LightNodeException.Chat(
+                FfiConverterString.read(buf),
+                )
+            8 -> LightNodeException.Contact(
+                FfiConverterString.read(buf),
+                )
+            9 -> LightNodeException.File(
+                FfiConverterString.read(buf),
+                )
+            10 -> LightNodeException.Voice(
+                FfiConverterString.read(buf),
+                )
+            11 -> LightNodeException.Call(
+                FfiConverterString.read(buf),
+                )
+            12 -> LightNodeException.PaymentRequest(
                 FfiConverterString.read(buf),
                 )
             else -> throw RuntimeException("invalid error enum value, something is very wrong!!")
@@ -4507,6 +5917,36 @@ public object FfiConverterTypeLightNodeError : FfiConverterRustBuffer<LightNodeE
                 4UL
                 + FfiConverterString.allocationSize(value.`msg`)
             )
+            is LightNodeException.Chat -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`msg`)
+            )
+            is LightNodeException.Contact -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`msg`)
+            )
+            is LightNodeException.File -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`msg`)
+            )
+            is LightNodeException.Voice -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`msg`)
+            )
+            is LightNodeException.Call -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`msg`)
+            )
+            is LightNodeException.PaymentRequest -> (
+                // Add the size for the Int that specifies the variant plus the size needed for all fields
+                4UL
+                + FfiConverterString.allocationSize(value.`msg`)
+            )
         }
     }
 
@@ -4539,6 +5979,36 @@ public object FfiConverterTypeLightNodeError : FfiConverterRustBuffer<LightNodeE
             }
             is LightNodeException.Node -> {
                 buf.putInt(6)
+                FfiConverterString.write(value.`msg`, buf)
+                Unit
+            }
+            is LightNodeException.Chat -> {
+                buf.putInt(7)
+                FfiConverterString.write(value.`msg`, buf)
+                Unit
+            }
+            is LightNodeException.Contact -> {
+                buf.putInt(8)
+                FfiConverterString.write(value.`msg`, buf)
+                Unit
+            }
+            is LightNodeException.File -> {
+                buf.putInt(9)
+                FfiConverterString.write(value.`msg`, buf)
+                Unit
+            }
+            is LightNodeException.Voice -> {
+                buf.putInt(10)
+                FfiConverterString.write(value.`msg`, buf)
+                Unit
+            }
+            is LightNodeException.Call -> {
+                buf.putInt(11)
+                FfiConverterString.write(value.`msg`, buf)
+                Unit
+            }
+            is LightNodeException.PaymentRequest -> {
+                buf.putInt(12)
                 FfiConverterString.write(value.`msg`, buf)
                 Unit
             }
@@ -4802,6 +6272,34 @@ public object FfiConverterSequenceByteArray: FfiConverterRustBuffer<List<kotlin.
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterByteArray.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeChatContact: FfiConverterRustBuffer<List<ChatContact>> {
+    override fun read(buf: ByteBuffer): List<ChatContact> {
+        val len = buf.getInt()
+        return List<ChatContact>(len) {
+            FfiConverterTypeChatContact.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ChatContact>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeChatContact.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ChatContact>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeChatContact.write(it, buf)
         }
     }
 }
