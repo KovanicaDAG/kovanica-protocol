@@ -133,8 +133,8 @@ xcodebuild -exportArchive \
 ## Regenerating the Swift bindings
 
 The bindings are **committed** and CI diffs them against a fresh generation
-(`protocol/.github/workflows/bindings.yml`), so any change to the Rust FFI
-surface must ship with regenerated bindings:
+(`.github/workflows/bindings-drift.yml` at the repository root), so any change
+to the Rust FFI surface must ship with regenerated bindings:
 
 ```bash
 cd protocol

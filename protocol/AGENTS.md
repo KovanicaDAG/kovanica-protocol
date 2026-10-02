@@ -1175,11 +1175,16 @@ deterministic + adversarial tests per the conventions above.
     `uniffi.kovanica`, minSdk 24) compiling the committed `bindings/kotlin`
     tree via `sourceSets`; sole runtime dep `net.java.dev.jna:jna:5.14.0@aar`;
     consumer R8 rules included.
-  - Drift guard: `.github/workflows/bindings.yml` regenerates kotlin+swift
+  - Drift guard: `.github/workflows/bindings-drift.yml` at the **repository
+    root** regenerates kotlin+swift
     into a temp dir on every PR touching `crates/kovanica-ffi/**` and fails
     on any difference (`diff -r -x README.md` — the hand-written READMEs sit
     beside generated output and must not trip it), plus shellcheck of both
     scripts. Verified byte-identical at landing.
+    NOTE: this guard originally lived at `protocol/.github/workflows/bindings.yml`
+    and never ran — `protocol/` is a plain directory, not a submodule, and
+    GitHub Actions only reads `<repo-root>/.github/workflows/`. The root-level
+    path is the one that actually executes.
   - Mirror decision resolved as recommended: `kovanica-ffi` now rides
     `sync-public-node.yml`; kovanica-cli stays excluded.
 - **Slice 7 — wallet UX layer (node + FFI)**:

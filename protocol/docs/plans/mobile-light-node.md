@@ -289,11 +289,17 @@ rejected (mirror adversarial_spv.rs cases through FFI types).
   header + modulemap embedded per slice. Required adding `"staticlib"` to
   the crate-type list (App Store rules forbid shipping our own dylibs on
   iOS; cdylib stays for Android/JNA).
-- Drift guard (`.github/workflows/bindings.yml`): release-build the cdylib,
-  regenerate kotlin+swift into /tmp, `diff -r -x README.md` against the
+- Drift guard (`.github/workflows/bindings-drift.yml`): release-build the
+  cdylib, regenerate kotlin+swift into /tmp, `diff -r -x README.md` against the
   committed trees (READMEs are hand-written neighbours, not bindgen output),
   plus shellcheck of both scripts. Verified locally: generated output is
   byte-identical today.
+  *(Correction, added later: as originally written this guard sat at
+  `protocol/.github/workflows/bindings.yml` and therefore never executed —
+  `protocol/` is a plain directory, not a submodule, so GitHub Actions ignored
+  the whole directory. The Kotlin half was additionally unguarded, because the
+  one live check was a Swift-only step embedded in the macOS iOS job. It now
+  runs from the repository root and covers both languages.)*
 - Mirror decision resolved as recommended: `kovanica-ffi` now rides
   `sync-public-node.yml` (rsync loop + header note); kovanica-cli stays out.
 - Un-vendored as planned: no pods/mavens; runtime versions documented in
