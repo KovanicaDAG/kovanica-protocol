@@ -678,7 +678,6 @@ name = "kovanica-merchant"
 version = "0.4.0"
 dependencies = [
  "blake3",
- "kovanica-airdrop",
  "kovanica-bridge",
  "kovanica-tx",
  "kovanica-types",
