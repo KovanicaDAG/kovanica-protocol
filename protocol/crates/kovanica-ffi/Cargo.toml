@@ -18,6 +18,7 @@ kovanica-dag = { path = "../kovanica-dag" }
 kovanica-state = { path = "../kovanica-state" }
 kovanica-node = { path = "../kovanica-node" }
 kovanica-wallet = { path = "../kovanica-wallet" }
+kovanica-chat = { path = "../kovanica-chat" }
 anyhow.workspace = true
 ed25519-dalek = { workspace = true }
 hex.workspace = true

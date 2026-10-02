@@ -1215,7 +1215,7 @@ dependencies = [
 
 [[package]]
 name = "kovanica-chat"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "chacha20poly1305",
@@ -1229,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "kovanica-cli"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1249,7 +1249,7 @@ dependencies = [
 
 [[package]]
 name = "kovanica-dag"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "criterion",
@@ -1265,13 +1265,14 @@ dependencies = [
 
 [[package]]
 name = "kovanica-ffi"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bincode",
  "bip39",
  "ed25519-dalek",
  "hex",
+ "kovanica-chat",
  "kovanica-dag",
  "kovanica-node",
  "kovanica-state",
@@ -1282,7 +1283,7 @@ dependencies = [
 
 [[package]]
 name = "kovanica-node"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "arbitrary",
  "base64 0.22.1",
@@ -1312,7 +1313,7 @@ dependencies = [
 
 [[package]]
 name = "kovanica-state"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "blake3",
  "criterion",
@@ -1335,7 +1336,7 @@ dependencies = [
 
 [[package]]
 name = "kovanica-wallet"
-version = "0.4.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "bip39",

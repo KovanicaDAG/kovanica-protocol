@@ -21,6 +21,12 @@
 
 use std::sync::{Mutex, MutexGuard};
 
+use kovanica_chat::{
+    CallError, CallSignal, ChatMessage, ChatPayload, Contact, ContactBook, ContactError,
+    FileChunk, FileError, PaymentRequest, RequestError, SignalType, TippedChat,
+    VoiceError, VoiceMessage,
+};
+use kovanica_chat::message::ChatError;
 use kovanica_dag::{AuthorityPublicKey, AuthoritySet, BlockId};
 use kovanica_node::{net, Node, TreasuryGenesis};
 use kovanica_state::{OutPoint, StealthAddress, Transaction, TxOutput, RFC006_PREMINE};
@@ -40,6 +46,54 @@ pub enum LightNodeError {
     BadSecretLength { expected: u32, got: u32 },
     #[error("node error: {msg}")]
     Node { msg: String },
+    #[error("chat error: {msg}")]
+    Chat { msg: String },
+    #[error("contact error: {msg}")]
+    Contact { msg: String },
+    #[error("file error: {msg}")]
+    File { msg: String },
+    #[error("voice error: {msg}")]
+    Voice { msg: String },
+    #[error("call error: {msg}")]
+    Call { msg: String },
+    #[error("payment request error: {msg}")]
+    PaymentRequest { msg: String },
+}
+
+impl From<ChatError> for LightNodeError {
+    fn from(e: ChatError) -> Self {
+        LightNodeError::Chat { msg: e.to_string() }
+    }
+}
+
+impl From<ContactError> for LightNodeError {
+    fn from(e: ContactError) -> Self {
+        LightNodeError::Contact { msg: e.to_string() }
+    }
+}
+
+impl From<FileError> for LightNodeError {
+    fn from(e: FileError) -> Self {
+        LightNodeError::File { msg: e.to_string() }
+    }
+}
+
+impl From<VoiceError> for LightNodeError {
+    fn from(e: VoiceError) -> Self {
+        LightNodeError::Voice { msg: e.to_string() }
+    }
+}
+
+impl From<CallError> for LightNodeError {
+    fn from(e: CallError) -> Self {
+        LightNodeError::Call { msg: e.to_string() }
+    }
+}
+
+impl From<RequestError> for LightNodeError {
+    fn from(e: RequestError) -> Self {
+        LightNodeError::PaymentRequest { msg: e.to_string() }
+    }
 }
 
 impl From<kovanica_node::NodeError> for LightNodeError {
@@ -301,6 +355,134 @@ pub struct VaultInfo {
     pub outpoint_tx: String,
     /// Output index of the Vault output within the funding transaction.
     pub outpoint_index: u32,
+}
+
+// ============================================================================
+// Kovanica Chat (kovanica-chat) — on-chain encrypted messaging
+// ============================================================================
+
+/// A contact in the chat contact book.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct ChatContact {
+    /// Contact's Ed25519 public key (32 bytes, lowercase hex).
+    pub pubkey_hex: String,
+    /// Human-readable name (max 64 bytes).
+    pub name: String,
+    /// Optional note (max 200 bytes).
+    pub note: String,
+}
+
+/// A decrypted chat message.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct ChatMessageInfo {
+    /// Sender's Ed25519 public key (32 bytes, lowercase hex).
+    pub sender_pubkey_hex: String,
+    /// Recipient's Ed25519 public key (32 bytes, lowercase hex).
+    pub recipient_pubkey_hex: String,
+    /// Decrypted plaintext (max 200 bytes).
+    pub plaintext: String,
+    /// Unix timestamp (seconds since epoch).
+    pub timestamp: u64,
+}
+
+/// An encrypted chat payload (on-chain wire format).
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct ChatPayloadInfo {
+    /// Ephemeral X25519 public key (32 bytes, lowercase hex).
+    pub ephemeral_pk_hex: String,
+    /// ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+    pub nonce_hex: String,
+    /// Ciphertext including 16-byte Poly1305 tag (lowercase hex).
+    pub ciphertext_hex: String,
+}
+
+/// A payment request (PREQ tag).
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct PaymentRequestInfo {
+    /// Requester's Ed25519 public key (32 bytes, lowercase hex).
+    pub recipient_pubkey_hex: String,
+    /// Requested amount in atoms.
+    pub amount: u64,
+    /// Optional note (max 200 bytes).
+    pub message: String,
+}
+
+/// An encrypted file chunk.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct FileChunkInfo {
+    /// Unique file identifier (16 bytes, lowercase hex).
+    pub file_id_hex: String,
+    /// Zero-based chunk index.
+    pub chunk_index: u16,
+    /// Total number of chunks.
+    pub total_chunks: u16,
+    /// Ephemeral X25519 public key (32 bytes, lowercase hex).
+    pub ephemeral_pk_hex: String,
+    /// ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+    pub nonce_hex: String,
+    /// Encrypted chunk data (includes 16-byte Poly1305 tag, lowercase hex).
+    pub ciphertext_hex: String,
+}
+
+/// A file transfer session.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct FileTransferInfo {
+    /// Unique file identifier (16 bytes, lowercase hex).
+    pub file_id_hex: String,
+    /// Total file size in bytes.
+    pub total_size: u64,
+    /// Chunk size in bytes.
+    pub chunk_size: u32,
+    /// Number of chunks.
+    pub num_chunks: u32,
+    /// File name.
+    pub filename: String,
+}
+
+/// An encrypted voice message.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct VoiceMessageInfo {
+    /// Audio duration in milliseconds.
+    pub duration_ms: u32,
+    /// Ephemeral X25519 public key (32 bytes, lowercase hex).
+    pub ephemeral_pk_hex: String,
+    /// ChaCha20-Poly1305 nonce (12 bytes, lowercase hex).
+    pub nonce_hex: String,
+    /// Encrypted audio data (includes 16-byte Poly1305 tag, lowercase hex).
+    pub ciphertext_hex: String,
+}
+
+/// Call signal type.
+#[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallSignalType {
+    /// Call offer (SDP offer).
+    Offer,
+    /// Call answer (SDP answer).
+    Answer,
+    /// ICE candidate.
+    IceCandidate,
+    /// Hang up.
+    Hangup,
+}
+
+/// A call signaling message.
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct CallSignalInfo {
+    /// Unique call identifier (16 bytes, lowercase hex).
+    pub call_id_hex: String,
+    /// Signal type.
+    pub signal_type: CallSignalType,
+    /// Signal-specific payload (SDP, ICE candidate, etc., lowercase hex).
+    pub data_hex: String,
+}
+
+/// A tipped chat message (chat + KVNC tip).
+#[derive(uniffi::Record, Clone, Debug)]
+pub struct TippedChatInfo {
+    /// The underlying chat message.
+    pub message: ChatMessageInfo,
+    /// Tip amount in atoms (1 KVNC = 100_000_000 atoms).
+    pub tip_amount: u64,
 }
 
 /// A Kovanica light node: ledger + mempool + hybrid validator identity.
@@ -1418,6 +1600,422 @@ impl LightNode {
         // Submit the signed transaction
         node.submit_tx(tx)?;
         Ok("submitted".to_string())
+    }
+
+    // ===== Chat Methods =====
+
+
+    /// Encrypt a chat message for a recipient.
+    fn encrypt_chat_message(
+        &self,
+        sender_pubkey_hex: String,
+        recipient_pubkey_hex: String,
+        plaintext: String,
+    ) -> Result<ChatPayloadInfo, LightNodeError> {
+        let sender_pk = decode_32(&sender_pubkey_hex, "sender pubkey")?;
+        let recipient_pk = decode_32(&recipient_pubkey_hex, "recipient pubkey")?;
+        let payload = ChatPayload::encrypt(&sender_pk, &recipient_pk, plaintext.as_bytes())?;
+        Ok(ChatPayloadInfo {
+            ephemeral_pk_hex: hex::encode(payload.ephemeral_pk),
+            nonce_hex: hex::encode(payload.nonce),
+            ciphertext_hex: hex::encode(&payload.ciphertext),
+        })
+    }
+
+    /// Decrypt a chat message with the recipient's secret.
+    fn decrypt_chat_message(
+        &self,
+        recipient_secret_hex: String,
+        ephemeral_pk_hex: String,
+        nonce_hex: String,
+        ciphertext_hex: String,
+    ) -> Result<String, LightNodeError> {
+        let secret_bytes = decode_32(&recipient_secret_hex, "recipient secret")?;
+        let recipient_secret = kovanica_chat::crypto::ed25519_seed_to_x25519(&secret_bytes);
+        let ephemeral_pk = decode_32(&ephemeral_pk_hex, "ephemeral pk")?;
+        let nonce_bytes = decode_hex(&nonce_hex, "nonce")?;
+        let nonce: [u8; 12] = nonce_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("nonce must be 12 bytes"))?;
+        let ciphertext = decode_hex(&ciphertext_hex, "ciphertext")?;
+        let payload = ChatPayload {
+            ephemeral_pk,
+            nonce,
+            ciphertext,
+        };
+        let plaintext = payload.decrypt(&recipient_secret)?;
+        String::from_utf8(plaintext).map_err(|_| invalid("invalid utf8 in plaintext"))
+    }
+
+    /// Create a new chat message.
+    fn create_chat_message(
+        &self,
+        sender_pubkey_hex: String,
+        recipient_pubkey_hex: String,
+        plaintext: String,
+        timestamp: u64,
+    ) -> Result<ChatMessageInfo, LightNodeError> {
+        let sender = decode_32(&sender_pubkey_hex, "sender pubkey")?;
+        let recipient = decode_32(&recipient_pubkey_hex, "recipient pubkey")?;
+        let message = ChatMessage::new(sender, recipient, plaintext, timestamp);
+        Ok(ChatMessageInfo {
+            sender_pubkey_hex: hex::encode(message.sender),
+            recipient_pubkey_hex: hex::encode(message.recipient),
+            plaintext: message.plaintext,
+            timestamp: message.timestamp,
+        })
+    }
+
+    /// Encode a chat message to hex.
+    fn encode_chat_message(&self, message: ChatMessageInfo) -> Result<String, LightNodeError> {
+        let sender = decode_32(&message.sender_pubkey_hex, "sender pubkey")?;
+        let recipient = decode_32(&message.recipient_pubkey_hex, "recipient pubkey")?;
+        let msg = ChatMessage::new(sender, recipient, message.plaintext, message.timestamp);
+        Ok(hex::encode(msg.encode()))
+    }
+
+    /// Decode a chat message from hex.
+    fn decode_chat_message(&self, hex_str: String) -> Result<ChatMessageInfo, LightNodeError> {
+        let bytes = decode_hex(&hex_str, "chat message")?;
+        if bytes.len() < 72 {
+            return Err(invalid("chat message too short"));
+        }
+        let mut sender = [0u8; 32];
+        sender.copy_from_slice(&bytes[..32]);
+        let mut recipient = [0u8; 32];
+        recipient.copy_from_slice(&bytes[32..64]);
+        let timestamp = u64::from_le_bytes(bytes[64..72].try_into().unwrap());
+        let plaintext = String::from_utf8(bytes[72..].to_vec())
+            .map_err(|_| invalid("invalid utf8 in plaintext"))?;
+        Ok(ChatMessageInfo {
+            sender_pubkey_hex: hex::encode(sender),
+            recipient_pubkey_hex: hex::encode(recipient),
+            plaintext,
+            timestamp,
+        })
+    }
+
+    // ===== Contact Book Methods =====
+
+    /// Convert a list of contacts to JSON.
+    fn contact_book_to_json(&self, contacts: Vec<ChatContact>) -> Result<String, LightNodeError> {
+        let mut book = ContactBook::new();
+        for c in contacts {
+            let pubkey = decode_32(&c.pubkey_hex, "contact pubkey")?;
+            book.upsert(Contact::new(pubkey, c.name, c.note));
+        }
+        Ok(book.to_json())
+    }
+
+    /// Parse a contact book from JSON.
+    fn contact_book_from_json(&self, json: String) -> Result<Vec<ChatContact>, LightNodeError> {
+        let book = ContactBook::from_json(&json)?;
+        Ok(book
+            .list()
+            .iter()
+            .map(|c| ChatContact {
+                pubkey_hex: hex::encode(c.pubkey),
+                name: c.name.clone(),
+                note: c.note.clone(),
+            })
+            .collect())
+    }
+
+    // ===== Payment Request Methods =====
+
+    /// Encode a payment request to hex.
+    fn encode_payment_request(
+        &self,
+        recipient_pubkey_hex: String,
+        amount: u64,
+        message: String,
+    ) -> Result<String, LightNodeError> {
+        let recipient = decode_32(&recipient_pubkey_hex, "recipient pubkey")?;
+        let req = PaymentRequest {
+            recipient,
+            amount,
+            message,
+        };
+        Ok(hex::encode(req.encode()))
+    }
+
+    /// Decode a payment request from hex.
+    fn decode_payment_request(&self, hex_str: String) -> Result<PaymentRequestInfo, LightNodeError> {
+        let bytes = decode_hex(&hex_str, "payment request")?;
+        let req = PaymentRequest::decode(&bytes)?;
+        Ok(PaymentRequestInfo {
+            recipient_pubkey_hex: hex::encode(req.recipient),
+            amount: req.amount,
+            message: req.message,
+        })
+    }
+
+    // ===== File Chunk Methods =====
+
+    /// Encrypt a file chunk for a recipient.
+    fn encrypt_file_chunk(
+        &self,
+        recipient_pubkey_hex: String,
+        file_id_hex: String,
+        chunk_index: u16,
+        total_chunks: u16,
+        chunk_data_hex: String,
+    ) -> Result<FileChunkInfo, LightNodeError> {
+        let recipient_pk = decode_32(&recipient_pubkey_hex, "recipient pubkey")?;
+        let file_id_bytes = decode_hex(&file_id_hex, "file id")?;
+        let file_id: [u8; 16] = file_id_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("file id must be 16 bytes"))?;
+        let chunk_data = decode_hex(&chunk_data_hex, "chunk data")?;
+        let chunk = FileChunk::encrypt(&recipient_pk, file_id, chunk_index, total_chunks, &chunk_data)?;
+        Ok(FileChunkInfo {
+            file_id_hex: hex::encode(chunk.file_id),
+            chunk_index: chunk.chunk_index,
+            total_chunks: chunk.total_chunks,
+            ephemeral_pk_hex: hex::encode(chunk.ephemeral_pk),
+            nonce_hex: hex::encode(chunk.nonce),
+            ciphertext_hex: hex::encode(&chunk.ciphertext),
+        })
+    }
+
+    /// Decrypt a file chunk with the recipient's secret.
+    fn decrypt_file_chunk(
+        &self,
+        recipient_secret_hex: String,
+        ephemeral_pk_hex: String,
+        nonce_hex: String,
+        ciphertext_hex: String,
+    ) -> Result<String, LightNodeError> {
+        let secret_bytes = decode_32(&recipient_secret_hex, "recipient secret")?;
+        let recipient_secret = kovanica_chat::crypto::ed25519_seed_to_x25519(&secret_bytes);
+        let ephemeral_pk = decode_32(&ephemeral_pk_hex, "ephemeral pk")?;
+        let nonce_bytes = decode_hex(&nonce_hex, "nonce")?;
+        let nonce: [u8; 12] = nonce_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("nonce must be 12 bytes"))?;
+        let ciphertext = decode_hex(&ciphertext_hex, "ciphertext")?;
+        let chunk = FileChunk {
+            file_id: [0u8; 16],
+            chunk_index: 0,
+            total_chunks: 0,
+            ephemeral_pk,
+            nonce,
+            ciphertext,
+        };
+        let data = chunk.decrypt(&recipient_secret)?;
+        Ok(hex::encode(data))
+    }
+
+    /// Encode a file chunk to hex.
+    fn encode_file_chunk(&self, chunk: FileChunkInfo) -> Result<String, LightNodeError> {
+        let file_id = decode_hex(&chunk.file_id_hex, "file id")?;
+        let file_id: [u8; 16] = file_id
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("file id must be 16 bytes"))?;
+        let ephemeral_pk = decode_32(&chunk.ephemeral_pk_hex, "ephemeral pk")?;
+        let nonce_bytes = decode_hex(&chunk.nonce_hex, "nonce")?;
+        let nonce: [u8; 12] = nonce_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("nonce must be 12 bytes"))?;
+        let ciphertext = decode_hex(&chunk.ciphertext_hex, "ciphertext")?;
+        let c = FileChunk {
+            file_id,
+            chunk_index: chunk.chunk_index,
+            total_chunks: chunk.total_chunks,
+            ephemeral_pk,
+            nonce,
+            ciphertext,
+        };
+        Ok(hex::encode(c.encode()))
+    }
+
+    /// Decode a file chunk from hex.
+    fn decode_file_chunk(&self, hex_str: String) -> Result<FileChunkInfo, LightNodeError> {
+        let bytes = decode_hex(&hex_str, "file chunk")?;
+        let c = FileChunk::decode(&bytes)?;
+        Ok(FileChunkInfo {
+            file_id_hex: hex::encode(c.file_id),
+            chunk_index: c.chunk_index,
+            total_chunks: c.total_chunks,
+            ephemeral_pk_hex: hex::encode(c.ephemeral_pk),
+            nonce_hex: hex::encode(c.nonce),
+            ciphertext_hex: hex::encode(&c.ciphertext),
+        })
+    }
+
+    // ===== Voice Message Methods =====
+
+    /// Encrypt a voice message for a recipient.
+    fn encrypt_voice_message(
+        &self,
+        recipient_pubkey_hex: String,
+        duration_ms: u32,
+        audio_data_hex: String,
+    ) -> Result<VoiceMessageInfo, LightNodeError> {
+        let recipient_pk = decode_32(&recipient_pubkey_hex, "recipient pubkey")?;
+        let audio_data = decode_hex(&audio_data_hex, "audio data")?;
+        let msg = VoiceMessage::encrypt(&recipient_pk, duration_ms, &audio_data)?;
+        Ok(VoiceMessageInfo {
+            duration_ms: msg.duration_ms,
+            ephemeral_pk_hex: hex::encode(msg.ephemeral_pk),
+            nonce_hex: hex::encode(msg.nonce),
+            ciphertext_hex: hex::encode(&msg.ciphertext),
+        })
+    }
+
+    /// Decrypt a voice message with the recipient's secret.
+    fn decrypt_voice_message(
+        &self,
+        recipient_secret_hex: String,
+        ephemeral_pk_hex: String,
+        nonce_hex: String,
+        ciphertext_hex: String,
+    ) -> Result<String, LightNodeError> {
+        let secret_bytes = decode_32(&recipient_secret_hex, "recipient secret")?;
+        let recipient_secret = kovanica_chat::crypto::ed25519_seed_to_x25519(&secret_bytes);
+        let ephemeral_pk = decode_32(&ephemeral_pk_hex, "ephemeral pk")?;
+        let nonce_bytes = decode_hex(&nonce_hex, "nonce")?;
+        let nonce: [u8; 12] = nonce_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("nonce must be 12 bytes"))?;
+        let ciphertext = decode_hex(&ciphertext_hex, "ciphertext")?;
+        let msg = VoiceMessage {
+            duration_ms: 0,
+            ephemeral_pk,
+            nonce,
+            ciphertext,
+        };
+        let data = msg.decrypt(&recipient_secret)?;
+        Ok(hex::encode(data))
+    }
+
+    /// Encode a voice message to hex.
+    fn encode_voice_message(&self, msg: VoiceMessageInfo) -> Result<String, LightNodeError> {
+        let ephemeral_pk = decode_32(&msg.ephemeral_pk_hex, "ephemeral pk")?;
+        let nonce_bytes = decode_hex(&msg.nonce_hex, "nonce")?;
+        let nonce: [u8; 12] = nonce_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("nonce must be 12 bytes"))?;
+        let ciphertext = decode_hex(&msg.ciphertext_hex, "ciphertext")?;
+        let m = VoiceMessage {
+            duration_ms: msg.duration_ms,
+            ephemeral_pk,
+            nonce,
+            ciphertext,
+        };
+        Ok(hex::encode(m.encode()))
+    }
+
+    /// Decode a voice message from hex.
+    fn decode_voice_message(&self, hex_str: String) -> Result<VoiceMessageInfo, LightNodeError> {
+        let bytes = decode_hex(&hex_str, "voice message")?;
+        let m = VoiceMessage::decode(&bytes)?;
+        Ok(VoiceMessageInfo {
+            duration_ms: m.duration_ms,
+            ephemeral_pk_hex: hex::encode(m.ephemeral_pk),
+            nonce_hex: hex::encode(m.nonce),
+            ciphertext_hex: hex::encode(&m.ciphertext),
+        })
+    }
+
+    // ===== Call Signal Methods =====
+
+    /// Encode a call signal to hex.
+    fn encode_call_signal(
+        &self,
+        call_id_hex: String,
+        signal_type: CallSignalType,
+        data_hex: String,
+    ) -> Result<String, LightNodeError> {
+        let call_id_bytes = decode_hex(&call_id_hex, "call id")?;
+        let call_id: [u8; 16] = call_id_bytes
+            .as_slice()
+            .try_into()
+            .map_err(|_| invalid("call id must be 16 bytes"))?;
+        let data = decode_hex(&data_hex, "signal data")?;
+        let st = match signal_type {
+            CallSignalType::Offer => SignalType::Offer,
+            CallSignalType::Answer => SignalType::Answer,
+            CallSignalType::IceCandidate => SignalType::IceCandidate,
+            CallSignalType::Hangup => SignalType::Hangup,
+        };
+        let signal = CallSignal::new(call_id, st, data);
+        Ok(hex::encode(signal.encode()))
+    }
+
+    /// Decode a call signal from hex.
+    fn decode_call_signal(&self, hex_str: String) -> Result<CallSignalInfo, LightNodeError> {
+        let bytes = decode_hex(&hex_str, "call signal")?;
+        let signal = CallSignal::decode(&bytes)?;
+        let st = match signal.signal_type {
+            SignalType::Offer => CallSignalType::Offer,
+            SignalType::Answer => CallSignalType::Answer,
+            SignalType::IceCandidate => CallSignalType::IceCandidate,
+            SignalType::Hangup => CallSignalType::Hangup,
+        };
+        Ok(CallSignalInfo {
+            call_id_hex: hex::encode(signal.call_id),
+            signal_type: st,
+            data_hex: hex::encode(&signal.data),
+        })
+    }
+
+    // ===== Tipped Chat Methods =====
+
+    /// Encode a tipped chat message to hex.
+    fn encode_tipped_chat(
+        &self,
+        message: ChatMessageInfo,
+        tip_amount: u64,
+    ) -> Result<String, LightNodeError> {
+        let sender = decode_32(&message.sender_pubkey_hex, "sender pubkey")?;
+        let recipient = decode_32(&message.recipient_pubkey_hex, "recipient pubkey")?;
+        let msg = ChatMessage::new(sender, recipient, message.plaintext, message.timestamp);
+        let tipped = TippedChat::new(msg, tip_amount);
+        Ok(hex::encode(tipped.encode()))
+    }
+
+    /// Decode a tipped chat message from hex.
+    fn decode_tipped_chat(&self, hex_str: String) -> Result<TippedChatInfo, LightNodeError> {
+        let bytes = decode_hex(&hex_str, "tipped chat")?;
+        let tipped = TippedChat::decode(&bytes)?;
+        Ok(TippedChatInfo {
+            message: ChatMessageInfo {
+                sender_pubkey_hex: hex::encode(tipped.message.sender),
+                recipient_pubkey_hex: hex::encode(tipped.message.recipient),
+                plaintext: tipped.message.plaintext,
+                timestamp: tipped.message.timestamp,
+            },
+            tip_amount: tipped.tip_amount,
+        })
+    }
+
+    /// Encrypt a tipped chat message for a recipient.
+    fn encrypt_tipped_chat(
+        &self,
+        sender_pubkey_hex: String,
+        recipient_pubkey_hex: String,
+        plaintext: String,
+        timestamp: u64,
+        tip_amount: u64,
+    ) -> Result<ChatPayloadInfo, LightNodeError> {
+        let sender = decode_32(&sender_pubkey_hex, "sender pubkey")?;
+        let recipient = decode_32(&recipient_pubkey_hex, "recipient pubkey")?;
+        let msg = ChatMessage::new(sender, recipient, plaintext, timestamp);
+        let tipped = TippedChat::new(msg, tip_amount);
+        let payload = tipped.encrypt(&recipient)?;
+        Ok(ChatPayloadInfo {
+            ephemeral_pk_hex: hex::encode(payload.ephemeral_pk),
+            nonce_hex: hex::encode(payload.nonce),
+            ciphertext_hex: hex::encode(&payload.ciphertext),
+        })
     }
 }
 

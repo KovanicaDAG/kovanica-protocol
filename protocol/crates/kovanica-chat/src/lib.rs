@@ -19,9 +19,9 @@
 
 mod calls;
 mod contacts;
-mod crypto;
+pub mod crypto;
 mod file;
-mod message;
+pub mod message;
 mod request;
 mod store;
 mod tipped;
