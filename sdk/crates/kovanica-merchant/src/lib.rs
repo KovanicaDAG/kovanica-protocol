@@ -6,10 +6,7 @@
 //! - On-chain token listing registry (KVP-106 compliant)
 //! - Presale contract types
 
-use kovanica_airdrop::{build_merkle_root, generate_proof, AirdropCampaign, AirdropLeaf};
-use kovanica_bridge::{
-    generate_swap_id_hex, BridgeHtlcParams, BridgeState, BridgeSwap, DestinationChain,
-};
+use kovanica_bridge::DestinationChain;
 use kovanica_types::{Address, AssetId, Hash32};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
