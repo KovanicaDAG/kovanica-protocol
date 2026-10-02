@@ -240,6 +240,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
+          # This job builds two consoles, each with its own lockfile, and there
+          # is no package-lock.json at the repository root. Without this,
+          # setup-node searches the root, finds nothing, and fails the job
+          # before either console is even attempted.
+          cache-dependency-path: |
+            mobile/console/kovanica/package-lock.json
+            mobile/console/enterprise/package-lock.json
 
       - name: Build Kovanica Console
         run: |
