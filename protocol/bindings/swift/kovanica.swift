@@ -2382,6 +2382,110 @@ public func FfiConverterTypeCoinJoinPrepared_lower(_ value: CoinJoinPrepared) ->
 
 
 /**
+ * One derived account: what a wallet needs to show an address, watch it, and
+ * sign for it.
+ */
+public struct DerivedAccount: Equatable, Hashable {
+    /**
+     * The receive address, rendered `kvnc…dag` (base58 over `0x00 ‖ pubkey`).
+     */
+    public var address: String
+    /**
+     * The raw 32-byte Ed25519 public key, lowercase hex — the SPV watch key.
+     */
+    public var publicKeyHex: String
+    /**
+     * The raw 32-byte Ed25519 signing key, lowercase hex: the value every
+     * `LightNode::send_*` expects in `signing_secret_hex`. Hand it straight to
+     * the signer; do not log it.
+     */
+    public var signingSecretHex: String
+    /**
+     * The path this account came from, e.g. `m/44'/3007'/0'/0'/0'`.
+     */
+    public var derivationPath: String
+    /**
+     * The address index used (the `i` in the path).
+     */
+    public var addressIndex: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The receive address, rendered `kvnc…dag` (base58 over `0x00 ‖ pubkey`).
+         */address: String, 
+        /**
+         * The raw 32-byte Ed25519 public key, lowercase hex — the SPV watch key.
+         */publicKeyHex: String, 
+        /**
+         * The raw 32-byte Ed25519 signing key, lowercase hex: the value every
+         * `LightNode::send_*` expects in `signing_secret_hex`. Hand it straight to
+         * the signer; do not log it.
+         */signingSecretHex: String, 
+        /**
+         * The path this account came from, e.g. `m/44'/3007'/0'/0'/0'`.
+         */derivationPath: String, 
+        /**
+         * The address index used (the `i` in the path).
+         */addressIndex: UInt32) {
+        self.address = address
+        self.publicKeyHex = publicKeyHex
+        self.signingSecretHex = signingSecretHex
+        self.derivationPath = derivationPath
+        self.addressIndex = addressIndex
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DerivedAccount: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDerivedAccount: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DerivedAccount {
+        return
+            try DerivedAccount(
+                address: FfiConverterString.read(from: &buf), 
+                publicKeyHex: FfiConverterString.read(from: &buf), 
+                signingSecretHex: FfiConverterString.read(from: &buf), 
+                derivationPath: FfiConverterString.read(from: &buf), 
+                addressIndex: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DerivedAccount, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.address, into: &buf)
+        FfiConverterString.write(value.publicKeyHex, into: &buf)
+        FfiConverterString.write(value.signingSecretHex, into: &buf)
+        FfiConverterString.write(value.derivationPath, into: &buf)
+        FfiConverterUInt32.write(value.addressIndex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDerivedAccount_lift(_ buf: RustBuffer) throws -> DerivedAccount {
+    return try FfiConverterTypeDerivedAccount.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDerivedAccount_lower(_ value: DerivedAccount) -> RustBuffer {
+    return FfiConverterTypeDerivedAccount.lower(value)
+}
+
+
+/**
  * One reconstructed history event for an address.
  *
  * Entries come back in canonical (linearized) block order; a send's change
@@ -3108,6 +3212,100 @@ public func FfiConverterTypeVaultInfo_lower(_ value: VaultInfo) -> RustBuffer {
 
 
 /**
+ * Failure modes of the derivation helpers.
+ */
+public 
+enum DerivationError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
+
+    
+    
+    /**
+     * The recovery phrase failed word-list, word-count, or checksum validation.
+     */
+    case InvalidMnemonic(msg: String
+    )
+    /**
+     * A raw secret was not 32 bytes of hex.
+     */
+    case BadSecretLength(got: UInt32
+    )
+
+    
+
+    
+
+    
+    public var errorDescription: String? {
+        String(reflecting: self)
+    }
+    
+}
+
+#if compiler(>=6)
+extension DerivationError: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDerivationError: FfiConverterRustBuffer {
+    typealias SwiftType = DerivationError
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DerivationError {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+
+        
+
+        
+        case 1: return .InvalidMnemonic(
+            msg: try FfiConverterString.read(from: &buf)
+            )
+        case 2: return .BadSecretLength(
+            got: try FfiConverterUInt32.read(from: &buf)
+            )
+
+         default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: DerivationError, into buf: inout [UInt8]) {
+        switch value {
+
+        
+
+        
+        
+        case let .InvalidMnemonic(msg):
+            writeInt(&buf, Int32(1))
+            FfiConverterString.write(msg, into: &buf)
+            
+        
+        case let .BadSecretLength(got):
+            writeInt(&buf, Int32(2))
+            FfiConverterUInt32.write(got, into: &buf)
+            
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDerivationError_lift(_ buf: RustBuffer) throws -> DerivationError {
+    return try FfiConverterTypeDerivationError.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDerivationError_lower(_ value: DerivationError) -> RustBuffer {
+    return FfiConverterTypeDerivationError.lower(value)
+}
+
+
+/**
  * Why a [`LightNode`] operation failed.
  */
 public 
@@ -3576,6 +3774,112 @@ fileprivate struct FfiConverterSequenceTypeMultisigSpendOutput: FfiConverterRust
         return seq
     }
 }
+/**
+ * Derive the account owning a raw 32-byte Ed25519 key.
+ *
+ * This is the no-derivation path (`m` only), used by genesis and by a raw-seed
+ * key file. It must agree with [`derive_account_from_mnemonic`] for the
+ * matching material — a disagreement here would be the original bug in a new
+ * place.
+ */
+public func accountFromSigningSecret(signingSecretHex: String)throws  -> DerivedAccount  {
+    return try  FfiConverterTypeDerivedAccount_lift(try rustCallWithError(FfiConverterTypeDerivationError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_func_account_from_signing_secret(
+        FfiConverterString.lower(signingSecretHex),uniffiCallStatus
+    )
+})
+}
+/**
+ * The address owning a raw 32-byte Ed25519 key (lowercase hex).
+ */
+public func addressFromSigningSecret(signingSecretHex: String)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeDerivationError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_func_address_from_signing_secret(
+        FfiConverterString.lower(signingSecretHex),uniffiCallStatus
+    )
+})
+}
+/**
+ * Derive the account at `address_index` from a recovery phrase.
+ *
+ * `passphrase` is the optional "25th word" and may be empty. It is honoured,
+ * not ignored: the same phrase under a different passphrase is a *different
+ * account*, so dropping it would show a balance-less address instead of an
+ * error.
+ */
+public func deriveAccountFromMnemonic(mnemonic: String, passphrase: String, addressIndex: UInt32)throws  -> DerivedAccount  {
+    return try  FfiConverterTypeDerivedAccount_lift(try rustCallWithError(FfiConverterTypeDerivationError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_func_derive_account_from_mnemonic(
+        FfiConverterString.lower(mnemonic),
+        FfiConverterString.lower(passphrase),
+        FfiConverterUInt32.lower(addressIndex),uniffiCallStatus
+    )
+})
+}
+/**
+ * Just the receive address for a recovery phrase, at `address_index`.
+ */
+public func deriveAddressFromMnemonic(mnemonic: String, passphrase: String, addressIndex: UInt32)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeDerivationError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_func_derive_address_from_mnemonic(
+        FfiConverterString.lower(mnemonic),
+        FfiConverterString.lower(passphrase),
+        FfiConverterUInt32.lower(addressIndex),uniffiCallStatus
+    )
+})
+}
+/**
+ * Just the 32-byte signing key (lowercase hex) for a recovery phrase, at
+ * `address_index`.
+ */
+public func deriveSigningSecretFromMnemonic(mnemonic: String, passphrase: String, addressIndex: UInt32)throws  -> String  {
+    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeDerivationError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_func_derive_signing_secret_from_mnemonic(
+        FfiConverterString.lower(mnemonic),
+        FfiConverterString.lower(passphrase),
+        FfiConverterUInt32.lower(addressIndex),uniffiCallStatus
+    )
+})
+}
+/**
+ * Whether `phrase` is a well-formed recovery phrase (word list, word count, and
+ * checksum). Purely local — call it first so the user gets "that word is
+ * wrong" instead of a derived-and-wrong address.
+ */
+public func mnemonicIsValid(phrase: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_func_mnemonic_is_valid(
+        FfiConverterString.lower(phrase),uniffiCallStatus
+    )
+})
+}
+/**
+ * The frozen derivation path, for a client that wants to display it.
+ */
+public func slip10DerivationPath(addressIndex: UInt32) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_func_slip10_derivation_path(
+        FfiConverterUInt32.lower(addressIndex),uniffiCallStatus
+    )
+})
+}
+/**
+ * The frozen SLIP-44 coin type (3007), so a client need not hard-code it.
+ */
+public func slip44CoinType() -> UInt32  {
+    return try!  FfiConverterUInt32.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_func_slip44_coin_type(uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -3591,6 +3895,30 @@ private let initializationResult: InitializationResult = {
     let scaffolding_contract_version = ffi_kovanica_ffi_uniffi_contract_version()
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_func_account_from_signing_secret() != 52348) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_func_address_from_signing_secret() != 2076) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_func_derive_account_from_mnemonic() != 49482) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_func_derive_address_from_mnemonic() != 21641) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_func_derive_signing_secret_from_mnemonic() != 51737) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_func_mnemonic_is_valid() != 45833) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_func_slip10_derivation_path() != 40996) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_func_slip44_coin_type() != 44922) {
+        return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_balance_of_address() != 13509) {
         return InitializationResult.apiChecksumMismatch
