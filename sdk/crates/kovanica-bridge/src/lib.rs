@@ -44,11 +44,11 @@ impl DestinationChain {
     /// Typical block time in seconds (for timeout calculations)
     pub fn block_time_seconds(&self) -> u64 {
         match self {
-            DestinationChain::Bitcoin => 600,    // ~10 min
-            DestinationChain::Ethereum => 12,    // ~12 sec
-            DestinationChain::Xrp => 4,          // ~4 sec
-            DestinationChain::Dogecoin => 60,    // ~1 min
-            DestinationChain::Solana => 1,       // ~0.4 sec (slot)
+            DestinationChain::Bitcoin => 600, // ~10 min
+            DestinationChain::Ethereum => 12, // ~12 sec
+            DestinationChain::Xrp => 4,       // ~4 sec
+            DestinationChain::Dogecoin => 60, // ~1 min
+            DestinationChain::Solana => 1,    // ~0.4 sec (slot)
         }
     }
 }
@@ -119,11 +119,13 @@ pub struct BridgeSwap {
 pub fn generate_swap_id() -> Hash32 {
     let mut hasher = blake3::Hasher::new();
     hasher.update(&rand::random::<[u8; 32]>());
-    hasher.update(&std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos()
-        .to_le_bytes());
+    hasher.update(
+        &std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+            .to_le_bytes(),
+    );
     Hash32(hasher.finalize().into())
 }
 
@@ -133,7 +135,7 @@ pub fn generate_swap_id_hex() -> String {
 }
 
 /// Calculate recommended timeouts for a cross-chain swap
-/// 
+///
 /// Returns (kovanica_timeout_blocks, destination_timeout_blocks_or_timestamp)
 pub fn calculate_timeouts(
     destination_chain: DestinationChain,
@@ -143,11 +145,11 @@ pub fn calculate_timeouts(
     let dest_block_time = destination_chain.block_time_seconds();
     let kovanica_blocks = (dest_block_time * 6) / 60 + 10; // ~6 confirmations + buffer
     let kovanica_timeout = kovanica_tip_height + kovanica_blocks;
-    
+
     // Destination timeout: 2x the time it takes for Kovanica refund to be available
     let kovanica_refund_time = kovanica_blocks * 60; // Kovanica block time ~60s
     let destination_timeout = kovanica_refund_time + (dest_block_time * 4);
-    
+
     (kovanica_timeout, destination_timeout)
 }
 

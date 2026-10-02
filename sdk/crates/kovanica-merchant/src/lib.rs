@@ -6,9 +6,11 @@
 //! - On-chain token listing registry (KVP-106 compliant)
 //! - Presale contract types
 
+use kovanica_airdrop::{build_merkle_root, generate_proof, AirdropCampaign, AirdropLeaf};
+use kovanica_bridge::{
+    generate_swap_id_hex, BridgeHtlcParams, BridgeState, BridgeSwap, DestinationChain,
+};
 use kovanica_types::{Address, AssetId, Hash32};
-use kovanica_airdrop::{AirdropCampaign, AirdropLeaf, build_merkle_root, generate_proof};
-use kovanica_bridge::{DestinationChain, BridgeHtlcParams, BridgeSwap, BridgeState, generate_swap_id_hex};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -334,7 +336,12 @@ mod tests {
     #[test]
     fn payment_request_creation() {
         let addr = Address::from_versioned([0x01; 33]);
-        let req = create_payment_request(addr, 1_000_000_000, AssetId::NATIVE, "Test payment".to_string());
+        let req = create_payment_request(
+            addr,
+            1_000_000_000,
+            AssetId::NATIVE,
+            "Test payment".to_string(),
+        );
         assert_eq!(req.amount, 1_000_000_000);
         assert!(!req.payment_id.is_empty());
     }

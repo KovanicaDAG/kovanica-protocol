@@ -105,7 +105,11 @@ pub fn generate_proof(leaves: &[AirdropLeaf], index: usize) -> Option<MerkleProo
     let mut idx = index;
 
     while level.len() > 1 {
-        let sibling_idx = if idx.is_multiple_of(2) { idx + 1 } else { idx - 1 };
+        let sibling_idx = if idx.is_multiple_of(2) {
+            idx + 1
+        } else {
+            idx - 1
+        };
         if sibling_idx < level.len() {
             siblings.push(level[sibling_idx]);
             is_left.push(idx.is_multiple_of(2)); // current node is left if its index is even
@@ -122,7 +126,11 @@ pub fn generate_proof(leaves: &[AirdropLeaf], index: usize) -> Option<MerkleProo
         idx /= 2;
     }
 
-    Some(MerkleProof { leaf, siblings, is_left })
+    Some(MerkleProof {
+        leaf,
+        siblings,
+        is_left,
+    })
 }
 
 #[cfg(test)]

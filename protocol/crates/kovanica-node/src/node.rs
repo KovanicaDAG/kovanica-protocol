@@ -1864,11 +1864,11 @@ impl Node {
         signature: [u8; 64],
     ) -> Result<TxId, NodeError> {
         let mut tx = prepared.tx;
-        
+
         // Build witness with signature + Merkle proof
         let mut witness = Vec::new();
         witness.push(signature.to_vec()); // wallet signature
-        
+
         // Encode Merkle proof: siblings count + each sibling + is_left bits
         let mut proof_data = Vec::new();
         proof_data.extend_from_slice(&(prepared.merkle_siblings.len() as u64).to_le_bytes());
@@ -1895,9 +1895,9 @@ impl Node {
         }
         proof_data.extend_from_slice(&(is_left_bytes.len() as u64).to_le_bytes());
         proof_data.extend_from_slice(&is_left_bytes);
-        
+
         witness.push(proof_data);
-        
+
         tx.inputs_mut()[0].witness = witness;
         self.submit_tx(tx)
     }

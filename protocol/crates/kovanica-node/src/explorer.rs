@@ -3582,17 +3582,32 @@ fn dispatch(
             return Ok(format!("{{\"ok\":true,\"tx\":{}}}", jstr(&id.to_string())));
         }
         "airdrop/prepare-claim" => {
-            let campaign_id = kovanica_types::Hash32(parse_hash(q.get("campaign_id").ok_or("campaign_id required")?)?);
+            let campaign_id = kovanica_types::Hash32(parse_hash(
+                q.get("campaign_id").ok_or("campaign_id required")?,
+            )?);
             let claimant = parse_addr(q.get("claimant").ok_or("claimant required")?)?;
             let amount = parse_u64(q, "amount", 0)?;
             let asset_id = crate::node::asset_id_from_wire(q.get("asset_id").map(String::as_str))?;
-            let merkle_siblings_bytes = parse_hash_array(q.get("merkle_siblings").ok_or("merkle_siblings required")?)?;
-            let merkle_siblings: Vec<kovanica_types::Hash32> = merkle_siblings_bytes.into_iter().map(kovanica_types::Hash32).collect();
-            let merkle_is_left = parse_bool_array(q.get("merkle_is_left").ok_or("merkle_is_left required")?)?;
+            let merkle_siblings_bytes =
+                parse_hash_array(q.get("merkle_siblings").ok_or("merkle_siblings required")?)?;
+            let merkle_siblings: Vec<kovanica_types::Hash32> = merkle_siblings_bytes
+                .into_iter()
+                .map(kovanica_types::Hash32)
+                .collect();
+            let merkle_is_left =
+                parse_bool_array(q.get("merkle_is_left").ok_or("merkle_is_left required")?)?;
             let to = parse_addr(q.get("to").ok_or("to address required")?)?;
             let n = app.mesh.node(&node).ok_or("unknown node")?;
             let p = n
-                .prepare_airdrop_claim(campaign_id, claimant, amount, asset_id, merkle_siblings, merkle_is_left, to)
+                .prepare_airdrop_claim(
+                    campaign_id,
+                    claimant,
+                    amount,
+                    asset_id,
+                    merkle_siblings,
+                    merkle_is_left,
+                    to,
+                )
                 .map_err(|e| e.to_string())?;
             return Ok(format!(
                 "{{\"ok\":true,\"sighash\":{},\"campaign_id\":{},\"claimant\":{},\"amount\":{},\"asset_id\":{}}}",
@@ -3604,18 +3619,33 @@ fn dispatch(
             ));
         }
         "airdrop/finalize-claim" => {
-            let campaign_id = kovanica_types::Hash32(parse_hash(q.get("campaign_id").ok_or("campaign_id required")?)?);
+            let campaign_id = kovanica_types::Hash32(parse_hash(
+                q.get("campaign_id").ok_or("campaign_id required")?,
+            )?);
             let claimant = parse_addr(q.get("claimant").ok_or("claimant required")?)?;
             let amount = parse_u64(q, "amount", 0)?;
             let asset_id = crate::node::asset_id_from_wire(q.get("asset_id").map(String::as_str))?;
-            let merkle_siblings_bytes = parse_hash_array(q.get("merkle_siblings").ok_or("merkle_siblings required")?)?;
-            let merkle_siblings: Vec<kovanica_types::Hash32> = merkle_siblings_bytes.into_iter().map(kovanica_types::Hash32).collect();
-            let merkle_is_left = parse_bool_array(q.get("merkle_is_left").ok_or("merkle_is_left required")?)?;
+            let merkle_siblings_bytes =
+                parse_hash_array(q.get("merkle_siblings").ok_or("merkle_siblings required")?)?;
+            let merkle_siblings: Vec<kovanica_types::Hash32> = merkle_siblings_bytes
+                .into_iter()
+                .map(kovanica_types::Hash32)
+                .collect();
+            let merkle_is_left =
+                parse_bool_array(q.get("merkle_is_left").ok_or("merkle_is_left required")?)?;
             let to = parse_addr(q.get("to").ok_or("to address required")?)?;
             let sig = parse_sig(q.get("sig").ok_or("sig required")?)?;
             let n = app.mesh.node_mut(&node).ok_or("unknown node")?;
             let p = n
-                .prepare_airdrop_claim(campaign_id, claimant, amount, asset_id, merkle_siblings, merkle_is_left, to)
+                .prepare_airdrop_claim(
+                    campaign_id,
+                    claimant,
+                    amount,
+                    asset_id,
+                    merkle_siblings,
+                    merkle_is_left,
+                    to,
+                )
                 .map_err(|e| e.to_string())?;
             let id = n.submit_airdrop_claim(p, sig).map_err(|e| e.to_string())?;
             app.mesh.drain(8);
@@ -4187,7 +4217,13 @@ fn token_detail_json(
 
     let holders_json = holders
         .into_iter()
-        .map(|h| format!("{{\"address\":{},\"balance\":{}}}", jstr(&h.address.to_kvnc()), h.balance))
+        .map(|h| {
+            format!(
+                "{{\"address\":{},\"balance\":{}}}",
+                jstr(&h.address.to_kvnc()),
+                h.balance
+            )
+        })
         .collect::<Vec<_>>()
         .join(",");
 
