@@ -11,6 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kovanica.wallet.util.Kvnc
 import com.kovanica.wallet.viewmodel.WalletViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -22,6 +23,7 @@ fun SendScreen(
     val uiState by viewModel.uiState.collectAsState()
     var toAddress by remember { mutableStateOf("") }
     var amount by remember { mutableStateOf("") }
+    var amountError by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         topBar = {
@@ -54,11 +56,16 @@ fun SendScreen(
 
             OutlinedTextField(
                 value = amount,
-                onValueChange = { amount = it },
+                onValueChange = {
+                    amount = it
+                    amountError = null
+                },
                 label = { Text("Amount (KVNC)") },
                 placeholder = { Text("0.00") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+                isError = amountError != null,
+                supportingText = amountError?.let { { Text(it) } },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal)
             )
 
@@ -66,9 +73,23 @@ fun SendScreen(
 
             Button(
                 onClick = {
-                    val amountLong = (amount.toDoubleOrNull() ?: 0.0 * 100_000_000).toLong()
-                    if (amountLong > 0 && toAddress.isNotBlank()) {
-                        viewModel.send(toAddress, amountLong)
+                    val address = toAddress.trim()
+                    if (address.isEmpty()) {
+                        amountError = "Enter a recipient address"
+                        return@Button
+                    }
+                    // Parse exactly, and refuse to send anything we cannot
+                    // represent. The previous `?: 0.0 * 100_000_000` bound the
+                    // elvis looser than the multiply, so the scaling was never
+                    // applied and a 1.5 KVNC send went out as 1 atom.
+                    val atoms = Kvnc.parseToAtoms(amount)
+                    when {
+                        atoms == null -> amountError = invalidAmountMessage(amount)
+                        atoms == 0L -> amountError = "Amount must be at least 0.00000001 KVNC"
+                        else -> {
+                            amountError = null
+                            viewModel.send(address, atoms)
+                        }
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
@@ -83,7 +104,6 @@ fun SendScreen(
                     Text("Send")
                 }
             }
-
             uiState.sendResult?.let { result ->
                 Spacer(modifier = Modifier.height(16.dp))
                 Card(
@@ -131,4 +151,13 @@ fun SendScreen(
             }
         }
     }
+}
+
+private fun invalidAmountMessage(input: String): String {
+    val text = input.trim()
+    return if (text.isEmpty()) "Enter an amount"
+    else if (text.toBigDecimalOrNull() == null) "Amount must be a decimal number"
+    else if (text.startsWith("-")) "Amount cannot be negative"
+    else if (text.count { it == '.' } > 1) "Amount can have only one decimal point"
+    else "Amount cannot have more than 8 decimal places (1 atom precision)"
 }

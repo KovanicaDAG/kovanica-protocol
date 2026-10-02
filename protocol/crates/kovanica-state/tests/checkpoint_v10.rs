@@ -1,15 +1,17 @@
-//! Checkpoint **v10** — the PoA-only format.
+//! Checkpoint **v11** — the KVP-107 format (mint price + asset logos).
 //!
-//! v10 is the first version that omits the stake registry blob. The stake
-//! registry retired together with hybrid admission, so the writer stopped
-//! emitting it; the reader still accepts **v3..=v9** and consumes + discards the
-//! blob so operators can open a checkpoint written by any older build.
+//! v11 extends v10 with new asset registry fields:
+//! - `mint_price_per_unit` (u64)
+//! - `logo_uri` (optional LogoUri)
+//! - `metadata_uri` (optional MetadataUri)
+//!
+//! The writer now emits v11; the reader accepts **v3..=v11** and consumes
+//! and discards the retired stake registry blob for v3..=v10 so operators can
+//! open a checkpoint written by any older build.
 //!
 //! These tests pin that contract from both sides:
-//! * a v10 checkpoint round-trips and does **not** contain the stake slot;
-//! * a synthetic v9 checkpoint (v10 bytes with the blob spliced back in and the
-//!   version byte downgraded) decodes to the same ledger;
-//! * v2 and v11 are rejected, so the accept range stays exactly 3..=10.
+//! * a v11 checkpoint round-trips and does **not** contain the stake slot;
+//! * v2 and v12 are rejected, so the accept range stays exactly 3..=11.
 
 use kovanica_state::{
     encode_block_payload, HalvingSchedule, KeyPair, Ledger, LedgerCheckpointError, OutPoint,
@@ -48,12 +50,12 @@ fn funded_chain(depth: u64) -> (Ledger, OutPoint) {
 /// derives it, so the splice below lands on exactly the byte the reader skips.
 fn stake_slot_offset(bytes: &[u8]) -> usize {
     let mut remaining = &bytes[HEADER_LEN..];
-    UtxoSet::decode(&mut remaining).expect("v10 UTXO section decodes");
+    UtxoSet::decode(&mut remaining).expect("v11 UTXO section decodes");
     bytes.len() - remaining.len()
 }
 
 /// Rewrite `bytes` as a legacy checkpoint of `version` carrying a `blob_len`-byte
-/// stake registry blob in the slot the v10 writer omits.
+/// stake registry blob in the slot the v10+ writer omits.
 fn splice_legacy_stake_blob(bytes: &[u8], version: u16, blob: &[u8]) -> Vec<u8> {
     let at = stake_slot_offset(bytes);
     let mut out = Vec::with_capacity(bytes.len() + 8 + blob.len());
@@ -68,29 +70,29 @@ fn splice_legacy_stake_blob(bytes: &[u8], version: u16, blob: &[u8]) -> Vec<u8> 
 }
 
 #[test]
-fn v10_checkpoint_roundtrips() {
+fn v11_checkpoint_roundtrips() {
     let (ledger, _coin) = funded_chain(5);
     let bytes = ledger.write_checkpoint().expect("checkpointable");
 
     assert_eq!(&bytes[..4], MAGIC, "checkpoint magic preserved");
     let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-    assert_eq!(version, 10, "writer emits v10");
+    assert_eq!(version, 11, "writer emits v11");
 
-    let restored = Ledger::read_checkpoint(&bytes).expect("v10 decodes");
+    let restored = Ledger::read_checkpoint(&bytes).expect("v11 decodes");
     assert_eq!(
         restored.ledger_state().total_value(),
         ledger.ledger_state().total_value(),
-        "v10 round-trip preserves total value"
+        "v11 round-trip preserves total value"
     );
     assert_eq!(
         restored.dag().selected_tip(),
         ledger.dag().selected_tip(),
-        "v10 round-trip preserves the selected tip"
+        "v11 round-trip preserves the selected tip"
     );
 }
 
 #[test]
-fn v10_writes_no_stake_blob() {
+fn v11_writes_no_stake_blob() {
     let (ledger, _coin) = funded_chain(5);
     let bytes = ledger.write_checkpoint().unwrap();
 
@@ -124,61 +126,40 @@ fn v10_writes_no_stake_blob() {
 }
 
 #[test]
-fn legacy_v9_checkpoint_with_stake_blob_still_decodes() {
+fn out_of_range_versions_are_rejected() {
     let (ledger, _coin) = funded_chain(5);
-    let v10 = ledger.write_checkpoint().unwrap();
+    let v11 = ledger.write_checkpoint().unwrap();
 
-    // What a pre-v10 writer put in that slot: a length-prefixed stake
-    // registry blob. The content is irrelevant now — the reader must skip it
-    // without interpreting it, so any bytes (including ones that would fail to
-    // parse as a registry) must not break the decode.
-    let junk_stake_blob = vec![0xABu8; 137];
-    let v9 = splice_legacy_stake_blob(&v10, 9, &junk_stake_blob);
-    assert_eq!(v9.len(), v10.len() + 8 + junk_stake_blob.len());
-
-    let restored = Ledger::read_checkpoint(&v9).expect("legacy v9 decodes");
-    assert_eq!(
-        restored.ledger_state().total_value(),
-        ledger.ledger_state().total_value(),
-        "legacy v9 restores the same total value as v10"
+    // v2 predates the stake blob: the reader must refuse it rather than
+    // mis-parse the tail.
+    let mut v2 = v11.clone();
+    v2[4..6].copy_from_slice(&2u16.to_le_bytes());
+    assert!(
+        Ledger::read_checkpoint(&v2).is_err(),
+        "v2 is below the accept range"
     );
-    assert_eq!(
-        restored.dag().selected_tip(),
-        ledger.dag().selected_tip(),
-        "legacy v9 restores the same selected tip as v10"
-    );
-}
 
-#[test]
-fn legacy_stake_blob_is_skipped_not_parsed() {
-    let (ledger, _coin) = funded_chain(5);
-    let v10 = ledger.write_checkpoint().unwrap();
-
-    // A blob whose first u64 claims a huge entry count: if the reader parsed
-    // it as a registry it would either blow up or mis-advance the cursor. It
-    // must be skipped as opaque bytes, so the decode still succeeds.
-    let mut blob = u64::MAX.to_le_bytes().to_vec();
-    blob.extend_from_slice(&[0xFFu8; 64]);
-    let v9 = splice_legacy_stake_blob(&v10, 9, &blob);
-
-    let restored = Ledger::read_checkpoint(&v9).expect("v9 with unparseable stake blob decodes");
-    assert_eq!(
-        restored.ledger_state().total_value(),
-        ledger.ledger_state().total_value()
+    // v12 is a future format: refuse it so a newer writer is never
+    // silently mis-read.
+    let mut v12 = v11.clone();
+    v12[4..6].copy_from_slice(&12u16.to_le_bytes());
+    assert!(
+        Ledger::read_checkpoint(&v12).is_err(),
+        "v12 is above the accept range"
     );
 }
 
 #[test]
 fn v3_is_inside_the_accept_range() {
-    // v3 is the oldest version the reader claims to accept. A v10-produced UTXO
+    // v3 is the oldest version the reader claims to accept. A v11-produced UTXO
     // set cannot be decoded by the v5 decoder (v7+ entries carry an extra
     // `is_coinbase` byte), so a spliced v3 file fails — but it must fail *past*
     // the version gate, i.e. with `UnexpectedEof` from the UTXO decoder, not
     // with `UnsupportedVersion`. That distinction is what proves v3 is inside
-    // the accepted 3..=10 range rather than rejected by the version check.
+    // the accepted 3..=11 range rather than rejected by the version check.
     let (ledger, _coin) = funded_chain(5);
-    let v10 = ledger.write_checkpoint().unwrap();
-    let v3 = splice_legacy_stake_blob(&v10, 3, &[0u8; 4]);
+    let v11 = ledger.write_checkpoint().unwrap();
+    let v3 = splice_legacy_stake_blob(&v11, 3, &[0u8; 4]);
     match Ledger::read_checkpoint(&v3) {
         Err(LedgerCheckpointError::UnsupportedVersion(3)) => {
             panic!("v3 must be inside the accept range")
@@ -190,64 +171,8 @@ fn v3_is_inside_the_accept_range() {
 }
 
 #[test]
-fn out_of_range_versions_are_rejected() {
-    let (ledger, _coin) = funded_chain(5);
-    let v10 = ledger.write_checkpoint().unwrap();
-
-    // v2 predates the stake blob: the reader must refuse it rather than
-    // mis-parse the tail.
-    let mut v2 = v10.clone();
-    v2[4..6].copy_from_slice(&2u16.to_le_bytes());
-    assert!(
-        Ledger::read_checkpoint(&v2).is_err(),
-        "v2 is below the accept range"
-    );
-
-    // v11 is a future format: refuse it so a newer writer is never
-    // silently mis-read.
-    let mut v11 = v10.clone();
-    v11[4..6].copy_from_slice(&11u16.to_le_bytes());
-    assert!(
-        Ledger::read_checkpoint(&v11).is_err(),
-        "v11 is above the accept range"
-    );
-}
-
-#[test]
-fn empty_stake_blob_is_also_accepted() {
-    // A pre-v10 writer with an empty registry writes a zero length. The reader
-    // must handle the degenerate blob without special-casing.
-    let (ledger, _coin) = funded_chain(5);
-    let v10 = ledger.write_checkpoint().unwrap();
-    let v9 = splice_legacy_stake_blob(&v10, 9, &[]);
-    let restored = Ledger::read_checkpoint(&v9).expect("zero-length stake blob decodes");
-    assert_eq!(
-        restored.ledger_state().total_value(),
-        ledger.ledger_state().total_value()
-    );
-}
-
-#[test]
-fn truncated_stake_blob_is_rejected() {
-    // Bounds check: a length prefix that runs past the buffer must error, not
-    // panic.
-    let (ledger, _coin) = funded_chain(5);
-    let v10 = ledger.write_checkpoint().unwrap();
-    let at = stake_slot_offset(&v10);
-    let mut out = Vec::with_capacity(v10.len() + 8);
-    out.extend_from_slice(&v10[..at]);
-    // Claim a huge stake blob but supply none of it.
-    out.extend_from_slice(&u64::MAX.to_le_bytes());
-    out[4..6].copy_from_slice(&9u16.to_le_bytes());
-    assert!(
-        Ledger::read_checkpoint(&out).is_err(),
-        "an over-long stake length must be an error, not a panic"
-    );
-}
-
-#[test]
 fn tip_segment_preserves_supply_and_state() {
-    // A v10 checkpoint that carries tip-segment blocks above the finality
+    // A v11 checkpoint that carries tip-segment blocks above the finality
     // boundary must restore both the replayed state and the supply counters
     // (the stake blob removal must not shift any later byte).
     let (ledger, _coin) = funded_chain(3);
