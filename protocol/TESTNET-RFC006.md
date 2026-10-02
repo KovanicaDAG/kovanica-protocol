@@ -44,8 +44,8 @@ Public BlockDAG testnet. Native token **KVNC** (8 decimals).
 | Authority set | `[CURRENT]` `KOVANICA_AUTHORITIES`; testnet placeholder from the public constant `AUTHORITY_PLACEHOLDER_BASE = 9001` (publicly derivable, testnet-only, mirroring the placeholder treasury keys) · rotation **mechanism settled** (genesis-fixed, on-chain M-of-N `AuthorityUpdateTx` only) · `[OPEN]` mainnet governance *inputs* (RFC-POA §0.7.2) |
 | Slot duration | `[CURRENT]` `KOVANICA_SLOT_DURATION`, default 3000 ms · no gap-fill |
 | P2P | **TCP only** `KOVANICA_LISTEN` (default `0.0.0.0:9000`) |
-| Bootstrap | DNS-only `seed.kovanica.online:9000` (not the Cloudflare hostname) |
-| Seeds | `seed.kovanica.online:9000` (primary) · `seed2.kovanica.online:9000` (secondary, Hostinger KVM2 VPS) · `seed3` = new VPS `187.7.27.139`, provisioned but not yet in service |
+| Bootstrap | DNS-only `seed2.kovanica.online:8000` (not the Cloudflare hostname) |
+| Seeds | `seed2.kovanica.online:8000` (primary) · `seed3.kovanica.online:8000` (secondary, Hostinger KVM2 VPS) · `seed3` = new VPS `187.7.27.139`, provisioned but not yet in service |
 
 Live genesis and tip: `GET https://explorer.kovanica.online/api/head`  
 P2P status on a running node: `GET /api/p2p`  
@@ -72,7 +72,7 @@ There is no second network path. libp2p / 30333 was removed.
 `explorer.kovanica.online` is orange-cloud. TCP 9000 never reaches the seed
 through that name. Grey-cloud `seed.kovanica.online` (or the origin IP) is the
 peer address clones should dial. The primary seed dials its sibling
-(`seed2.kovanica.online:9000`; the original AWS `seed3` was retired 2026-09-17 and replaced by a new VPS on `187.7.27.139`, pending DNS re-point + node start).
+(`seed3.kovanica.online:8000`; the original AWS `seed3` was retired 2026-09-17 and replaced by a new VPS on `187.7.27.139`, pending DNS re-point + node start).
 
 
 ## Tokenomics (RFC-006)
@@ -94,30 +94,30 @@ Full reference: `docs/TOKENOMICS.md`.
 ## Run
 
 ```bash
-# [CURRENT] pre-reset PoW testnet. PoW vars are [TARGET]-removed; keep
-# KOVANICA_MINE=0 / KOVANICA_FAUCET=0 / KOVANICA_ALLOW_RESET=0 as-is — those
-# are still meaningful safety defaults and are NOT affected by the migration.
-export KOVANICA_POW=1
-export KOVANICA_MINE=0          # 1 only on intentional miners
-export KOVANICA_MINE_SECS=120
+# PoA-only testnet (PoA is default when KOVANICA_CONSENSUS is unset)
 export KOVANICA_FAUCET=0
 export KOVANICA_ALLOW_RESET=0
 export KOVANICA_OPERATOR=0
 export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
 export KOVANICA_DATA="$PWD/data"
 
 ./target/release/kovanica-node explorer 127.0.0.1:8080
 ```
 
 ```bash
-# [TARGET] PoA-only testnet: the three PoW/mining exports are gone. PoA is the
-# default when KOVANICA_CONSENSUS is unset.
+# Authority node (block producer)
 export KOVANICA_FAUCET=0
 export KOVANICA_ALLOW_RESET=0
-export KOVANICA_OPERATOR=0
+export KOVANICA_OPERATOR=1
 export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
+export KOVANICA_CONSENSUS=poa
+export KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+export KOVANICA_AUTHORITY_THRESHOLD=2
+export KOVANICA_SLOT_DURATION=3000
+export KOVANICA_AUTHORITY_KEY=<32-byte-hex-secret>  # via EnvironmentFile, mode 0600
+export KOVANICA_PRODUCE=1
 export KOVANICA_DATA="$PWD/data"
 
 ./target/release/kovanica-node explorer 127.0.0.1:8080
@@ -126,16 +126,16 @@ export KOVANICA_DATA="$PWD/data"
 See [README.md](./README.md) and [JOIN.md](./JOIN.md).
 
 
-## Claiming mined KVNC
+## Claiming Produced KVNC
 
-Coinbase outputs mature after **100 blocks** — **unchanged by the PoA-only
-decision**, since maturity is a height offset and not an admission rule. Then
+Coinbase outputs mature after **100 blocks** — unchanged by the PoA-only
+decision, since maturity is a height offset and not an admission rule. Then
 spend with the wallet (https://wallet.kovanica.online) or via
 `POST /api/prepare` → Ed25519 sign → `POST /api/submit`. There is no separate
 claim opcode.
 
-`[TARGET]` The word "mined" becomes "produced". Under PoA the coinbase of a
-given slot accrues to the **authority scheduled for that slot**, not to whoever
-solved a hash target. If that authority is offline the slot is simply empty —
-there is no gap-fill — and the next scheduled authority continues on the fixed
-3000 ms clock. Maturity is still 100 blocks from the producing block.
+Under PoA the coinbase of a given slot accrues to the **authority scheduled for
+that slot**, not to whoever solved a hash target. If that authority is offline
+the slot is simply empty — there is no gap-fill — and the next scheduled
+authority continues on the fixed 3000 ms clock. Maturity is still 100 blocks
+from the producing block.

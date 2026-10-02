@@ -14,7 +14,7 @@
 |----------|-------|
 | **Network ID** | `kovanica-testnet` |
 | **Genesis hash** | See `/api/head` on explorer |
-| **Consensus** | GHOSTDAG BlockDAG, **k = 3** |
+| **Consensus** | GHOSTDAG BlockDAG, **k = 3** (PoA) |
 | **P2P port** | TCP **8000** (plaintext, no libp2p) — 9000 is mainnet |
 | **Bootstrap seeds** | `seed2.kovanica.online:8000`, `seed3.kovanica.online:8000` |
 | **Explorer** | https://explorer.kovanica.online |
@@ -72,11 +72,9 @@ cargo build --release -p kovanica-node
 ```sh
 export KOVANICA_LISTEN=0.0.0.0:8000
 export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
-export KOVANICA_MINE=0          # Leave off unless you intend to mint
-export KOVANICA_MINE_SECS=120
 export KOVANICA_FAUCET=0
 export KOVANICA_ALLOW_RESET=0
-export KOVANICA_OPERATOR=0      # Never enable on public clones
+export KOVANICA_OPERATOR=0
 export KOVANICA_DATA="$PWD/data"
 
 ./target/release/kovanica-node explorer 127.0.0.1:8080
@@ -99,14 +97,16 @@ The `network` and `genesis` fields must match. Your tip will catch up after the 
 |----------|---------|-------------|
 | `KOVANICA_LISTEN` | `0.0.0.0:8000` (testnet) · `0.0.0.0:9000` (mainnet) · `127.0.0.1:9002` (devnet) | P2P bind address (also tries `[::]:<port>`). Default follows `KOVANICA_NETWORK`; override only to pin it |
 | `KOVANICA_PEERS` | `seed2.kovanica.online:8000,seed3.kovanica.online:8000` (testnet) · empty (devnet, mainnet) | Comma-separated bootstrap peers. Devnet/mainnet ship no default seeds on purpose |
-| `KOVANICA_MINE` | `0` | Enable auto-mining (produce blocks) |
-| `KOVANICA_MINE_SECS` | `120` | Mining interval in seconds (when `MINE=1`) |
-| `KOVANICA_FAUCET` | `0` | Enable faucet endpoint (seed-only) |
+| `KOVANICA_CONSENSUS` | `poa` (when unset) | Consensus mode: `poa` (default) |
+| `KOVANICA_AUTHORITIES` | testnet placeholder | Comma-separated 32-byte hex authority public keys |
+| `KOVANICA_AUTHORITY_THRESHOLD` | strict majority | Signatures required for AuthorityUpdateTx |
+| `KOVANICA_SLOT_DURATION` | `3000` | PoA slot length in ms |
+| `KOVANICA_AUTHORITY_KEY` | — | 32-byte hex authority signing secret (via EnvironmentFile, mode 0600) |
+| `KOVANICA_FAUCET` | `0` | Enable faucet endpoint (seed/explorer only) |
 | `KOVANICA_ALLOW_RESET` | `0` | Allow chain wipe via API (testnet-only) |
 | `KOVANICA_OPERATOR` | `0` | Enable operator-only RPC commands |
 | `KOVANICA_DATA` | `./data` | Persistence directory (keep this!) |
 | `KOVANICA_NETWORK` | `kovanica-testnet` | Network profile selector |
-| `KOVANICA_HYBRID` | `0` | Enable hybrid PoW+VRF-staked admission |
 | `KOVANICA_RATE_LIMIT` | `10` | HTTP req/s per IP (token bucket) |
 | `KOVANICA_RATE_BURST` | `60` | HTTP burst capacity per IP |
 
@@ -116,13 +116,13 @@ The `network` and `genesis` fields must match. Your tip will catch up after the 
 
 ### Participant (default)
 - **Purpose:** Validate, sync, submit transactions, run wallet
-- **Config:** `MINE=0`, `FAUCET=0`, `OPERATOR=0`
+- **Config:** `KOVANICA_CONSENSUS=poa` (default), `KOVANICA_FAUCET=0`, `KOVANICA_OPERATOR=0`
 - **Ports:** Outbound 8000 only (inbound optional for serving peers)
 - **Data:** Preserves `KOVANICA_DATA` across restarts
 
 ### Block producer (PoA authority)
 - **Purpose:** Sign blocks in authority slots for rewards
-- **Config:** `MINE=1`, `MINE_SECS=60` (or desired interval)
+- **Config:** `KOVANICA_CONSENSUS=poa`, `KOVANICA_PRODUCE=1`
 - **Requires:** a PoA authority key (`KOVANICA_AUTHORITY_KEY`) matching the
   authority scheduled for each slot. Blocks are signed, not mined -- there is
   no proof-of-work and no difficulty retarget. Without the key this role
@@ -130,8 +130,8 @@ The `network` and `genesis` fields must match. Your tip will catch up after the 
 - **Reward:** 25% of fees + block subsidy (per RFC-006 curve)
 
 ### Seed / Explorer Node
-- **Purpose:** Bootstrap, serve explorer API, mine empty blocks
-- **Config:** `MINE=1`, `FAUCET=1`, `OPERATOR=1`, `ALLOW_RESET=0`
+- **Purpose:** Bootstrap, serve explorer API
+- **Config:** `KOVANICA_CONSENSUS=poa`, `KOVANICA_FAUCET=1`, `KOVANICA_OPERATOR=1`, `KOVANICA_ALLOW_RESET=0`
 - **Ports:** P2P 8000 (grey-cloud DNS), HTTP 8080 (loopback), metrics 9090
 - **Peers:** `seed2.kovanica.online:8000` (primary) or `seed3.kovanica.online:8000` (secondary)
 
@@ -285,7 +285,7 @@ KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh --data-dir /root/kovanica-
 mkdir -p /tmp/kov-restore-drill
 KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh \
   --data-dir /tmp/kov-restore-drill/data --force
-KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed2.kovanica.online:8000 \
+KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000 \
   /usr/local/bin/kovanica-node explorer 127.0.0.1:18081 &
 curl -s http://127.0.0.1:18081/api/head | jq .genesis
 ```
@@ -296,13 +296,13 @@ curl -s http://127.0.0.1:18081/api/head | jq .genesis
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
-| Sync stalls at genesis | Wrong bootstrap peer, **or the mainnet port 9000** | Use `KOVANICA_PEERS=76.13.250.65:8000` (seed2 origin IP) |
-| `address already in use` on 8000 | Another node running | `systemctl stop kovanica-*` or change `KOVANICA_LISTEN` |
+| Sync stalls at genesis | Wrong bootstrap peer | Use `KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000` |
+| `address already in use` on 9000 | Another node running | `systemctl stop kovanica-*` or change `KOVANICA_LISTEN` |
 | Genesis mismatch | Old chain data in `KOVANICA_DATA` | Wipe data dir (`KOVANICA_ALLOW_RESET=1` + restart) or backup/restore |
 | No peers connecting, no error logged | Dialed the wrong port — P2P has no handshake error path | `curl -s :8080/api/p2p \| jq` and compare `listen`/`peers`/`bootstrap` |
 | No peers connecting | Cloudflare orange-cloud on seed hostname | Use the DNS-only seed name or its origin IP |
-| IPv6 dial stalls | Ubuntu prefers IPv6 | Set `KOVANICA_PEERS=76.13.250.65:8000` |
-| Miner not producing | `MINE=0` or no mempool txs | Set `KOVANICA_MINE=1` and ensure mempool has txs (or `produce_empty`) |
+| IPv6 dial stalls | Ubuntu prefers IPv6 | Set `KOVANICA_PEERS=145.223.116.178:9000` |
+| Not producing blocks | Not an authority or key not set | Verify `KOVANICA_AUTHORITIES` and `KOVANICA_AUTHORITY_KEY` |
 
 ---
 

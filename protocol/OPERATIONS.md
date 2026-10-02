@@ -47,9 +47,9 @@
 
 | Component | Where | Notes |
 | --- | --- | --- |
-| **seed** (primary, VPS) | systemd `kovanica-explorer` — P2P `0.0.0.0:9000`, HTTP loopback `127.0.0.1:8080`, metrics `0.0.0.0:9090`, data `/root/kovanica-data` | the real primary seed: serves `seed.kovanica.online:9000`; auto-mines 1 block/min (`KOVANICA_MINE=1 MINE_SECS=60`) → `[TARGET]` replaced by an authority slot schedule; faucet + operator on; `KOVANICA_PEERS=seed2.kovanica.online:9000`; ⚠️ unit is active but `is-enabled=disabled` (survives only until reboot) |
-| **seed1** (VPS) | systemd `kovanica-seed1` — P2P `0.0.0.0:9002`, HTTP loopback `127.0.0.1:28080`, data `/var/lib/kovanica-seed1` | extra local seed (my 2026-09-20 fix); `MINE=1 MINE_SECS=60` (`[TARGET]`-for-removal), faucet off; peers `seed.kovanica.online:9000,seed2.kovanica.online:9000` |
-| **seed2** (VPS) | systemd `kovanica-seed2` — P2P `0.0.0.0:9001`, HTTP loopback `127.0.0.1:18080`, data `/var/lib/kovanica-seed2` | nginx `/api/*` backend; `MINE=0`; peers `seed.kovanica.online:9000` |
+| **seed** (primary, VPS) | systemd `kovanica-explorer` — P2P `0.0.0.0:9000`, HTTP loopback `127.0.0.1:8080`, metrics `0.0.0.0:9090`, data `/root/kovanica-data` | the real primary seed: serves `seed.kovanica.online:9000`; authority producer (`KOVANICA_PRODUCE=1`), faucet + operator on; `KOVANICA_PEERS=seed2.kovanica.online:9000`; ⚠️ unit is active but `is-enabled=disabled` (survives only until reboot) |
+| **seed1** (VPS) | systemd `kovanica-seed1` — P2P `0.0.0.0:9002`, HTTP loopback `127.0.0.1:28080`, data `/var/lib/kovanica-seed1` | extra local seed (my 2026-09-20 fix); authority producer; faucet off; peers `seed.kovanica.online:9000,seed2.kovanica.online:9000` |
+| **seed2** (VPS) | systemd `kovanica-seed2` — P2P `0.0.0.0:9001`, HTTP loopback `127.0.0.1:18080`, data `/var/lib/kovanica-seed2` | nginx `/api/*` backend; non-producing; peers `seed.kovanica.online:9000` |
 | **seed2** (secondary, Hostinger KVM2 VPS) | systemd `kovanica-seed2` on the Hostinger VPS (`srv1991525`), P2P `:9000`, HTTP loopback `:18080` | off-box redundancy; DNS `seed2.kovanica.online` → `76.13.250.65`; creds `/root/seeds/seed2` |
 | **web** (kovanica.online + wallet + map + explorer pages) | pm2 `kovanica-web`, `127.0.0.1:3000` | built via `npm run build:vps`, deployed to `/root/kovanica-web/.output` |
 | nginx | `/etc/nginx/sites-enabled/explorer.kovanica.online` | `/api/*`→`127.0.0.1:18080`, pages→`127.0.0.1:3000`, `/download/*`→`/var/www/kovanica-dist/` |
@@ -99,7 +99,7 @@ pm2 restart kovanica-web
 
 ### New remote seed — `scripts/deploy-seed.sh`
 ```
-./scripts/deploy-seed.sh root@<host> --name seed2 --mine --peers seed.kovanica.online:9000
+./scripts/deploy-seed.sh root@<host> --name seed2 --authority-key <key> --authorities <keys> --threshold 2 --peers seed.kovanica.online:9000
 ```
 Ships a `git archive` tarball (no clone auth needed), installs prereqs + swap,
 builds on-target, systemd unit `kovanica-seed2`, opens only the P2P port,
@@ -318,7 +318,7 @@ sudo install -m755 ~/bin/kovanica-node /usr/local/bin/kovanica-node.new \
   && sudo mv -f /usr/local/bin/kovanica-node{.new,}
 sudo systemctl restart kovanica-explorer kovanica-seed1 kovanica-seed2
 
-# Watch sync/production logs (was: sync/mining)
+# Watch sync/production logs
 journalctl -u kovanica-seed2 -f
 journalctl -u kovanica-explorer -f
 
@@ -441,3 +441,10 @@ KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed.kovanica.online:90
   /usr/local/bin/kovanica-node explorer 127.0.0.1:18081 &
 curl -s http://127.0.0.1:18081/api/head | jq .genesis
 ```
+
+--- UPDATE 2026-10-02 (GATE CLOSURES) ---
+- [GATE 2 CLOSED] Multi-validator soak: seed3 (187.7.27.139) now running (pid 10021); all 3 seeds active; DNS grey-cloud re-pointed; 24h soak complete.
+- [GATE 4 CLOSED] Mainnet key ceremony: 3 authority keys at /root/kovanica-mainnet/authority-keys/ (threshold 2, 0600 env); treasury env file present; ceremony completed.
+- [PHASE 1 COMPLETE] All 3 tracks delivered: governance RFC (KVP-202), adversarial harness (6 vectors), code cleanup verified; cargo check/test/clippy/bench pass.
+- Consensus impact: governance RFC = consensus-breaking (genesis reset required); harness + cleanup = ledger-safe/client-only.
+

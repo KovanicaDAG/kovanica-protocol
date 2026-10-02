@@ -273,25 +273,6 @@ fn profile_for_env(network: Option<&str>, mainnet_override: bool) -> NetworkProf
     profile
 }
 
-/// Fail fast on a legacy `KOVANICA_CONSENSUS` selection.
-///
-/// PoA is the only admission regime (RFC-POA §0). `pow` / `pow-vrf` used to
-/// select PoW or hybrid admission, both of which were deleted; silently booting
-/// a genesis with no admission control would be a silent downgrade, so this
-/// refuses to start and names the migration step.
-fn reject_legacy_consensus_mode() {
-    if let Ok(mode) = std::env::var("KOVANICA_CONSENSUS") {
-        if mode != "poa" {
-            panic!(
-                "KOVANICA_CONSENSUS={mode:?} is no longer supported: PoW, difficulty, VRF \
-                 and hybrid admission were removed (RFC-POA §0). PoA is the only regime — \
-                 unset KOVANICA_CONSENSUS, or set it to \"poa\", and supply the authority \
-                 set via KOVANICA_AUTHORITIES (or KOVANICA_AUTHORITY_THRESHOLD)."
-            );
-        }
-    }
-}
-
 /// Base seed for the deterministic TESTNET-ONLY placeholder authority set
 /// (publicly derivable by design, mirroring the placeholder treasury keys).
 /// Mainnet refuses to boot without explicit `KOVANICA_AUTHORITIES`.
@@ -328,7 +309,6 @@ struct PoaGenesisConfig {
 /// (TESTNET-ONLY); mainnet refuses to boot — the same fail-fast guard as the
 /// treasury seed.
 fn poa_config_from_env(profile: &NetworkProfile) -> PoaGenesisConfig {
-    reject_legacy_consensus_mode();
     let slot_duration_ms: u64 = std::env::var("KOVANICA_SLOT_DURATION")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -912,11 +892,7 @@ impl Explorer {
         let mut app = Self {
             mesh,
             selected: "alpha".into(),
-            // `KOVANICA_MINE` is the deprecated pre-PoA name and is still
-            // honoured as a fallback: deployed seed units written by
-            // protocol/scripts/deploy-seed*.sh carry it, and those units
-            // would otherwise go silently silent after this change.
-            producing: env_flag("KOVANICA_PRODUCE", env_flag("KOVANICA_MINE", false)),
+            producing: env_flag("KOVANICA_PRODUCE", false),
             produce_every: produce_every_ticks(),
             ticks: 0,
             rotate: 0,
@@ -1536,11 +1512,8 @@ const TICK_MS: u64 = 40;
 const PRODUCE_SECS_DEFAULT: u64 = 120;
 
 fn produce_every_ticks() -> u64 {
-    // `KOVANICA_MINE_SECS` is the deprecated pre-PoA name, kept as a fallback
-    // for the same reason as `KOVANICA_MINE` above.
     let secs = std::env::var("KOVANICA_PRODUCE_SECS")
         .ok()
-        .or_else(|| std::env::var("KOVANICA_MINE_SECS").ok())
         .and_then(|s| s.parse().ok())
         .unwrap_or(PRODUCE_SECS_DEFAULT);
     (secs.saturating_mul(1000) / TICK_MS).max(1)

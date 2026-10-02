@@ -6,7 +6,7 @@
 
 **GHOSTDAG k=3 BlockDAG** with UTXO ledger, Ed25519 signatures, native multi-asset tokens, stealth, HTLC and time-lock vaults.
 Native token: **KVNC** (1 KVNC = 100 000 000 atoms).
-Consensus: **PoA-only** (ratified 2026-09-25) — PoW/difficulty/staked-VRF being removed per RFC-POA-Migration.
+Consensus: **PoA-only** (ratified 2026-09-25) — PoW/difficulty/staked-VRF removed per RFC-POA-Migration §0.
 
 Preferred monorepo for all protocol work (`kovanica-dag` · `kovanica-state` · `kovanica-node` · `kovanica-cli`).
 
@@ -17,7 +17,7 @@ Preferred monorepo for all protocol work (`kovanica-dag` · `kovanica-state` · 
 | testnet   | Live    | See /api/head                                                        | 8000 | https://explorer.kovanica.online |
 | mainnet   | Prepped | TBD                                                                  | 9000 | TBD                               |
 
-Bootstrap: `seed.kovanica.online:8000` (testnet) / `seed.kovanica.online:9000` (mainnet) — DNS-only / grey-cloud
+Bootstrap: `seed2.kovanica.online:8000,seed3.kovanica.online:8000` (testnet) / `seed.kovanica.online:9000` (mainnet) — DNS-only / grey-cloud
 
 ## Tokenomics (RFC-006)
 
@@ -51,14 +51,12 @@ Consensus: PoA-only GHOSTDAG · Ledger: UTXO · Signatures: Ed25519 (64-byte →
 ## Quick Start (participant node — testnet)
 
 ```sh
-export KOVANICA_POW=1
-export KOVANICA_MINE=0
-export KOVANICA_MINE_SECS=120
+export KOVANICA_CONSENSUS=poa
 export KOVANICA_FAUCET=0
 export KOVANICA_ALLOW_RESET=0
 export KOVANICA_OPERATOR=0
 export KOVANICA_LISTEN=0.0.0.0:8000
-export KOVANICA_PEERS=seed.kovanica.online:8000,seed2.kovanica.online:8000
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
 export KOVANICA_DATA="$PWD/data"
 
 cargo build --release -p kovanica-node
@@ -66,17 +64,36 @@ cargo build --release -p kovanica-node
 ```
 
 Critical:
-- Use DNS-only bootstrap name. Never point peers at the Cloudflare orange-cloud explorer hostname for TCP 8000/9000.
+- Use DNS-only bootstrap names. Never point peers at the Cloudflare orange-cloud explorer hostname for TCP 8000/9000.
 - Preserve `KOVANICA_DATA` after first genesis write.
 - After sync, local `/api/head` must match public genesis + tip.
 - Testnet P2P port is **8000**, mainnet is **9000**.
+
+## Authority Node (block producer — testnet)
+
+```sh
+export KOVANICA_CONSENSUS=poa
+export KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+export KOVANICA_AUTHORITY_THRESHOLD=2
+export KOVANICA_SLOT_DURATION=3000
+export KOVANICA_AUTHORITY_KEY=<32-byte-hex-secret>  # via EnvironmentFile, mode 0600
+export KOVANICA_PRODUCE=1
+export KOVANICA_FAUCET=0
+export KOVANICA_ALLOW_RESET=0
+export KOVANICA_OPERATOR=1
+export KOVANICA_LISTEN=0.0.0.0:8000
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
+export KOVANICA_DATA="$PWD/data"
+
+cargo build --release -p kovanica-node
+./target/release/kovanica-node explorer 127.0.0.1:8080
+```
 
 ## Build & Deploy
 
 ```sh
 cargo build --release
-# see deploy/ for testnet/mainnet configs + systemd units
-./deploy/preflight.sh   # always run before enabling any unit
+# see scripts/ for seed deploy + systemd units
 ```
 
 ## RFC / KVP Status
@@ -94,10 +111,10 @@ cargo build --release
 
 1. Private keys stay **client-side** (node never sees seeds)
 2. P2P: plaintext TCP only (port 8000 testnet / 9000 mainnet)
-3. RFC-006 hard caps enforced
-4. `ALLOW_RESET=1` only for seed1 genesis
+3. RFC-006 hard caps enforced (MAX_SUPPLY 90.2M KVNC, maturity 100, fee burn 75%)
+4. `ALLOW_RESET=1` only for isolated testnet genesis
 5. No faucet on mainnet
-6. Authority keys mode `0600`
+6. Authority keys mode `0600` via `EnvironmentFile`
 
 ## Development Workflow
 

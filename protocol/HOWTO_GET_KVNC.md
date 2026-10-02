@@ -84,64 +84,9 @@ Check your balance via:
 
 ---
 
-## Method 2: ~~Mining KVNC (CPU Mining)~~ — `[TARGET]` removed
+## Method 2: Running an Authority (Permissioned) — Not Open to the Public
 
-> **Superseded 2026-09-25.** `HOWTO_MINE.md` is now a tombstone. This section is
-> kept so the change is legible, not as instructions.
-
-As an alternative to the faucet, you *could* mine KVNC by running a full node
-with mining enabled. That is `[CURRENT]`-true of the pre-reset PoW testnet, and
-`[TARGET]`-removed from the protocol.
-
-### What actually happens to the reward
-
-This is the part that is easy to get wrong:
-
-- **Under PoW**, whoever solved a target collected the coinbase. Admission was
-  **permissionless** — buy hash power, earn subsidy.
-- **Under PoA**, the block subsidy accrues to the **authority scheduled for that
-  slot** (`authorities[slot % n]` over the canonical, sorted key order). If that
-  authority is offline the **slot is simply empty**: there is no gap-fill and no
-  difficulty to retarget, and the next scheduled authority continues from the
-  fixed 3000 ms clock (`SLOT_DURATION_MS`). Nobody backfills a missed slot.
-- So the replacement is not "mining with a different algorithm" — it is not
-  mining at all. It is a **permissioned** role. See `HOWTO_MINE.md` for the
-  side-by-side comparison and RFC-POA-Migration §0.5 for why removing PoW also
-  removes the protocol's permissionless admission path.
-
-### Historical instructions (do not follow)
-
-<details>
-<summary>Pre-PoA mining quick start — historical only</summary>
-
-```bash
-# Clone and build (if not already done)
-git clone https://github.com/KovanicaDAG/kovanica-protocol.git
-cd kovanica-protocol
-cargo build --release --bin kovanica-node
-
-# Run with mining enabled (adjust interval as needed)
-export KOVANICA_MINE=1
-export KOVANICA_MINE_SECS=60  # 1 minute between mining attempts
-./target/release/kovanica-node
-```
-
-Notes that were true of the pre-reset PoW testnet:
-
-- Mining rewards went to the address set by `KOVANICA_MINER_ADDRESS`, or an
-  ephemeral key if not set. (That env var is read only by the shell script
-  `protocol/mine-kvnc.sh` — no Rust code reads it — and is itself
-  `[TARGET]`-removed.)
-- Testnet difficulty was low, so modest CPU could mine blocks.
-- To see rewards, check your balance periodically via the wallet or API.
-- The coinbase must mature **100 blocks** (`COINBASE_MATURITY`) before it is
-  spendable. **That rule is unchanged under PoA.**
-
-</details>
-
-### Method 2b: Running an authority `[TARGET]` — not open to the public
-
-`[TARGET]` An authority operator holds an authority Ed25519 **signing key** and
+An authority operator holds an authority Ed25519 **signing key** and
 signs the block for each slot they are scheduled for, earning the subsidy for
 those slots.
 
@@ -158,7 +103,7 @@ authority set, and:
   Do not plan around a route into the authority set until those are decided.
 - An authority key is **not** derived from a seed you pick yourself. Never reuse
   a wallet key for it.
-- `[CURRENT]` On **testnet** only, the fallback set is the deterministic,
+- On **testnet** only, the fallback set is the deterministic,
   **publicly derivable** placeholder derived from `AUTHORITY_PLACEHOLDER_BASE =
   9001` — mirroring the placeholder treasury keys, and explicitly *not* for real
   funds. `kovanica-mainnet` **refuses to boot** without an explicit
@@ -166,6 +111,11 @@ authority set, and:
 - Operator config: `KOVANICA_CONSENSUS` (already defaults to `poa` when unset),
   `KOVANICA_AUTHORITIES`, `KOVANICA_AUTHORITY_THRESHOLD`, and
   `KOVANICA_SLOT_DURATION` (default 3000 ms). See `docs/RUN-A-NODE.md`.
+
+> **Note:** The pre-PoA mining path (`KOVANICA_MINE=1`) was removed in the
+> PoA-only migration (2026-09-25). There is no permissionless way to earn
+> block rewards. The faucet and receiving from other users are the only
+> methods available to ordinary testnet users.
 
 ---
 
@@ -260,7 +210,7 @@ question that the migration raises but does not answer (RFC-POA-Migration
 - **Never** use testnet keys or phrases on mainnet
 - Testnet tokens have no real value
 - Keep your testnet keys separate from any mainnet keys
-- `[CURRENT]` The **placeholder** authority keys and the placeholder treasury
+- The **placeholder** authority keys and the placeholder treasury
   keys are publicly derivable by design (`AUTHORITY_PLACEHOLDER_BASE = 9001`,
   `TREASURY_SEED_BASE`). Never use them for real funds.
 
@@ -273,10 +223,7 @@ When mainnet launches, the methods to obtain KVNC **may** be:
 1. **Purchasing** on exchanges (if listed)
 2. **Receiving** from other users
 3. **Official distributions** (if any)
-4. ~~**Mining** (PoW + hybrid staked-VRF)~~ — **`[TARGET]` removed.** Mining is
-   not a mainnet acquisition path. The staked-VRF half is removed too
-   (RFC-POA-Migration §0.7.1, decided 2026-09-25) — a non-authority cannot
-   produce a block, so staking KVNC buys no block production.
+4. **Authority block rewards** — only for authorized authority operators
 
 The faucet will **not** exist on mainnet. The block subsidy goes to the
 authority set, so **`[OPEN]` how the general public acquires KVNC on mainnet is
@@ -296,23 +243,19 @@ details.
 - Try the API method directly: `curl -v http://127.0.0.1:8080/api/faucet?...`
 - Ensure you're using a valid KVNC address format
 
-### ~~Mining Not Earning~~
-- `[TARGET]` Not applicable — mining is removed. If you were following the
-  pre-reset guide, use the faucet (Method 1) or receive from another user
-  (Method 3).
-- `[CURRENT]` If you really are on the pre-reset PoW testnet and mining: verify
-  `KOVANICA_MINE=1` is set, check node logs for mining attempts, and confirm you
-  are connected to peers (`http://127.0.0.1:8080/api/peers`) and synced (tip
-  height close to explorer). Remember the coinbase must mature **100 blocks**
-  before it is spendable.
+### Not Producing Blocks (Authority Nodes)
+- Verify `KOVANICA_AUTHORITIES` includes this node's public key
+- Verify `KOVANICA_AUTHORITY_KEY` is set (via EnvironmentFile, mode 0600)
+- Verify `KOVANICA_PRODUCE=1` and `KOVANICA_CONSENSUS=poa`
+- Check node is synced and connected to peers
 
 ### Not Seeing Received Funds
-- Wait a few seconds for block propagation (`[TARGET]` ~3 s slots under PoA)
+- Wait a few seconds for block propagation (~3 s slots under PoA)
 - Check transaction status via API if you have the tx ID
 - Ensure you're looking at the correct address (testnet addresses start with `kvnc`)
 
 ### Balance Shows Zero but Should Have Funds
-- Testnet may have been reset — check recent announcements. `[TARGET]` A reset is
+- Testnet may have been reset — check recent announcements. A reset is
   expected: the PoA-only transition requires one (§0.6)
 - Try requesting from faucet again
 - Verify you're using the correct network (testnet vs any local test chains)

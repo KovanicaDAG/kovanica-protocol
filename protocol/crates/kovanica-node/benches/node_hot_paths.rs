@@ -100,7 +100,7 @@ fn bench_mempool(c: &mut Criterion) {
     }
 }
 
-/// A node in the default (PoW, non-hybrid) configuration with genesis minting a
+/// A node in the default (PoA) configuration with genesis minting a
 /// small founder coinbase to actor 1, and `n` contested transfers pooled into
 /// the mempool: every tx spends the same genesis coinbase, so `produce_block`
 /// keeps exactly one (doublespend detection). Recipient seeds are distinct so

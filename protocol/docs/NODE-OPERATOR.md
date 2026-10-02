@@ -14,10 +14,9 @@
 **Use case:** Validate, sync, submit transactions, run wallet/explorer UI locally.
 
 ```sh
-export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
-export KOVANICA_MINE=0
-export KOVANICA_MINE_SECS=120
+export KOVANICA_LISTEN=0.0.0.0:8000
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
+export KOVANICA_CONSENSUS=poa
 export KOVANICA_FAUCET=0
 export KOVANICA_ALLOW_RESET=0
 export KOVANICA_OPERATOR=0
@@ -25,15 +24,19 @@ export KOVANICA_DATA="$PWD/data"
 export KOVANICA_NETWORK=kovanica-testnet
 ```
 
-### 1.2 Miner Node
+### 1.2 Authority Node
 **Use case:** Sign blocks in PoA authority slots for block rewards
 (subsidy + 25% fees). Requires this node's authority key.
 
 ```sh
-export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
-export KOVANICA_MINE=1
-export KOVANICA_MINE_SECS=60          # Target ~1 block/minute
+export KOVANICA_LISTEN=0.0.0.0:8000
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
+export KOVANICA_CONSENSUS=poa
+export KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+export KOVANICA_AUTHORITY_THRESHOLD=2
+export KOVANICA_SLOT_DURATION=3000
+export KOVANICA_AUTHORITY_KEY=<32-byte-hex-secret>  # via EnvironmentFile, mode 0600
+export KOVANICA_PRODUCE=1
 export KOVANICA_FAUCET=0
 export KOVANICA_ALLOW_RESET=0
 export KOVANICA_OPERATOR=0
@@ -42,14 +45,18 @@ export KOVANICA_NETWORK=kovanica-testnet
 ```
 
 ### 1.3 Seed / Explorer Node (Operator)
-**Use case:** Bootstrap peer, serve public explorer API, mine empty blocks for chain liveness.
+**Use case:** Bootstrap peer, serve public explorer API.
 
 ```sh
 # Primary seed (seed.kovanica.online)
-export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed2.kovanica.online:9000
-export KOVANICA_MINE=1
-export KOVANICA_MINE_SECS=60
+export KOVANICA_LISTEN=0.0.0.0:8000
+export KOVANICA_PEERS=seed3.kovanica.online:8000
+export KOVANICA_CONSENSUS=poa
+export KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+export KOVANICA_AUTHORITY_THRESHOLD=2
+export KOVANICA_SLOT_DURATION=3000
+export KOVANICA_AUTHORITY_KEY=<32-byte-hex-secret>  # via EnvironmentFile, mode 0600
+export KOVANICA_PRODUCE=1
 export KOVANICA_FAUCET=1
 export KOVANICA_ALLOW_RESET=0
 export KOVANICA_OPERATOR=1
@@ -57,26 +64,16 @@ export KOVANICA_DATA=/root/kovanica-data
 export KOVANICA_NETWORK=kovanica-testnet
 
 # Secondary seed (seed2.kovanica.online)
-export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000
-export KOVANICA_MINE=0
+export KOVANICA_LISTEN=0.0.0.0:8000
+export KOVANICA_PEERS=seed2.kovanica.online:8000
+export KOVANICA_CONSENSUS=poa
+export KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+export KOVANICA_AUTHORITY_THRESHOLD=2
+export KOVANICA_SLOT_DURATION=3000
 export KOVANICA_FAUCET=0
 export KOVANICA_ALLOW_RESET=0
 export KOVANICA_OPERATOR=0
 export KOVANICA_DATA=/var/lib/kovanica-seed2
-export KOVANICA_NETWORK=kovanica-testnet
-```
-
-### 1.4 Hybrid Validator Node (Staked VRF)
-**Use case:** Participate in hybrid PoW + VRF-staked block admission (RFC-006+).
-
-```sh
-export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
-export KOVANICA_HYBRID=1
-export KOVANICA_HYBRID_STAKE_NOMINAL_WORK=1
-export KOVANICA_VALIDATOR_SEED=<32-byte-hex>  # Your VRF keypair seed
-export KOVANICA_DATA="$PWD/data"
 export KOVANICA_NETWORK=kovanica-testnet
 ```
 
@@ -86,18 +83,19 @@ export KOVANICA_NETWORK=kovanica-testnet
 
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `KOVANICA_LISTEN` | string | `0.0.0.0:9000` | P2P bind address (also tries `[::]:9000`) |
-| `KOVANICA_PEERS` | string | `seed.kovanica.online:9000` | Comma-separated bootstrap peers |
-| `KOVANICA_MINE` | bool | `0` | Enable auto-mining (produce blocks) |
-| `KOVANICA_MINE_SECS` | integer | `120` | Mining interval in seconds (when `MINE=1`) |
-| `KOVANICA_FAUCET` | bool | `0` | Enable faucet endpoint (seed-only) |
+| `KOVANICA_LISTEN` | string | `0.0.0.0:8000` (testnet) · `0.0.0.0:9000` (mainnet) | P2P bind address | current |
+| `KOVANICA_PEERS` | string | `seed2.kovanica.online:8000,seed3.kovanica.online:8000` | Comma-separated bootstrap peers |
+| `KOVANICA_CONSENSUS` | string | `poa` (unset) | Consensus mode: `poa` (default) |
+| `KOVANICA_AUTHORITIES` | string | testnet placeholder | Comma-separated 32-byte hex authority public keys |
+| `KOVANICA_AUTHORITY_THRESHOLD` | integer | strict majority | Signatures required for AuthorityUpdateTx |
+| `KOVANICA_SLOT_DURATION` | integer | `3000` | PoA slot length in ms |
+| `KOVANICA_AUTHORITY_KEY` | hex (64 chars) | — | Authority signing secret (via EnvironmentFile, mode 0600) |
+| `KOVANICA_PRODUCE` | bool | `0` | Enable block production when scheduled |
+| `KOVANICA_FAUCET` | bool | `0` | Enable faucet endpoint (seed/explorer only) |
 | `KOVANICA_ALLOW_RESET` | bool | `0` | Allow chain wipe via API (testnet-only) |
 | `KOVANICA_OPERATOR` | bool | `0` | Enable operator-only RPC commands |
 | `KOVANICA_DATA` | path | `./data` | Persistence directory (MUST persist) |
 | `KOVANICA_NETWORK` | string | `kovanica-testnet` | Network profile selector |
-| `KOVANICA_HYBRID` | bool | `0` | Enable hybrid PoW+VRF-staked admission |
-| `KOVANICA_HYBRID_STAKE_NOMINAL_WORK` | integer | `1` | Nominal work for staked blocks |
-| `KOVANICA_VALIDATOR_SEED` | hex (64 chars) | — | VRF keypair seed for staking |
 | `KOVANICA_TREASURY_SEED` | hex (64 chars) | — | Treasury vault keys (mainnet only) |
 | `KOVANICA_MAINNET_OVERRIDE` | bool | `0` | Force boot dormant mainnet profile |
 | `KOVANICA_RATE_LIMIT` | float | `10` | HTTP req/s per IP (token bucket) |
@@ -126,16 +124,16 @@ export KOVANICA_NETWORK=kovanica-testnet
 - Default location: `./data` (or `~/kovanica-node/data` for installer).
 
 ### 3.3 P2P Seeds
-- **Always use DNS seed names or origin IPs.** Never point peers at Cloudflare orange-cloud hostnames for TCP 9000.
-- Correct: `seed.kovanica.online:9000` or `145.223.116.178:9000`
-- Wrong: `explorer.kovanica.online:9000` (Cloudflare proxied, TCP 9000 blocked)
+- **Always use DNS seed names or origin IPs.** Never point peers at Cloudflare orange-cloud hostnames for TCP 8000.
+- Correct: `seed2.kovanica.online:8000` or `145.223.116.178:8000`
+- Wrong: `explorer.kovanica.online:8000` (Cloudflare proxied, TCP blocked)
 
 ### 3.4 Reset Flag
 - **Never recommend `KOVANICA_ALLOW_RESET=1` on public-facing nodes** without explicit isolation and documentation.
 - Testnet reset policy: only on wire-format bumps or safety incidents.
 
 ### 3.5 Defaults
-- Default participant configuration keeps `MINE=0`, `FAUCET=0`, `OPERATOR=0`.
+- Default participant configuration keeps `KOVANICA_PRODUCE=0`, `KOVANICA_FAUCET=0`, `KOVANICA_OPERATOR=0`.
 - Consensus is proof-of-authority: there is no proof-of-work, no difficulty
   retarget, and no `KOVANICA_POW` variable -- the node never reads it.
 
@@ -145,7 +143,8 @@ export KOVANICA_NETWORK=kovanica-testnet
 
 | Port | Protocol | Binding | Purpose |
 |------|----------|---------|---------|
-| **9000** | TCP | `0.0.0.0:9000` + `[::]:9000` | P2P gossip, block sync (plaintext) |
+| **8000** | TCP | `0.0.0.0:8000` + `[::]:8000` | P2P gossip, block sync (plaintext) — testnet |
+| **9000** | TCP | `0.0.0.0:9000` + `[::]:9000` | P2P gossip, block sync (plaintext) — mainnet |
 | **8080** | HTTP | `127.0.0.1:8080` | Explorer API (participant/primary seed) |
 | **18080** | HTTP | `127.0.0.1:18080` | Explorer API (seed2, nginx backend) |
 | **28080** | HTTP | `127.0.0.1:28080` | Explorer API (seed1) |
@@ -154,12 +153,13 @@ export KOVANICA_NETWORK=kovanica-testnet
 
 ### Firewall Rules
 ```sh
-# Participant/miner: only outbound 9000 needed
-ufw allow out 9000/tcp
+# Testnet participant: only outbound 8000 needed
+ufw allow out 8000/tcp
 
-# Seed/Explorer: inbound 9000 for peers
-ufw allow 9000/tcp comment 'Kovanica P2P'
-# HTTP/metrics stay loopback-only
+# Testnet seed/explorer: inbound 8000 for peers
+ufw allow 8000/tcp comment 'Kovanica P2P'
+
+# Mainnet: use port 9000 instead of 8000
 ```
 
 ---
@@ -196,10 +196,9 @@ WantedBy=multi-user.target
 ### 5.2 Environment File (`/home/kovanica/kovanica.env`)
 
 ```ini
-KOVANICA_LISTEN=0.0.0.0:9000
-KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
-KOVANICA_MINE=0
-KOVANICA_MINE_SECS=120
+KOVANICA_LISTEN=0.0.0.0:8000
+KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
+KOVANICA_CONSENSUS=poa
 KOVANICA_FAUCET=0
 KOVANICA_ALLOW_RESET=0
 KOVANICA_OPERATOR=0
@@ -278,7 +277,7 @@ curl -s http://127.0.0.1:8080/api/head | jq .
 ```sh
 KOVANICA_DATA=/tmp/cold-bootstrap \
 KOVANICA_LISTEN=127.0.0.1:19000 \
-KOVANICA_PEERS=seed.kovanica.online:9000 \
+KOVANICA_PEERS=seed2.kovanica.online:8000 \
 /usr/local/bin/kovanica-node explorer 127.0.0.1:18081
 
 # Verify genesis matches
@@ -321,12 +320,12 @@ cargo run -p kovanica-node
 
 | Symptom | Cause | Resolution |
 |---------|-------|------------|
-| **Sync stalls at genesis** | Wrong bootstrap peer / IPv6 stall | Use origin IP: `KOVANICA_PEERS=145.223.116.178:9000` |
+| **Sync stalls at genesis** | Wrong bootstrap peer / IPv6 stall | Use origin IP: `KOVANICA_PEERS=145.223.116.178:8000` |
 | **`address already in use` on 9000** | Another node running | `systemctl stop kovanica-*` or change `KOVANICA_LISTEN` |
 | **Genesis mismatch** | Old chain data in `KOVANICA_DATA` | Wipe data dir (`KOVANICA_ALLOW_RESET=1` + restart) or restore from backup |
 | **No peers connecting** | Dialing Cloudflare-proxied hostname | Use `seed.kovanica.online` (grey-cloud DNS only) |
-| **IPv6 dial stalls** | Ubuntu prefers IPv6 | Set `KOVANICA_PEERS=145.223.116.178:9000` |
-| **Miner not producing** | `MINE=0` or empty mempool | Set `KOVANICA_MINE=1` or call `produce_empty` via RPC |
+| **IPv6 dial stalls** | Ubuntu prefers IPv6 | Set `KOVANICA_PEERS=145.223.116.178:8000` |
+| **Not producing blocks** | Not an authority or key not set | Verify `KOVANICA_AUTHORITIES` and `KOVANICA_AUTHORITY_KEY` |
 | **ETXTBSY on upgrade** | Replaced binary without stopping service | Always `systemctl stop` before `cp`/`install` |
 | **Deleted inode trap** | Binary replaced but process runs old code | Restart service after binary swap; verify `readlink /proc/<pid>/exe` |
 | **Metrics not appearing** | `metrics` crate version mismatch | Ensure `metrics` and `metrics-exporter-prometheus` share minor version |
@@ -340,10 +339,9 @@ cargo run -p kovanica-node
 | GHOSTDAG **k** | 3 | `dag.rs` |
 | Finality depth | 100 blocks | `ledger.rs` |
 | Payload pruning depth | 1000 blocks | `dag.rs` |
-| PoW | Opt-in, real | `pow.rs` |
-| Difficulty | Opt-in, enforced | `difficulty.rs` |
-| VRF | Opt-in, leader selection | `vrf.rs` |
-| Hybrid admission | Opt-in (PoW + VRF-staked) | `ledger.rs` |
+| Consensus | PoA (authority signatures) | `dag.rs` |
+| Slot duration | 3000 ms | `KOVANICA_SLOT_DURATION` |
+| Authority set | Genesis-fixed + on-chain rotatable | `ledger.rs` |
 | All RFC activation scores | 0 (active from genesis) | — |
 
 ---
