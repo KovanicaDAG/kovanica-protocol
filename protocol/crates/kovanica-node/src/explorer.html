@@ -488,13 +488,13 @@ function minePanel(s) {
     <p class="muted">Prefer manual? After downloading, mark it executable and run:</p>
     <pre class="mono" style="background:var(--bg);padding:10px;overflow:auto;font-size:11px">chmod +x kovanica-node-linux-x64
 KOVANICA_LISTEN=0.0.0.0:9000 KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000 \\
-KOVANICA_MINE=1 KOVANICA_MINE_SECS=60 KOVANICA_DATA=~/.kovanica \\
+KOVANICA_PRODUCE=1 KOVANICA_PRODUCE_SECS=60 KOVANICA_DATA=~/.kovanica \\
 ./kovanica-node-linux-x64 explorer 127.0.0.1:18080</pre>
     <p class="muted" style="margin-top:12px">Verify your node is synced: <code class="mono">curl http://127.0.0.1:18080/api/head</code>
     — genesis must match this network (<span class="mono">${(s.genesis||"").slice(0,16)}…</span>).
     Consensus is proof-of-authority: authorities sign on a fixed slot, there is no
-    proof-of-work and no difficulty retarget. <code class="mono">KOVANICA_MINE</code>
-    just fills empty slots — it is not a miner.</p>`;
+    proof-of-work and no difficulty retarget. <code class="mono">KOVANICA_PRODUCE</code>
+    just fills empty slots when this node holds the authority key — it is not a miner.</p>`;
 }
 
 function docsPanel() {  return `<p class="muted"><a href="/docs">Raw TESTNET.md</a></p><pre id="docs-body" class="mono muted" style="white-space:pre-wrap">loading…</pre>`;

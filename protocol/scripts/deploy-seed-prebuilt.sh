@@ -8,26 +8,30 @@
 #   ./scripts/deploy-seed-prebuilt.sh <user>@<host> [options]
 #
 # Options:
-#   --name <name>         Seed name (default: seed2; used in unit + data dir)
-#   --peers <host:port>   Bootstrap peers (default: seed2.kovanica.online:8000,seed3.kovanica.online:8000)
-#   --mine                Enable auto-mining (default: off for pure seeds)
-#   --mine-secs <n>       Block interval when mining (default: 60)
-#   --explorer <port>     Explorer HTTP port (default: 8080)
-#   --p2p <port>          P2P listen port (default: 9000)
-#   --binary <path>       Path to pre-built kovanica-node binary (default: ./target/release/kovanica-node)
+#   --name <name>           Seed name (default: seed2; used in unit + data dir)
+#   --peers <host:port>     Bootstrap peers (default: seed2.kovanica.online:8000,seed3.kovanica.online:8000)
+#   --authority-key <hex>   32-byte Ed25519 authority signing key (for authority nodes)
+#   --authorities <hex>     Comma-separated authority public keys (genesis set)
+#   --threshold <n>         M-of-N threshold for authority updates (default: strict majority)
+#   --slot-duration <ms>    PoA slot duration in ms (default: 3000)
+#   --explorer <port>       Explorer HTTP port (default: 8080)
+#   --p2p <port>            P2P listen port (default: 9000)
+#   --binary <path>         Path to pre-built kovanica-node binary (default: ./target/release/kovanica-node)
 #
 # Example:
-#   ./scripts/deploy-seed-prebuilt.sh ubuntu@130.61.x.x --name seed2 --mine --binary ./target/release/kovanica-node
+#   ./scripts/deploy-seed-prebuilt.sh ubuntu@130.61.x.x --name seed2 --authority-key <key> --authorities <keys> --threshold 2 --binary ./target/release/kovanica-node
 
 set -euo pipefail
 
 TARGET=""
 NAME="seed2"
 PEERS="seed2.kovanica.online:8000,seed3.kovanica.online:8000"
-MINE=0
-MINE_SECS=60
+AUTHORITY_KEY=""
+AUTHORITIES=""
+THRESHOLD=""
+SLOT_DURATION=3000
 EXPLORER_PORT=8080
-P2P_PORT=9000
+P2P_PORT=8000
 BINARY_PATH="./target/release/kovanica-node"
 
 usage() { grep '^#' "$0" | cut -c4-; exit 0; }
@@ -37,8 +41,10 @@ while [[ $# -gt 0 ]]; do
         -h|--help) usage ;;
         --name) NAME="$2"; shift 2 ;;
         --peers) PEERS="$2"; shift 2 ;;
-        --mine) MINE=1; shift ;;
-        --mine-secs) MINE_SECS="$2"; shift 2 ;;
+        --authority-key) AUTHORITY_KEY="$2"; shift 2 ;;
+        --authorities) AUTHORITIES="$2"; shift 2 ;;
+        --threshold) THRESHOLD="$2"; shift 2 ;;
+        --slot-duration) SLOT_DURATION="$2"; shift 2 ;;
         --explorer) EXPLORER_PORT="$2"; shift 2 ;;
         --p2p) P2P_PORT="$2"; shift 2 ;;
         --binary) BINARY_PATH="$2"; shift 2 ;;
@@ -57,7 +63,6 @@ REMOTE_DATA="/var/lib/kovanica-$NAME"
 echo "=== Kovanica seed deploy (prebuilt): $NAME -> $TARGET ==="
 echo "Binary: $BINARY_PATH"
 echo "Peers: $PEERS"
-echo "Mining: $MINE (${MINE_SECS}s)"
 echo "Data dir: $REMOTE_DATA"
 
 # Verify binary architecture
@@ -77,6 +82,43 @@ scp -q "$BINARY_PATH" "$TARGET:/tmp/kovanica-node"
 ssh "$TARGET" "sudo mv /tmp/kovanica-node /usr/local/bin/kovanica-node && sudo chmod 755 /usr/local/bin/kovanica-node"
 
 echo "[5/6] Installing service..."
+
+# Build environment for systemd unit
+SVC_ENV="
+Environment=KOVANICA_LISTEN=0.0.0.0:$P2P_PORT
+Environment=KOVANICA_PEERS=$PEERS
+Environment=KOVANICA_CONSENSUS=poa
+Environment=KOVANICA_SLOT_DURATION=$SLOT_DURATION
+Environment=KOVANICA_OPERATOR=1
+Environment=KOVANICA_FAUCET=0
+Environment=KOVANICA_ALLOW_RESET=0
+Environment=KOVANICA_DATA=$REMOTE_DATA
+Environment=KOVANICA_NETWORK=kovanica-testnet
+"
+
+if [[ -n "$AUTHORITY_KEY" ]]; then
+    SVC_ENV="$SVC_ENV
+EnvironmentFile=/etc/kovanica/authority.env
+"
+    # Create authority env file on remote
+    ssh "$TARGET" "sudo mkdir -p /etc/kovanica && sudo tee /etc/kovanica/authority.env >/dev/null <<'EOFAUTH'
+KOVANICA_AUTHORITY_KEY=$AUTHORITY_KEY
+EOFAUTH
+    sudo chmod 600 /etc/kovanica/authority.env"
+fi
+
+if [[ -n "$AUTHORITIES" ]]; then
+    SVC_ENV="$SVC_ENV
+Environment=KOVANICA_AUTHORITIES=$AUTHORITIES
+"
+fi
+
+if [[ -n "$THRESHOLD" ]]; then
+    SVC_ENV="$SVC_ENV
+Environment=KOVANICA_AUTHORITY_THRESHOLD=$THRESHOLD
+"
+fi
+
 ssh "$TARGET" "sudo tee /etc/systemd/system/kovanica-$NAME.service >/dev/null <<EOF
 [Unit]
 Description=Kovanica seed node ($NAME)
@@ -86,15 +128,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=$REMOTE_DATA
-Environment=KOVANICA_LISTEN=0.0.0.0:$P2P_PORT
-Environment=KOVANICA_POW=1
-Environment=KOVANICA_PEERS=$PEERS
-Environment=KOVANICA_OPERATOR=1
-Environment=KOVANICA_MINE=$MINE
-Environment=KOVANICA_MINE_SECS=$MINE_SECS
-Environment=KOVANICA_FAUCET=0
-Environment=KOVANICA_ALLOW_RESET=0
-Environment=KOVANICA_DATA=$REMOTE_DATA
+$SVC_ENV
 ExecStart=/usr/local/bin/kovanica-node explorer 127.0.0.1:$EXPLORER_PORT
 Restart=always
 RestartSec=5

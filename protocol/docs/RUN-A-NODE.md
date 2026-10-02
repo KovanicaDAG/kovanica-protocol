@@ -51,27 +51,20 @@
 # 1. Install from GitHub Release (Linux x86_64)
 curl -sSfL https://raw.githubusercontent.com/KovanicaDAG/kovanica-node/main/scripts/install.sh | bash
 
-# 2. Run as explorer (HTTP API + P2P + mining)   [CURRENT] pre-reset PoW path
-KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000 \
-KOVANICA_LISTEN=0.0.0.0:9000 KOVANICA_POW=1 \
-kovanica-node explorer 127.0.0.1:8080
-
-# [TARGET] after PoA-only: KOVANICA_POW=1 drops out entirely. PoA is the default
-# when KOVANICA_CONSENSUS is unset, so on testnet this is simply:
-KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000 \
-KOVANICA_LISTEN=0.0.0.0:9000 \
+# 2. Run as explorer (HTTP API + P2P)
+KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000 \
+KOVANICA_LISTEN=0.0.0.0:8000 \
 kovanica-node explorer 127.0.0.1:8080
 ```
 
-**That's it.** `[CURRENT]` Your node will sync, mine blocks every ~60s, and serve:
+**That's it.** Your node will sync and serve:
 - Explorer UI: `http://127.0.0.1:8080`
 - HTTP API: `http://127.0.0.1:8080/api/*`
 - Prometheus metrics: `http://127.0.0.1:9090/metrics`
 
-`[TARGET]` Under PoA the same node syncs and serves identically; the "mine blocks
-every ~60s" line becomes "participates in a ~3 s slot clock" — and only if it is
-an authority with a signing key configured. A non-authority node validates and
-relays, it does not produce.
+Under PoA the node syncs and serves identically; block production happens on a
+~3 s slot clock **only if** the node is an authority with a signing key configured.
+A non-authority node validates and relays, it does not produce.
 
 ---
 
@@ -129,9 +122,8 @@ docker run -d \
   --name kovanica-node \
   -p 9000:9000 -p 8080:8080 -p 9090:9090 \
   -v kovanica-data:/data \
-  -e KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000 \
-  -e KOVANICA_LISTEN=0.0.0.0:9000 \
-  -e KOVANICA_POW=1 \                      # [CURRENT] pre-reset; [TARGET] removed
+  -e KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000 \
+  -e KOVANICA_LISTEN=0.0.0.0:8000 \
   ghcr.io/kovanicadag/kovanica-node:latest \
   explorer 127.0.0.1:8080
 ```
@@ -166,79 +158,60 @@ All config via environment variables:
 |----------|---------|-------------|--------|
 | `KOVANICA_DATA` | `./data` | Data directory (chain state, wallets) | current |
 | `KOVANICA_NETWORK` | `kovanica-testnet` | Network profile | current |
-| `KOVANICA_LISTEN` | `0.0.0.0:9000` | P2P listen address (TCP 9000 only) | current |
-| `KOVANICA_PEERS` | `seed.kovanica.online:9000,seed2.kovanica.online:9000` | Bootstrap peers | current |
-| `KOVANICA_CONSENSUS` | `poa` when unset | Admission mode: `poa` or `pow`. **Any other value panics.** | current |
+| `KOVANICA_LISTEN` | `0.0.0.0:8000` (testnet) · `0.0.0.0:9000` (mainnet) | P2P listen address | current |
+| `KOVANICA_PEERS` | `seed2.kovanica.online:8000,seed3.kovanica.online:8000` (testnet) · empty (mainnet) | Bootstrap peers | current |
+| `KOVANICA_CONSENSUS` | `poa` when unset | Admission mode: `poa` (only). **Any other value panics.** | current |
 | `KOVANICA_AUTHORITIES` | *(unset → testnet placeholder; mainnet refuses to boot)* | PoA genesis authority set, comma-separated 64-hex Ed25519 public keys | current |
 | `KOVANICA_AUTHORITY_THRESHOLD` | strict majority | Signatures required to execute an `AuthorityUpdateTx` | current |
 | `KOVANICA_SLOT_DURATION` | `3000` (ms) | PoA slot length (`SLOT_DURATION_MS`) | current |
-| `KOVANICA_POW` | *(no effect)* | **Inert — the node never reads it.** PoW admission is selected by `KOVANICA_CONSENSUS=pow` | **removed (unread)** |
-| `KOVANICA_MINE` | `1` (explorer profile) | Auto-mine empty blocks | **`[TARGET]`-removed** |
-| `KOVANICA_MINE_SECS` | `60` | Target block interval when mining | **`[TARGET]`-removed** |
+| `KOVANICA_AUTHORITY_KEY` | — | 32-byte hex authority signing secret (via EnvironmentFile, mode 0600) | current |
+| `KOVANICA_PRODUCE` | `0` | Enable block production when scheduled | current |
 | `KOVANICA_FAUCET` | `0` | Enable faucet (testnet explorer only) | current |
-| `KOVANICA_HYBRID` | `0` | Enable hybrid PoW+staked admission | **`[CURRENT]` / `[TARGET]`-removed** — see below |
 | `KOVANICA_OPERATOR` | `0` | Enable operator wallet (mining rewards) | current |
 | `KOVANICA_ALLOW_RESET` | `0` | Allow genesis reset (dev only) | current |
 | `KOVANICA_TREASURY_SEED` | — | 64-hex mainnet treasury seed (required for mainnet) | current |
 
 **There is no `KOVANICA_DIFFICULTY` variable, and none is planned.** PoW
 difficulty was always a node-local `Retarget` policy, never operator-tunable.
-Under `[TARGET]` PoA there is nothing to retarget at all.
+Under PoA there is nothing to retarget at all.
 
-### 3.0a `KOVANICA_HYBRID` is being removed — do not use it
+### 3.0a `KOVANICA_HYBRID` is removed — do not use it
 
-`KOVANICA_HYBRID` enables `HybridConfig` (PoW **+** stake-weighted VRF
-sortition). **Both halves are being removed** — decided 2026-09-25
+`KOVANICA_HYBRID` enabled `HybridConfig` (PoW **+** stake-weighted VRF
+sortition). **Both halves were removed** — decided 2026-09-25
 (RFC-POA-Migration **§0.7.1**, Option A). The "PoA + staked-VRF secondary tier"
 option was considered and rejected.
 
 **For operators this simplifies things: there is no hybrid mode to configure.**
-`KOVANICA_HYBRID` is `[TARGET]`-for-removal and a `[TARGET]` runbook must set
-neither it nor `KOVANICA_POW` — a plain participant or authority node just sets
-`KOVANICA_CONSENSUS=poa` and the `KOVANICA_AUTHORITY*` vars if it is an
-authority. Bonding and unbonding (`bond_stake` / `unbond_stake`) are
-`[TARGET]`-for-removal along with the stake registry, so there is no
-staking-with-`KVNC` runbook to write.
+`KOVANICA_HYBRID` is removed and a runbook must set neither it nor `KOVANICA_POW` —
+a plain participant or authority node just sets `KOVANICA_CONSENSUS=poa` and the
+`KOVANICA_AUTHORITY*` vars if it is an authority. Bonding and unbonding
+(`bond_stake` / `unbond_stake`) were removed along with the stake registry.
 
 ⚠️ **Do not confuse this with RFC-005.** Vault/CSV time-locks and the treasury
 vaults are **unaffected** — they do not depend on the stake registry. Vault
 operators are unaffected by this removal.
 
-### 3.1 Example: Testnet Seed with Mining `[CURRENT]` — pre-reset PoW testnet
+### 3.1 Example: Testnet Seed / Explorer Node (Authority)
 
 ```bash
 export KOVANICA_DATA=/root/kovanica-data
 export KOVANICA_NETWORK=kovanica-testnet
-export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
-export KOVANICA_POW=1
-export KOVANICA_MINE=1
-export KOVANICA_MINE_SECS=60
+export KOVANICA_LISTEN=0.0.0.0:8000
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
+export KOVANICA_CONSENSUS=poa
+export KOVANICA_SLOT_DURATION=3000
+export KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+export KOVANICA_AUTHORITY_THRESHOLD=2
+export KOVANICA_AUTHORITY_KEY=<32-byte-hex-secret>  # via EnvironmentFile, mode 0600
+export KOVANICA_PRODUCE=1
 export KOVANICA_OPERATOR=1
 export KOVANICA_FAUCET=1  # explorer only
 
 kovanica-node explorer 127.0.0.1:8080
 ```
 
-### 3.1b Example: Testnet Seed under PoA `[TARGET]`
-
-Everything PoW-specific is gone. The node no longer mines; it syncs, serves, and
-relays.
-
-```bash
-export KOVANICA_DATA=/root/kovanica-data
-export KOVANICA_NETWORK=kovanica-testnet
-export KOVANICA_LISTEN=0.0.0.0:9000
-export KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
-export KOVANICA_CONSENSUS=poa            # already the default when unset
-export KOVANICA_SLOT_DURATION=3000       # optional; this is the default
-export KOVANICA_OPERATOR=1
-export KOVANICA_FAUCET=1  # explorer only
-
-kovanica-node explorer 127.0.0.1:8080
-```
-
-Notes for this path:
+**Notes for authority nodes:**
 
 - **Do not set `KOVANICA_AUTHORITIES` casually.** On **testnet**, leaving it
   unset derives a deterministic **placeholder** set from the public constant
@@ -257,12 +230,12 @@ Notes for this path:
   threshold `t`, expansion and dissolution are not (RFC-POA-Migration §0.7.2).
   There is no documented application process to point an operator at.
 
-### 3.2 Example: Light Node (No Mining)
+### 3.2 Example: Participant Node (No Block Production)
 
 ```bash
 export KOVANICA_DATA=/root/kovanica-data
-export KOVANICA_PEERS=seed.kovanica.online:9000
-export KOVANICA_POW=0        # [CURRENT]; [TARGET] simply omit — PoA default
+export KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
+export KOVANICA_CONSENSUS=poa
 
 kovanica-node serve  # REPL mode, or
 kovanica-node explorer 127.0.0.1:8080  # with HTTP API
@@ -284,14 +257,18 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/root/kovanica-data
-Environment=KOVANICA_LISTEN=0.0.0.0:9000
-Environment=KOVANICA_POW=1              # [CURRENT] pre-reset; [TARGET] removed
-Environment=KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000
+Environment=KOVANICA_LISTEN=0.0.0.0:8000
+Environment=KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000
+Environment=KOVANICA_CONSENSUS=poa
+Environment=KOVANICA_SLOT_DURATION=3000
+Environment=KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+Environment=KOVANICA_AUTHORITY_THRESHOLD=2
+EnvironmentFile=/etc/kovanica/authority.env
 Environment=KOVANICA_OPERATOR=1
-Environment=KOVANICA_MINE=1
-Environment=KOVANICA_MINE_SECS=60
+Environment=KOVANICA_PRODUCE=1
 Environment=KOVANICA_FAUCET=0
 Environment=KOVANICA_DATA=/root/kovanica-data
+Environment=KOVANICA_NETWORK=kovanica-testnet
 ExecStart=/usr/local/bin/kovanica-node explorer 127.0.0.1:8080
 Restart=always
 RestartSec=5
@@ -303,6 +280,11 @@ WantedBy=multi-user.target
 ```
 
 ```bash
+# Create authority key file (mode 0600)
+sudo mkdir -p /etc/kovanica
+echo "KOVANICA_AUTHORITY_KEY=<32-byte-hex-secret>" | sudo tee /etc/kovanica/authority.env
+sudo chmod 600 /etc/kovanica/authority.env
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now kovanica-seed
 ```
@@ -332,11 +314,7 @@ Proxy: DNS only (grey cloud)
 ## 5. Running as Explorer Only
 
 ```bash
-# [CURRENT] No mining, just sync + HTTP API
-KOVANICA_POW=0 KOVANICA_MINE=0 KOVANICA_FAUCET=1 \
-kovanica-node explorer 127.0.0.1:8080
-
-# [TARGET] Under PoA "no mining" is the only mode, so the flags are simply omitted:
+# Participant/explorer node (no block production)
 KOVANICA_FAUCET=1 \
 kovanica-node explorer 127.0.0.1:8080
 ```
@@ -369,9 +347,9 @@ server {
 
 | Seed | Address | Notes |
 |------|---------|-------|
-| seed1 | `seed.kovanica.online:9000` | Primary (Hostinger VPS) |
-| seed2 | `seed2.kovanica.online:9000` | Secondary (Hostinger KVM2 VPS) |
-| seed3 | `seed3.kovanica.online:9000` | Tertiary — **new VPS, not yet in service** (`187.7.27.139`, `srv2013143`). Node not running, TCP 9000 closed, and the A record still points at Cloudflare proxy IPs, so the name does not work yet. Do not list it in `KOVANICA_PEERS` until both are fixed. |
+| seed1 | `seed2.kovanica.online:8000` | Primary (Hostinger VPS) |
+| seed2 | `seed3.kovanica.online:8000` | Secondary (Hostinger KVM2 VPS) |
+| seed3 | `seed3.kovanica.online:8000` | Tertiary — **new VPS, not yet in service** (`187.7.27.139`, `srv2013143`). Node not running, TCP 8000 closed, and the A record still points at Cloudflare proxy IPs, so the name does not work yet. Do not list it in `KOVANICA_PEERS` until both are fixed. |
 
 ### 6.2 Connectivity Verification
 
@@ -464,7 +442,7 @@ KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh \
   --data-dir /tmp/kov-restore-drill/data --force
 
 # Verify
-KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000 \
+KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000 \
   /usr/local/bin/kovanica-node explorer 127.0.0.1:18081 &
 curl -s http://127.0.0.1:18081/api/head | jq .genesis
 # Must match live genesis
@@ -481,7 +459,7 @@ curl -s http://127.0.0.1:18081/api/head | jq .genesis
 | Genesis mismatch on seed deploy | Deploy script expects old genesis | Update `EXPECTED_GENESIS` in `deploy-seed-prebuilt.sh` |
 | `kovanica-node` OOM killed | < 2GB RAM on seed3 | Resize to ≥2GB (t3.small or Oracle Always Free) |
 | Peer count 0 | Port 9000 blocked / Cloudflare proxy | Open 9000/tcp; grey-cloud DNS |
-| Block height stalled | No miner running | Set `KOVANICA_MINE=1` on at least one seed |
+| Block height stalled | No authority producing | Verify authority keys and `KOVANICA_PRODUCE=1` |
 | `KOVANICA_MAINNET_OVERRIDE` required | Mainnet profile dormant | Parameters not finalized; don't use in prod |
 
 ---
@@ -498,7 +476,7 @@ curl -s https://explorer.kovanica.online/api/head | jq -r .genesis
 ### 10.2 Block Production
 
 ```bash
-# Should increment every ~60s
+# Should increment every ~3s (when authorities are online)
 watch -n 10 'curl -s http://127.0.0.1:8080/api/head | jq .blocks'
 ```
 
@@ -528,7 +506,7 @@ journalctl -u kovanica-seed --since "1 hour ago" # recent logs
 
 # Cold bootstrap (pristine sync)
 KOVANICA_DATA=/tmp/cbt KOVANICA_LISTEN=127.0.0.1:19000 \
-KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000 \
+KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000 \
 /usr/local/bin/kovanica-node explorer 127.0.0.1:18081
 
 # RPC REPL

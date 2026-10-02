@@ -20,10 +20,10 @@ Then open http://127.0.0.1:8080 and verify with `curl -s http://127.0.0.1:8080/a
 
 ### Q: What are the bootstrap peers?
 **A:** 
-- `seed.kovanica.online:9000` (primary)
-- `seed2.kovanica.online:9000` (secondary)
+- `seed2.kovanica.online:8000` (primary)
+- `seed3.kovanica.online:8000` (secondary)
 
-Use `KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000`.
+Use `KOVANICA_PEERS=seed2.kovanica.online:8000,seed3.kovanica.online:8000`.
 
 ### Q: Why does my node stall at genesis?
 **A:** Common causes:
@@ -83,13 +83,12 @@ Pays 1 KVNC from operator funds. Rate-limited per address.
 ## 4. Block Production & Staking
 
 ### Q: How do I produce blocks?
-**A:** There is no mining -- Kovanica is proof-of-authority. To produce
-blocks your node must (a) hold the authority key scheduled for the slot,
-via `KOVANICA_AUTHORITY_KEY`, and (b) be set to produce, with
-`KOVANICA_PRODUCE=1` and `KOVANICA_PRODUCE_SECS=<interval>` (the
-pre-PoA aliases `KOVANICA_MINE` / `KOVANICA_MINE_SECS` still work). A node
-without the scheduled key produces nothing. There is no proof-of-work and
-no difficulty retarget.
+**A:** Kovanica uses Proof-of-Authority (PoA). To produce blocks your node must:
+1. Be in the on-chain authority set (`KOVANICA_AUTHORITIES`)
+2. Hold the authority signing key for your scheduled slot (`KOVANICA_AUTHORITY_KEY` via EnvironmentFile)
+3. Have `KOVANICA_CONSENSUS=poa` (default) and `KOVANICA_PRODUCE=1`
+
+A node without the scheduled authority key produces nothing. There is no proof-of-work, no mining, and no difficulty retarget. The pre-PoA aliases `KOVANICA_MINE` / `KOVANICA_MINE_SECS` are removed.
 
 ### Q: What is the block reward?
 **A:** RFC-006 emission curve:
@@ -99,10 +98,10 @@ no difficulty retarget.
 - Fee split: 75% burned / 25% to producer
 
 ### Q: What is hybrid staking?
-**A:** Hybrid PoW + VRF-staked admission. Set `KOVANICA_HYBRID=1` and `KOVANICA_VALIDATOR_SEED=<your-vrf-seed>`. Bond KVNC via stake registry to participate in VRF sortition.
+**A:** Hybrid PoW + VRF-staked admission was **removed** (RFC-POA-Migration §0.7.1, decided 2026-09-25). The stake registry and bonding/unbonding are no longer in the protocol.
 
 ### Q: How do I bond stake?
-**A:** Use the stake registry (tag convention `KVB1 || vrf_pk`). The node's `bond_stake` helper handles splitting and bonding. Requires 100-block maturity before unbonding.
+**A:** Staking/bonding was removed with the hybrid admission path. The only block production path is PoA authority signing.
 
 ---
 
@@ -188,7 +187,11 @@ Always stop the service before replacing the binary.
 **A:** You're dialing a Cloudflare-proxied hostname. Use `seed.kovanica.online` (grey-cloud DNS only).
 
 ### Q: Miner not producing blocks
-**A:** Check `KOVANICA_MINE=1` and mempool has transactions (or call `produce_empty` via RPC).
+**A:** PoA nodes only produce when scheduled. Verify:
+- `KOVANICA_AUTHORITIES` includes this node's public key
+- `KOVANICA_AUTHORITY_KEY` is set (via EnvironmentFile, mode 0600)
+- `KOVANICA_PRODUCE=1` (or `KOVANICA_CONSENSUS=poa` default)
+- Node is synced and connected to peers
 
 ### Q: Metrics not appearing
 **A:** `metrics` crate version mismatch. Ensure `metrics` and `metrics-exporter-prometheus` share minor version.

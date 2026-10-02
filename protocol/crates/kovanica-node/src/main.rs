@@ -31,7 +31,7 @@ fn main() {
             println!("  demo      run a scripted end-to-end scenario");
             println!("  explorer  HTTP UI + JSON API (default 0.0.0.0:8080)");
             println!("            TCP P2P on KOVANICA_LISTEN (testnet default 0.0.0.0:8000)");
-            println!("            env: KOVANICA_DATA  KOVANICA_CONSENSUS=poa|pow");
+            println!("            env: KOVANICA_DATA");
             println!("                 KOVANICA_PRODUCE=0|1  KOVANICA_PRODUCE_SECS=120");
             println!("                 KOVANICA_FAUCET=0|1");
             println!("                 KOVANICA_ALLOW_RESET=0|1  KOVANICA_OPERATOR=0|1");

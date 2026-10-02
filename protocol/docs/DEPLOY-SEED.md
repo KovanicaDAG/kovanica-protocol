@@ -50,7 +50,7 @@
 
 ```sh
 # On the target VPS as root
-./scripts/deploy-seed.sh root@<host> --name seed2 --mine --peers seed.kovanica.online:9000
+./scripts/deploy-seed.sh root@<host> --name seed2 --authority-key <key> --authorities <keys> --threshold 2 --peers seed2.kovanica.online:8000
 ```
 
 The script:
@@ -92,14 +92,18 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root
+WorkingDirectory=/root/kovanica-data
 Environment=KOVANICA_LISTEN=0.0.0.0:9000
-Environment=KOVANICA_PEERS=seed2.kovanica.online:9000
-Environment=KOVANICA_MINE=1
-Environment=KOVANICA_MINE_SECS=60
+Environment=KOVANICA_PEERS=seed3.kovanica.online:8000
+Environment=KOVANICA_CONSENSUS=poa
+Environment=KOVANICA_SLOT_DURATION=3000
+Environment=KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+Environment=KOVANICA_AUTHORITY_THRESHOLD=2
+EnvironmentFile=/etc/kovanica/authority.env
 Environment=KOVANICA_FAUCET=1
 Environment=KOVANICA_ALLOW_RESET=0
 Environment=KOVANICA_OPERATOR=1
+Environment=KOVANICA_PRODUCE=1
 Environment=KOVANICA_DATA=/root/kovanica-data
 Environment=KOVANICA_NETWORK=kovanica-testnet
 ExecStart=/usr/local/bin/kovanica-node explorer 127.0.0.1:8080
@@ -122,10 +126,13 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root
+WorkingDirectory=/var/lib/kovanica-seed2
 Environment=KOVANICA_LISTEN=0.0.0.0:9000
-Environment=KOVANICA_PEERS=seed.kovanica.online:9000
-Environment=KOVANICA_MINE=0
+Environment=KOVANICA_PEERS=seed2.kovanica.online:8000
+Environment=KOVANICA_CONSENSUS=poa
+Environment=KOVANICA_SLOT_DURATION=3000
+Environment=KOVANICA_AUTHORITIES=<comma-separated-32-byte-hex-pubkeys>
+Environment=KOVANICA_AUTHORITY_THRESHOLD=2
 Environment=KOVANICA_FAUCET=0
 Environment=KOVANICA_ALLOW_RESET=0
 Environment=KOVANICA_OPERATOR=0
@@ -255,7 +262,7 @@ sudo systemctl enable --now kovanica-backup.timer
 mkdir -p /tmp/kov-restore-drill
 KOV_BACKUP_PASSPHRASE="..." ./scripts/restore-node.sh \
   --data-dir /tmp/kov-restore-drill/data --force
-KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed.kovanica.online:9000 \
+KOVANICA_DATA=/tmp/kov-restore-drill/data KOVANICA_PEERS=seed2.kovanica.online:8000 \
   /usr/local/bin/kovanica-node explorer 127.0.0.1:18081 &
 curl -s http://127.0.0.1:18081/api/head | jq .genesis
 ```
@@ -297,7 +304,7 @@ scrape_configs:
 
 | Incident | Detection | Response |
 |----------|-----------|----------|
-| **Chain stall** (no new blocks) | `block_rate` alert, `tip` not advancing | Check `journalctl -u kovanica-explorer -f`; ensure `MINE=1` on at least one seed; verify peers connected |
+| **Chain stall** (no new blocks) | `block_rate` alert, `tip` not advancing | Check `journalctl -u kovanica-explorer -f`; verify authority keys and `KOVANICA_PRODUCE=1`; verify peers connected |
 | **Peer count 0** | `kovanica_peer_count` alert | Verify firewall, DNS resolution (`dig seed.kovanica.online`), check `KOVANICA_PEERS` env |
 | **OOM kill** (seed3 historical) | `dmesg` shows `Out of memory`, process flapping | Resize VPS to >= 2 GB RAM; add swap; set `OOMScoreAdjust=-1000` |
 | **Genesis mismatch** | `/api/head` genesis differs from explorer | Wipe data dir (`KOVANICA_ALLOW_RESET=1` + restart) or restore from backup |
