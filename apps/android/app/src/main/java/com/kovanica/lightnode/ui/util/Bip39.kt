@@ -1,19 +1,20 @@
 package com.kovanica.lightnode.ui.util
 
 import android.content.Context
-import org.bouncycastle.crypto.PBEParametersGenerator
-import org.bouncycastle.crypto.digests.SHA512Digest
-import org.bouncycastle.crypto.generators.PKCS5S2ParametersGenerator
-import org.bouncycastle.crypto.params.KeyParameter
 import java.security.MessageDigest
 import java.security.SecureRandom
 
 /**
- * Minimal BIP39 implementation for the light-node wallet.
+ * BIP-39 **mnemonic generation** for the light-node wallet.
  *
- * The word list is read from `assets/bip39_english.txt`. Only the standard
- * 12-word (128-bit entropy) path is exposed; callers that need 15/18/21/24
- * words can extend [generateMnemonic].
+ * This class deliberately does not stretch, validate, or derive anything. Seed
+ * stretching (PBKDF2), SLIP-0010 ed25519 derivation, address encoding, and
+ * phrase validation all live in the Rust core and are reached through
+ * [KovanicaKeys] / the UniFFI surface, so there is exactly one implementation
+ * of each. A second PBKDF2 here is how the clients drifted apart before.
+ *
+ * Generation itself has no Rust export yet, so it stays local: entropy from
+ * [SecureRandom], checksum from SHA-256, words from `assets/bip39_english.txt`.
  */
 class Bip39(context: Context) {
 
@@ -62,93 +63,13 @@ class Bip39(context: Context) {
             var index = 0
             repeat(11) { bitOffset ->
                 val pos = wordIndex * 11 + bitOffset
-                index = (index shl 1) or if (bits[pos]) 1 else 0
+                index = (index shl 1) or (if (bits[pos]) 1 else 0)
             }
             words[index]
         }
     }
 
-    /**
-     * Validate that [mnemonic] is a syntactically correct BIP39 phrase
-     * (word count, word membership and checksum).
-     */
-    fun validate(mnemonic: String): Boolean {
-        val phrase = mnemonic.trim().lowercase().split(Regex("\\s+"))
-        if (phrase.isEmpty()) return false
-        val wordCount = phrase.size
-        if (wordCount !in setOf(12, 15, 18, 21, 24)) return false
-
-        val indexes = phrase.map { word -> words.indexOf(word).takeIf { it >= 0 } ?: return false }
-        val entropyBits = wordCount * 11 - (wordCount * 11 / 32)
-        val totalBits = wordCount * 11
-        val checksumBits = totalBits - entropyBits
-
-        val bits = BooleanArray(totalBits)
-        for (i in 0 until wordCount) {
-            var value = indexes[i]
-            for (j in 10 downTo 0) {
-                bits[i * 11 + j] = value and 1 == 1
-                value = value shr 1
-            }
-        }
-
-        val entropy = ByteArray(entropyBits / 8)
-        for (i in 0 until entropyBits) {
-            val byteIndex = i / 8
-            val bitIndex = 7 - (i % 8)
-            if (bits[i]) {
-                entropy[byteIndex] = (entropy[byteIndex].toInt() or (1 shl bitIndex)).toByte()
-            }
-        }
-
-        val hash = MessageDigest.getInstance("SHA-256").digest(entropy)
-        for (i in 0 until checksumBits) {
-            val bitIndex = 7 - i
-            val expected = (hash[0].toInt() shr bitIndex) and 1 == 1
-            if (bits[entropyBits + i] != expected) return false
-        }
-        return true
-    }
-
-    /**
-     * Convert a mnemonic to a 64-byte BIP39 seed. The caller is responsible
-     * for clearing the returned array from memory when it is no longer needed.
-     */
-    fun mnemonicToSeed(mnemonic: String, passphrase: String = ""): ByteArray =
-        seedFromMnemonic(mnemonic, passphrase)
-
-    /**
-     * Deprecated. Not a Kovanica signing key: skips SLIP-0010, so the address
-     * disagrees with the CLI, node and FFI. See [KovanicaKeys.deriveSigningKey].
-     */
-    @Deprecated(
-        "Skips SLIP-0010. Use KovanicaKeys.deriveSigningKey instead.",
-        ReplaceWith("KovanicaKeys.deriveSigningKey(mnemonicToSeed(mnemonic, passphrase))"),
-    )
-    fun mnemonicToEd25519Seed(mnemonic: String, passphrase: String = ""): ByteArray {
-        return mnemonicToSeed(mnemonic, passphrase).copyOfRange(0, 32)
-    }
-
     companion object {
         private const val WORD_LIST_SIZE = 2048
-        private const val PBKDF2_ITERATIONS = 2048
-        private const val SEED_BITS = 512
-
-        /**
-         * PBKDF2-HMAC-SHA512 stretch, 64 bytes out. Static and [Context]-free
-         * because it never touches the word list, which lets the
-         * known-answer tests cover the whole phrase-to-address chain.
-         */
-        @JvmStatic
-        fun seedFromMnemonic(mnemonic: String, passphrase: String = ""): ByteArray {
-            val password = PBEParametersGenerator.PKCS5PasswordToUTF8Bytes(
-                mnemonic.trim().toCharArray()
-            )
-            val salt = ("mnemonic" + passphrase).toByteArray(Charsets.UTF_8)
-            val generator = PKCS5S2ParametersGenerator(SHA512Digest())
-            generator.init(password, salt, PBKDF2_ITERATIONS)
-            val params = generator.generateDerivedMacParameters(SEED_BITS) as KeyParameter
-            return params.key
-        }
     }
 }

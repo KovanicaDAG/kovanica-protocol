@@ -6,7 +6,6 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.kovanica.wallet.data.WalletRepository
 import com.kovanica.wallet.data.SendResult
-import com.kovanica.lightnode.ui.util.Bip39
 import com.kovanica.lightnode.ui.util.KovanicaKeys
 import uniffi.kovanica.LightNode
 import uniffi.kovanica.LightConfig
@@ -42,9 +41,6 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private var repository: WalletRepository? = null
     private var lightNode: LightNode? = null
     private var cachedSigningKey: String = ""
-
-    /** Backs [deriveAddress] / [deriveKey]; needs app context for the wordlist. */
-    private val bip39 by lazy { Bip39(getApplication<Application>()) }
 
     fun initializeWallet(phrase: String, passphrase: String = "") {
         viewModelScope.launch {
@@ -174,8 +170,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun deriveAddress(phrase: String, passphrase: String): String =
-        KovanicaKeys.addressFromMnemonic(phrase, passphrase, bip39 = bip39).kvnc
+        KovanicaKeys.addressFromMnemonic(phrase, passphrase).kvnc
 
     private fun deriveKey(phrase: String, passphrase: String): String =
-        KovanicaKeys.signingKeyHex(phrase, passphrase, bip39 = bip39)
+        KovanicaKeys.signingKeyHex(phrase, passphrase)
 }

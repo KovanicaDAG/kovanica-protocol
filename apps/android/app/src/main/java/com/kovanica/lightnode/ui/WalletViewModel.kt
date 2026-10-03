@@ -44,7 +44,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private val prefs = WalletPrefs(getApplication())
     private val bip39 = Bip39(getApplication())
     private val lightNode = LightNodeRepository.getInstance(getApplication())
-    private val walletRepository = WalletRepository(getApplication(), lightNode)
+    private val walletRepository = WalletRepository(lightNode)
 
     private val _uiState = MutableStateFlow(WalletUiState())
     val uiState: StateFlow<WalletUiState> = _uiState.asStateFlow()
@@ -158,7 +158,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
             runCatching {
                 withContext(Dispatchers.Default) {
-                    if (!bip39.validate(mnemonic)) {
+                    if (!KovanicaKeys.isValidPhrase(mnemonic)) {
                         throw IllegalArgumentException("Invalid recovery phrase")
                     }
                     val address = walletRepository.deriveAddress(mnemonic)
@@ -470,9 +470,8 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
             if (mnemonic.isBlank()) return@launch
 
             _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
-            val seed = withContext(Dispatchers.Default) {
-                KovanicaKeys.deriveSigningKey(bip39.mnemonicToSeed(mnemonic))
-            }
+            // Staking is not exposed through the FFI yet. When it is, derive the
+            // validator signing key with KovanicaKeys.signingKeyHex(mnemonic).
             /*// walletRepository.setValidatorSeedAndEnable(seed)
                 .onSuccess {
                     _uiState.value = _uiState.value.copy(

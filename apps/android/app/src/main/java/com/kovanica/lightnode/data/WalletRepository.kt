@@ -1,13 +1,11 @@
 package com.kovanica.lightnode.data
 
-import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.kovanica.CoinJoinOutput
 import uniffi.kovanica.CoinJoinParticipant
 import uniffi.kovanica.CoinJoinPrepared
 import uniffi.kovanica.SendReceipt
-import com.kovanica.lightnode.ui.util.Bip39
 import com.kovanica.lightnode.ui.util.KovanicaAddress
 import com.kovanica.lightnode.ui.util.KovanicaKeys
 
@@ -19,11 +17,8 @@ import com.kovanica.lightnode.ui.util.KovanicaKeys
  * derives the Ed25519 seed in memory for the duration of an operation.
  */
 class WalletRepository(
-    context: Context,
     private val lightNode: LightNodeRepository,
 ) {
-
-    private val bip39 = Bip39(context)
 
     /**
      * Derive the wallet address from a BIP39 mnemonic.
@@ -34,7 +29,7 @@ class WalletRepository(
      */
     suspend fun deriveAddress(mnemonic: String): KovanicaAddress.Address =
         withContext(Dispatchers.Default) {
-            KovanicaKeys.addressFromMnemonic(mnemonic, bip39 = bip39)
+            KovanicaKeys.addressFromMnemonic(mnemonic)
         }
 
     /**
@@ -125,7 +120,7 @@ class WalletRepository(
     }
 
     private fun mnemonicToSecretHex(mnemonic: String): String =
-        KovanicaKeys.signingKeyHex(mnemonic, bip39 = bip39)
+        KovanicaKeys.signingKeyHex(mnemonic)
 
     // ------------------------------------------------------------------
     // CoinJoin (node-level batched spends)

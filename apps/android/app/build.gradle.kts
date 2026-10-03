@@ -74,6 +74,28 @@ android {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Unit tests run on the JVM, so they need a *host* build of the FFI library on
+// JNA's search path. `:uniffi` ships Android ABIs only (arm64-v8a, armeabi-v7a,
+// x86_64), which the JVM cannot load. `cargo build -p kovanica-ffi` produces
+// `protocol/target/debug/libkovanica_ffi.so`, and `KovanicaKeys` in this module
+// is a thin wrapper over that library, so the vector tests exercise the same
+// Rust code the app runs on device.
+// ---------------------------------------------------------------------------
+val hostFfiDir = file("../../../protocol/target/debug")
+
+val buildHostFfi by tasks.registering(Exec::class) {
+    description = "Build the host libkovanica_ffi for JVM unit tests."
+    group = "verification"
+    workingDir = file("../../../protocol")
+    commandLine("cargo", "build", "-p", "kovanica-ffi")
+}
+
+tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+    dependsOn(buildHostFfi)
+    systemProperty("jna.library.path", hostFfiDir.absolutePath)
+}
+
 dependencies {
     // Android & Compose
     implementation(platform("androidx.compose:compose-bom:2024.04.01"))
@@ -104,9 +126,6 @@ dependencies {
 
     // WorkManager
     implementation("androidx.work:work-runtime-ktx:2.9.0")
-
-    // BouncyCastle (lightweight)
-    implementation("org.bouncycastle:bcprov-jdk15on:1.70")
 
     // OkHttp for network calls
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
