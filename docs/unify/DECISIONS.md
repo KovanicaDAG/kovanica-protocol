@@ -242,7 +242,7 @@
 | #8 CI consolidation — Option A | owner | 2026-10-03 | `68f327c` |
 | #9 pre-existing red gate — semantics-preserving cleanup | owner (carry-forward) | 2026-10-03 | `114c35e` |
 | #10 keys/tx canonical API — SDK is canonical, protocol re-exports | owner (Phase 3 direction) | 2026-10-03 | `df41252` |
-| #11 Phase 3d — one committed home for the UniFFI bindings | owner (Phase 3 direction) | 2026-10-03 | recorded in the follow-up docs commit |
+| #11 Phase 3d — one committed home for the UniFFI bindings | owner (Phase 3 direction) | 2026-10-03 | `b7875b3` |
 | #12 untrack Gradle build output + stale UniFFI native libs | owner (Phase 3 direction) | 2026-10-03 | `9c6c91d` |
 | #13 Phase 3c Android FFI migration — scoped, not done | owner (Phase 3 direction) | 2026-10-03 | — |
 
