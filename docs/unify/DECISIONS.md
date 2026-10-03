@@ -258,6 +258,56 @@
 - **Status:** Phase 2 exit criterion for iOS recorded as satisfied on Linux, with
   the macOS-only parts (xcframework link, UIKit/Keychain) explicitly out of scope.
 
+### 15. Phase 3b — one crypto implementation for the browser surfaces (RESOLVED)
+- **Context:** Phase 3b says the browser app, the extension and the dashboard
+  should do their key work through `sdk/bindings/kovanica-wasm`, gated by the
+  shared vectors.
+- **Finding:** the wasm crate exported four functions only. None covered
+  passphrases, material, or signing. No app imported it, so this was a fresh
+  integration. The web app had its own `@noble` derivation. The extension had
+  none: its word list was cosmetic and its vector test was a `todo`.
+- **Decision:**
+  - Grow `kovanica-keys` and the wasm module to cover what the browser layer
+    needs (commit `7c2ff8c`; see `sdk/bindings/kovanica-wasm/src/lib.rs`).
+  - Point the web wallet's `keys.ts` at the package through a lazy loader in
+    `wasm.ts`. `entropyToMnemonic` no longer takes a word-list argument, since
+    the module always uses the canonical English list (commit `7c2ff8c`).
+  - Rewrite the extension's `seedPhrase.ts` the same way. Delete its two fake
+    word-list files and the generator behind them. Its vector test now runs for
+    real (commit `af1ada5`).
+  - Consume the package as a `file:` dependency on the crate. Keep the npm
+    identity in sync with `stamp-pkg-manifest.mjs`. Have CI build the wasm
+    before `npm ci` for both browser apps.
+- **Evidence:** the web suite passes 21/21, typecheck and lint are clean, and
+  its build emits the wasm asset. The extension suite passes 12/12 with no
+  `todo`, and its lint and build are clean. In `sdk`, fmt and clippy are clean
+  and the unit suites pass. `protocol` `cargo check --workspace --locked` is OK.
+- **Consensus impact:** none. Client-only; no consensus, ledger, or node crate
+  was modified.
+- **Status:** the web app and the extension are done. The dashboard is split
+  out to #16.
+
+### 16. Phase 3b — dashboard crypto migration deferred, scoped
+- **Finding:** `apps/dashboard/frontend/src/lib/kvnc.ts` is a full and careful
+  implementation. It covers derivation, phrase handling, `kvnc…dag` encoding,
+  signing, and an optional AES-GCM at-rest store. Its public API is
+  **synchronous**. Its `KeyVault` holds 64-byte material so that later indices
+  can be derived. Two consumers rely on that shape: `src/hooks/useKeyVault.ts`
+  and `src/components/WalletPanel.tsx`. The app has no tests at all (`vitest` is
+  configured; no spec files exist), so a key-handling rewrite has no net.
+- **Blocker:** the wasm module initialises asynchronously, but every `kvnc.ts`
+  entry point is sync and is called during render. A faithful swap needs a
+  bootstrap that awaits `init()` first, extra wasm exports that take a raw
+  secret or public key rather than a phrase, and a ready-guarded API across
+  `useKeyVault` and `WalletPanel`.
+- **Decision:** do not fold this into the web and extension swap. Give the
+  dashboard its own sub-PR. It must begin by adding a vector test over the
+  current `kvnc.ts`, so the shared vectors gate the swap before any code moves.
+- **Consensus impact:** none (client-only). Private-key handling is
+  security-sensitive, so the conservative split is deliberate.
+- **Status:** open, scoped follow-up. `@noble/curves`, `@noble/hashes`, and
+  `@scure/bip39` stay in the dashboard manifest until then.
+
 ---
 
 ## Approved Decisions (to be filled during review)
@@ -271,6 +321,8 @@
 | #12 untrack Gradle build output + stale UniFFI native libs | owner (Phase 3 direction) | 2026-10-03 | `9c6c91d` |
 | #13 Phase 3c Android FFI migration — scoped, not done | owner (Phase 3 direction) | 2026-10-03 | — |
 | #14 iOS golden vectors verified on Linux (no Xcode) | owner (Phase 3 direction) | 2026-10-03 | `efd21b1` |
+| #15 Phase 3b — web + extension use the shared wasm keys | owner (Phase 3 direction) | 2026-10-03 | `7c2ff8c`, `af1ada5` |
+| #16 Phase 3b — dashboard crypto migration deferred, scoped | owner (Phase 3 direction) | 2026-10-03 | — |
 
 ---
 
