@@ -5,7 +5,13 @@ const SeedPhraseSetup: React.FC = () => {
   const [words, setWords] = useState<string[]>([]);
 
   useEffect(() => {
-    setWords(generateSeedPhrase());
+    let cancelled = false;
+    generateSeedPhrase().then((next) => {
+      if (!cancelled) setWords(next);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (

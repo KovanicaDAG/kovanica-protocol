@@ -1,42 +1,47 @@
 // Shared golden-vector consumer for the browser extension.
 //
 // The canonical file is `protocol/testvectors/vectors.json`, generated from the
-// Rust core. Every implementation is supposed to reproduce its derivation
-// vectors byte-for-byte. The extension currently has **no** BIP-39/SLIP-0010
-// implementation at all: `src/utils/seedPhrase.ts` builds a cosmetic 24-word
-// list by interleaving random English and Croatian words. That is not a valid
-// BIP-39 mnemonic (no checksum, and Croatian is not a BIP-39 wordlist), so this
-// test can only check wordlist coverage and record the gap as `todo` rather
-// than fake a pass.
+// Rust core. The extension delegates every key operation to the shared
+// `@kovanica/sdk-wasm` module (see `src/utils/seedPhrase.ts`), so it must
+// reproduce the derivation vectors byte-for-byte. The vector file only stores
+// the empty-passphrase address, so the passphrase case is checked through the
+// public key it pins.
 //
 // Run: npm test
+// Needs a built wasm package first:
+//   (cd ../../sdk/bindings/kovanica-wasm && wasm-pack build --target web --out-dir pkg)
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 
-const read = (rel) => readFileSync(new URL(rel, import.meta.url), "utf8");
+import * as wasmModule from "@kovanica/sdk-wasm";
+import { deriveAddress, derivePublicKey, mnemonicIsValid } from "../src/utils/seedPhrase.ts";
 
-const vectors = JSON.parse(read("../../../protocol/testvectors/vectors.json"));
-const enWords = new Set(
-  read("../src/bip39_en.txt")
-    .split("\n")
-    .map((w) => w.trim())
-    .filter(Boolean),
+const read = (rel) => readFile(new URL(rel, import.meta.url), "utf8");
+
+// Node has no fetched asset path, so initialise from disk before the first call.
+const wasmBytes = await readFile(
+  new URL("../../../sdk/bindings/kovanica-wasm/pkg/kovanica_wasm_bg.wasm", import.meta.url),
 );
+globalThis.__kovanicaWasmInit = () => wasmModule.initSync({ module: wasmBytes });
 
+const vectors = JSON.parse(await read("../../../protocol/testvectors/vectors.json"));
 const derivations = vectors.vectors.filter((v) => v.kind === "derivation");
 
-test("shared vectors: every mnemonic word is in the shipped English wordlist", () => {
+test("shared vectors: the file has derivation cases to check", () => {
   assert.ok(derivations.length > 0, "no derivation vectors to check");
-  for (const v of derivations) {
-    for (const word of v.mnemonic.split(" ")) {
-      assert.ok(enWords.has(word), `${v.name}: "${word}" missing from bip39_en.txt`);
-    }
-  }
 });
 
-// The extension does not implement the frozen path, so it cannot be checked
-// against the shared vectors. This is a finding for the Phase 2 report, not
-// something this test should paper over.
-test.todo("extension derives the shared vectors via the frozen SLIP-0010 path");
+for (const v of derivations) {
+  test(`shared vectors: ${v.name} derives the pinned public key`, async () => {
+    assert.equal(await derivePublicKey(v.mnemonic, v.passphrase, v.index), v.pubkey_hex);
+  });
+
+  if (v.passphrase === "") {
+    test(`shared vectors: ${v.name} derives the pinned address`, async () => {
+      assert.equal(await mnemonicIsValid(v.mnemonic), true);
+      assert.equal(await deriveAddress(v.mnemonic, v.index), v.address);
+    });
+  }
+}
