@@ -18,6 +18,26 @@ dist/
 .tanstack/
 .vercel/
 
+# Gradle / Android build output. Bare forms because every Gradle module
+# (apps/android/{app,uniffi}, apps/*/android) grows its own `build/` and
+# `.gradle/`; no legitimate source directory in the tree is named `build`.
+# Anchoring these would silently miss nested modules, which is how ~2.2k
+# generated `.dex`/`.bin` files under apps/android got committed in the first
+# place. If a future package genuinely needs a `build/` source dir, negate it
+# explicitly (`!path/to/build/`).
+build/
+.gradle/
+.kotlin/
+
+# UniFFI native libraries are build output too: `kovanica-ffi/build-android.sh`
+# (and the release CI) cross-compile them straight into this tree, and the copy
+# that used to be committed had already drifted — it predated the derivation
+# entry points in `kovanica-ffi/src/deriv.rs`, so an APK built from a fresh
+# checkout threw UnsatisfiedLinkError on every derive call. Run
+# `protocol/crates/kovanica-ffi/build-android.sh` once (or the `android` job in
+# .github/workflows/ci.yml) before `./gradlew assembleDebug`.
+**/jniLibs/
+
 # Runtime chain data. Contains the founder premine key, operator wallet
 # (possibly a 12/24-word BIP-39 phrase), validator seeds, faucet ledgers and
 # peer ban state. All regenerable; set KOVANICA_DATA outside the checkout.
