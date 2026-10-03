@@ -23,10 +23,9 @@ use kovanica_state::multisig::{verify_threshold_signatures, MultisigScript};
 use kovanica_state::{
     apply_block_at_height, decode_block_payload, encode_block_payload, verify, Address, AssetId,
     AssetKind, HalvingSchedule, HtlcScript, KeyPair, Ledger, LedgerError, LedgerInsertError,
-    LedgerStore, LogoUri, MetadataUri, OutPoint, Sig, StealthAddress, Transaction,
-    TxId, TxInput, TxOutput, UtxoSet, VaultScript, ASSET_CREATION_FEE, COINBASE_MATURITY,
-    DEFAULT_HALVING_ERA, FEE_PRODUCER_DEN, FEE_PRODUCER_NUM, MIN_MINT_PRICE,
-    MAX_MINT_PRICE,
+    LedgerStore, LogoUri, MetadataUri, OutPoint, Sig, StealthAddress, Transaction, TxId, TxInput,
+    TxOutput, UtxoSet, VaultScript, ASSET_CREATION_FEE, COINBASE_MATURITY, DEFAULT_HALVING_ERA,
+    FEE_PRODUCER_DEN, FEE_PRODUCER_NUM, MAX_MINT_PRICE, MIN_MINT_PRICE,
 };
 use kovanica_types::Hash32;
 use kovanica_wallet::Wallet;
@@ -1857,7 +1856,7 @@ impl Node {
         metadata_uri: Option<MetadataUri>,
     ) -> Result<Prepared, NodeError> {
         // Validate mint price bounds
-        if mint_price_per_unit < MIN_MINT_PRICE || mint_price_per_unit > MAX_MINT_PRICE {
+        if !(MIN_MINT_PRICE..=MAX_MINT_PRICE).contains(&mint_price_per_unit) {
             return Err(NodeError::ZeroAmount); // Reuse for "invalid mint price"
         }
         // Validate max_supply for NFT
@@ -1965,7 +1964,7 @@ impl Node {
             // Free minting (legacy) - just need protocol fee
         } else {
             // Validate mint price bounds (ledger will enforce, but check early)
-            if mint_price < MIN_MINT_PRICE || mint_price > MAX_MINT_PRICE {
+            if !(MIN_MINT_PRICE..=MAX_MINT_PRICE).contains(&mint_price) {
                 return Err(NodeError::ZeroAmount); // Reuse for "invalid mint price"
             }
         }

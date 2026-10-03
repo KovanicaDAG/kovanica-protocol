@@ -109,20 +109,15 @@ fn main() {
     let zero24 = phrase(&[0u8; 32]);
     let ab12 = phrase(&[0xabu8; 16]);
 
-    let mut vectors: Vec<Value> = Vec::new();
-
-    // --- Derivation: every derivation path/wordlist in use ----------------
-    vectors.push(derivation("en-12-zero-i0", &zero12, "", 0));
-    vectors.push(derivation("en-12-zero-i1", &zero12, "", 1));
-    vectors.push(derivation("en-12-zero-i2", &zero12, "", 2));
-    vectors.push(derivation("en-24-zero-i0", &zero24, "", 0));
-    vectors.push(derivation(
-        "en-12-zero-passphrase-i0",
-        &zero12,
-        "test passphrase",
-        0,
-    ));
-    vectors.push(derivation("en-12-ab-i0", &ab12, "", 0));
+    let mut vectors: Vec<Value> = vec![
+        // --- Derivation: every derivation path/wordlist in use -------------
+        derivation("en-12-zero-i0", &zero12, "", 0),
+        derivation("en-12-zero-i1", &zero12, "", 1),
+        derivation("en-12-zero-i2", &zero12, "", 2),
+        derivation("en-24-zero-i0", &zero24, "", 0),
+        derivation("en-12-zero-passphrase-i0", &zero12, "test passphrase", 0),
+        derivation("en-12-ab-i0", &ab12, "", 0),
+    ];
 
     // --- Script templates (RFC-001/004/005) -------------------------------
     let ms = MultisigScript::new(2, vec![pk(1), pk(2), pk(3)]).unwrap();

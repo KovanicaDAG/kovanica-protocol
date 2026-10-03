@@ -23,7 +23,10 @@ use std::sync::{Mutex, MutexGuard};
 
 use kovanica_dag::{AuthorityPublicKey, AuthoritySet, BlockId};
 use kovanica_node::{net, Node, TreasuryGenesis};
-use kovanica_state::{AssetKind, LogoScheme, MetadataScheme, LogoUri, MetadataUri, OutPoint, StealthAddress, Transaction, TxOutput, RFC006_PREMINE};
+use kovanica_state::{
+    AssetKind, LogoScheme, LogoUri, MetadataScheme, MetadataUri, OutPoint, StealthAddress,
+    Transaction, TxOutput, RFC006_PREMINE,
+};
 
 /// Why a [`LightNode`] operation failed.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -1279,33 +1282,51 @@ impl LightNode {
             _ => return Err(invalid("kind must be 0 (fungible) or 1 (nonfungible)")),
         };
         // Convert FFI LogoUriRecord/MetadataUriRecord to kovanica_state types
-        let logo = logo_uri.as_ref().map(|l| {
-            let scheme = match l.scheme {
-                0 => LogoScheme::Ipfs,
-                1 => LogoScheme::Arweave,
-                2 => LogoScheme::Https,
-                3 => LogoScheme::Data,
-                _ => LogoScheme::Ipfs,
-            };
-            let content_hash = decode_32(&l.content_hash, "logo content_hash")?;
-            LogoUri::new(scheme, content_hash, l.uri.clone()).map_err(|e| invalid(format!("invalid logo_uri: {e}")))
-        }).transpose()?;
-        let metadata = metadata_uri.as_ref().map(|m| {
-            let scheme = match m.scheme {
-                0 => MetadataScheme::Ipfs,
-                1 => MetadataScheme::Arweave,
-                2 => MetadataScheme::Https,
-                _ => MetadataScheme::Ipfs,
-            };
-            let content_hash = decode_32(&m.content_hash, "metadata content_hash")?;
-            MetadataUri::new(scheme, content_hash, m.uri.clone()).map_err(|e| invalid(format!("invalid metadata_uri: {e}")))
-        }).transpose()?;
+        let logo = logo_uri
+            .as_ref()
+            .map(|l| {
+                let scheme = match l.scheme {
+                    0 => LogoScheme::Ipfs,
+                    1 => LogoScheme::Arweave,
+                    2 => LogoScheme::Https,
+                    3 => LogoScheme::Data,
+                    _ => LogoScheme::Ipfs,
+                };
+                let content_hash = decode_32(&l.content_hash, "logo content_hash")?;
+                LogoUri::new(scheme, content_hash, l.uri.clone())
+                    .map_err(|e| invalid(format!("invalid logo_uri: {e}")))
+            })
+            .transpose()?;
+        let metadata = metadata_uri
+            .as_ref()
+            .map(|m| {
+                let scheme = match m.scheme {
+                    0 => MetadataScheme::Ipfs,
+                    1 => MetadataScheme::Arweave,
+                    2 => MetadataScheme::Https,
+                    _ => MetadataScheme::Ipfs,
+                };
+                let content_hash = decode_32(&m.content_hash, "metadata content_hash")?;
+                MetadataUri::new(scheme, content_hash, m.uri.clone())
+                    .map_err(|e| invalid(format!("invalid metadata_uri: {e}")))
+            })
+            .transpose()?;
         let node = self.lock();
         let p = node
-            .prepare_create_asset(from, max_supply, asset_kind, mint_price_per_unit, logo, metadata)
+            .prepare_create_asset(
+                from,
+                max_supply,
+                asset_kind,
+                mint_price_per_unit,
+                logo,
+                metadata,
+            )
             .map_err(LightNodeError::from)?;
         let asset_id = p.tx.outputs()[0].asset_id.unwrap();
-        let change = p.value.saturating_sub(kovanica_state::ASSET_CREATION_FEE).saturating_sub(p.fee);
+        let change = p
+            .value
+            .saturating_sub(kovanica_state::ASSET_CREATION_FEE)
+            .saturating_sub(p.fee);
         Ok(PrepareCreateAssetResult {
             tx_hex: hex::encode(p.tx.encode()),
             sighash_hex: hex::encode(p.sighash),
