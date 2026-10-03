@@ -12,9 +12,11 @@ anyhow.workspace = true
 bip39 = { workspace = true, features = ["rand", "std"] }
 getrandom.workspace = true
 hex.workspace = true
-hmac.workspace = true
-sha2.workspace = true
 kovanica-state = { path = "../kovanica-state" }
+# Canonical SLIP-0010 / BIP-39 derivation and address encoding live in the
+# published SDK crate; this crate re-exports them (`src/slip10.rs`) instead of
+# carrying a second implementation. See `docs/unify/DECISIONS.md`.
+kovanica-keys = { path = "../../../sdk/crates/kovanica-keys" }
 
 [dev-dependencies]
 # Integration tests assert on the rendered address form, which lives in the

@@ -105,7 +105,7 @@
     `publish-sdk.yml`, `releases.yml` untouched.
   - Docs updated: `apps/ios/BUILD.md`, `sdk/RELEASE.md` now point at `ci.yml`.
 
-### 9. Pre-existing red gates on `main` (clippy + fmt) — OPEN
+### 9. Pre-existing red gates on `main` (clippy + fmt) — RESOLVED
 - **Context:** While porting the `protocol` gate into `ci.yml`, verification showed
   `main` was **already failing** `cargo clippy --workspace --all-targets -- -D warnings`
   and `cargo fmt --all --check` before any Phase 2 change.
@@ -119,11 +119,50 @@
   `protocol/crates/kovanica-state/src/{ledger.rs,lib.rs}`,
   `protocol/crates/kovanica-state/tests/native_token_consensus.rs`.
 - **Origin:** commit `8f4cb30` — "feat(kvp-107): implement mint price & asset logos for KVP-102 tokens".
-- **Impact:** `ci.yml` ports the gate faithfully, so the new `protocol` job is red until this is
-  addressed. `kovanica-state` is consensus-critical, so the fix is **not** applied unilaterally.
-- **Decision:** OPEN — owner to choose between (a) a semantics-preserving cleanup commit
-  (`cargo fmt`, `#[allow]`/refactor the three lints) before Phase 2 is declared green, or
-  (b) leave red and track separately. Phase 2 report records the gate as "ported, pre-existing red".
+- **Resolution (commit `114c35e`, 2026-10-03):** option (a), a strictly
+  **semantics-preserving** cleanup. Only expression form changed, never a value:
+  - `MAX_MINT_PRICE = ATOM` (dropped the no-op `1 *`); the value is identical.
+  - the not-yet-enforced `asset_logo_activation_score` parameter is prefixed `_` and
+    documented as forward-compat (KVP-107 logo validation is *not* enforced); the
+    parameter and its call sites are unchanged.
+  - `!(MIN_MINT_PRICE..=MAX_MINT_PRICE).contains(&mint_price)` — same bounds, same
+    result as the manual comparison.
+  - `cargo fmt` applied to the remaining files.
+  - **Consensus impact: none.** No constant, comparison, or emission/maturity/fee
+    rule was altered; `kovanica-state` and `kovanica-node` test suites stay green.
+
+### 10. Phase 3a — canonical Rust keys/tx API (RESOLVED)
+- **Context:** key derivation existed twice — `protocol/crates/kovanica-wallet/src/slip10.rs`
+  and the inline `slip10` module in `sdk/crates/kovanica-keys`. The two agreed, but the
+  whole point of Phase 3 is that a divergence cannot silently move every derived address.
+  The SDK is a **separate, publishable workspace**, so the dependency direction is forced:
+  the protocol tree may consume the SDK, never the reverse (an unpublished node crate
+  cannot appear in a published crate's dependency graph).
+- **Existing precedent:** `protocol/crates/kovanica-node` and `kovanica-cli` already consume
+  `sdk/crates/kovanica-types` by path. Phase 3a formalizes that direction rather than
+  inventing a new one.
+- **Decision:**
+  - **Keys → canonical API is `kovanica-keys` (published).** `slip10` there is the single
+    implementation of SLIP-0010 ed25519 (it now also exposes the generic `derive_path`,
+    which the official-spec vector test needs). `kovanica-wallet::slip10` is a thin
+    `pub use` re-export, so node / CLI / FFI import paths are unchanged. `kovanica-wallet`
+    keeps its node-tree-only responsibilities: `kovanica_state::KeyPair` binding, key-file
+    load/save with `0600` permissions, passphrase-on-raw-seed rejection.
+  - **Tx → canonical client API is `kovanica-tx` (published).** It is the builder/signer a
+    client uses to produce an unsigned `kovanica-types::Transaction` and then a signed one.
+    The node's `kovanica-state::Transaction` + validation path stays untouched: node-side
+    tx construction is consensus-critical and is **not** replaced by the client builder.
+    No protocol crate consumes `kovanica-tx` today; none should, because building a tx and
+    validating a tx are different layers.
+  - **Local storage / mnemonic file handling is not part of the SDK API** and stays in
+    `kovanica-wallet` (it depends on `kovanica-state` types and filesystem policy).
+- **Consensus impact: none (client-only / ledger-safe).** No consensus crate changed.
+  Addresses, derivation outputs, and the frozen vectors are byte-identical before and
+  after — proven by `kovanica-wallet`'s `shared_vectors` + `slip10_vectors` suites, which
+  still pin the same literals, and by `kovanica-keys`' (now including the official
+  SLIP-0010 spec vector).
+- **Dropped deps:** `hmac` (now unused in the protocol workspace) removed from
+  `protocol/Cargo.toml`; `hmac`/`sha2` removed from `kovanica-wallet`'s own manifest.
 
 ---
 
@@ -131,7 +170,9 @@
 
 | Decision | Approved By | Date | Commit |
 |----------|-------------|------|--------|
-| — | — | — | — |
+| #8 CI consolidation — Option A | owner | 2026-10-03 | `68f327c` |
+| #9 pre-existing red gate — semantics-preserving cleanup | owner (carry-forward) | 2026-10-03 | `114c35e` |
+| #10 keys/tx canonical API — SDK is canonical, protocol re-exports | owner (Phase 3 direction) | 2026-10-03 | `<pending>` |
 
 ---
 

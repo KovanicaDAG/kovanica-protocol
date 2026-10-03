@@ -3,8 +3,9 @@
 //! Two independent layers are pinned here:
 //!
 //! 1. The primitives are real SLIP-0010. The official ed25519 spec vectors
-//!    are asserted in the `slip10` unit tests, so the name is verified, rather
-//!    than merely asserted.
+//!    are asserted in the canonical implementation's own suite,
+//!    `sdk/crates/kovanica-keys/tests/slip10_vectors.rs`, so the name is
+//!    verified rather than merely asserted.
 //! 2. The Kovanica path `m/44'/3007'/0'/0'/i'`, applied to 64 bytes of BIP-39
 //!    master material, is pinned below at indices 0, 1 and 2. An end-to-end
 //!    vector then runs all the way through, to a rendered address.
