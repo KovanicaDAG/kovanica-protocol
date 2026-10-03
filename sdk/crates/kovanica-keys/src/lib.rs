@@ -67,6 +67,16 @@ impl Mnemonic {
         Ok(Mnemonic { inner: mnemonic })
     }
 
+    /// Rebuild from raw BIP-39 entropy (16 or 32 bytes) with the English
+    /// wordlist, recomputing the checksum. Mirrors [`Mnemonic::generate`] for
+    /// callers that already hold deterministic entropy (golden vectors, HSM/KMS
+    /// flows, tests).
+    pub fn from_entropy(entropy: &[u8]) -> Result<Self, KeysError> {
+        let mnemonic = Bip39Mnemonic::from_entropy_in(Language::English, entropy)
+            .map_err(|_| KeysError::MnemonicGeneration)?;
+        Ok(Mnemonic { inner: mnemonic })
+    }
+
     /// Human-readable phrase.
     pub fn phrase(&self) -> String {
         self.inner.to_string()
@@ -88,6 +98,20 @@ impl std::fmt::Debug for Mnemonic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Mnemonic([REDACTED])")
     }
+}
+
+/// Words in `phrase` that are not in the BIP-39 English wordlist, lowercased
+/// and order-preserving. Empty when every word is known.
+///
+/// Callers use this to distinguish a typo from a checksum failure without
+/// re-implementing the wordlist.
+pub fn unknown_words(phrase: &str) -> Vec<String> {
+    let list = Language::English.word_list();
+    phrase
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .filter(|word| !word.is_empty() && !list.contains(&word.as_str()))
+        .collect()
 }
 
 /// 64-byte BIP-39 seed. Zeroized on drop.

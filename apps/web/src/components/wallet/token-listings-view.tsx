@@ -58,6 +58,7 @@ export function TokenListingsView() {
 
   async function trade() {
     if (!wallet) { toast.error("Connect wallet first"); return; }
+    if (!wallet.mnemonic) { toast.error("This wallet can't sign trades on this device"); return; }
     if (!selectedToken) { toast.error("Select a token"); return; }
     if (!tradeAmount) { toast.error("Enter amount"); return; }
 

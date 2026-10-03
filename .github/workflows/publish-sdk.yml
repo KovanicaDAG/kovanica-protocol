@@ -110,7 +110,7 @@ jobs:
         # the CWD — bare "pkg" lands at bindings/kovanica-wasm/pkg.
         run: |
           wasm-pack build bindings/kovanica-wasm --target web --out-dir pkg
-          cp bindings/kovanica-wasm/package.json bindings/kovanica-wasm/pkg/package.json
+          node bindings/kovanica-wasm/stamp-pkg-manifest.mjs
           (cd bindings/kovanica-wasm/pkg && npm pack --dry-run)
 
   publish-crates:
@@ -175,8 +175,8 @@ jobs:
           wasm-pack build bindings/kovanica-wasm --target web
           --out-dir pkg
 
-      - name: Overlay repo package.json (name / entry contract)
-        run: cp bindings/kovanica-wasm/package.json bindings/kovanica-wasm/pkg/package.json
+      - name: Stamp npm identity onto the generated manifest
+        run: node bindings/kovanica-wasm/stamp-pkg-manifest.mjs
 
       - name: Configure npm auth
         run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc

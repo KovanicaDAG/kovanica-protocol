@@ -149,23 +149,32 @@ Manual gate (human, before wave):
 ## 5. `kovanica-wasm` (npm side)
 
 The crate is publishable to crates.io too, but npm is the primary channel for
-browser/Node users. The npm manifest is **maintained in the repo** (PR #19):
-`sdk/bindings/kovanica-wasm/package.json` (`@kovanica/sdk-wasm`, lockstep
-version, ESM entry `kovanica_wasm.js`). `pkg/` is gitignored build output.
+browser/Node users. There are two manifests, on purpose:
+
+- `sdk/bindings/kovanica-wasm/package.json` is the **development manifest**
+  (`@kovanica/sdk-wasm`, lockstep version). Its entries point into `pkg/` so a
+  `file:` dependency (e.g. `apps/web`) resolves for tsc/tsx/Vite.
+- The wasm-pack-generated `pkg/package.json` is the **tarball manifest**; its
+  entry paths are already pkg-relative.
+
+`bindings/kovanica-wasm/stamp-pkg-manifest.mjs` stamps the npm identity
+(name/version) from the development manifest onto the generated one instead of
+overwriting it, so the tarball keeps pkg-relative entries. `pkg/` is gitignored
+build output.
 
 ```bash
 cd sdk
 wasm-pack build bindings/kovanica-wasm --target web --out-dir pkg   # out-dir je relativan na crate dir!
-cd bindings/kovanica-wasm
-cp package.json pkg/package.json   # overlay the repo manifest over wasm-pack's
-npm pack pkg --dry-run              # inspect tarball: *.js, *.wasm, *.d.ts
+node bindings/kovanica-wasm/stamp-pkg-manifest.mjs
+cd bindings/kovanica-wasm/pkg && npm pack --dry-run   # inspect tarball: *.js, *.wasm, *.d.ts
 # real publish (human, token required):
 # npm publish --access public --tag alpha   # scoped package; 0.1.0-alpha.x je pre-release → NIKAD na latest
 ```
 
-The CI gate (`.github/workflows/ci.yml`, job `sdk`) runs the first four commands
+The CI gate (`.github/workflows/ci.yml`, job `sdk`) runs these commands
 automatically on any `sdk/**` change — local wasm32/`wasm-pack` are not
-required for SDK-only PRs.
+required for SDK-only PRs. The `web` job builds the same package before
+`npm ci` in `apps/web`, which depends on it as a `file:` dependency.
 
 ## 6. Post-publish smoke
 

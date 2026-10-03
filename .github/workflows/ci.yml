@@ -225,8 +225,13 @@ jobs:
           wasm-pack build bindings/kovanica-wasm --target web
           --out-dir pkg
 
-      - name: Overlay repo package.json (name / entry contract)
-        run: cp bindings/kovanica-wasm/package.json bindings/kovanica-wasm/pkg/package.json
+      - name: Stamp npm identity onto the generated manifest
+        # The crate-root package.json is the *development* manifest: it points
+        # into pkg/ (module/types/exports) so a `file:` dependency resolves for
+        # tsc/tsx/Vite. The tarball manifest is the wasm-pack-generated
+        # pkg/package.json, whose entry paths are already pkg-relative; carry
+        # over only the npm identity (name/version) from the dev manifest.
+        run: node bindings/kovanica-wasm/stamp-pkg-manifest.mjs
 
       - name: Version lockstep check (npm vs workspace)
         run: |
@@ -269,6 +274,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # apps/web consumes @kovanica/sdk-wasm as a file: dependency on its pkg/
+      # build output (build output is not committed), so the wasm package must
+      # exist before npm ci / typecheck / test / build.
+      - name: Setup Rust (wasm32 target for sdk-wasm)
+        if: matrix.app == 'apps/web'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache wasm-pack ${{ env.WASM_PACK_VERSION }}
+        if: matrix.app == 'apps/web'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-${{ env.WASM_PACK_VERSION }}
+
+      - name: Install wasm-pack ${{ env.WASM_PACK_VERSION }}
+        if: matrix.app == 'apps/web'
+        run: |
+          if command -v wasm-pack >/dev/null 2>&1; then wasm-pack --version
+          else cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked; fi
+
+      - name: Build @kovanica/sdk-wasm
+        if: matrix.app == 'apps/web'
+        run: wasm-pack build sdk/bindings/kovanica-wasm --target web --out-dir pkg
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

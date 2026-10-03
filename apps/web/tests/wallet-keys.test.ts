@@ -2,15 +2,23 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { webcrypto } from "node:crypto";
+import * as wasmModule from "@kovanica/sdk-wasm";
 
 // The browser build relies on the global WebCrypto object; Node <19 keeps it
 // behind node:crypto. Polyfill before any wallet/keys code runs (it only uses
 // crypto inside functions, so import order is safe).
 if (!globalThis.crypto) (globalThis as Record<string, unknown>).crypto = webcrypto;
 
-const wordlistText = await readFile(new URL("../public/bip39.txt", import.meta.url), "utf8");
-// loadWordlist fetches "/bip39.txt", the browser public path. Serve it from disk.
-globalThis.fetch = (async () => new Response(wordlistText)) as typeof fetch;
+// The wallet layer is Rust wasm now. Under `node --test` there is no `fetch`
+// for a `file:` URL, so hand the module its bytes synchronously before the
+// first wallet call. The browser path uses the generated async `init()`
+// instead — see apps/web/src/lib/wallet/wasm.ts.
+const wasmBytes = await readFile(
+  new URL("../../../sdk/bindings/kovanica-wasm/pkg/kovanica_wasm_bg.wasm", import.meta.url),
+);
+(globalThis as { __kovanicaWasmInit?: () => void }).__kovanicaWasmInit = () => {
+  wasmModule.initSync({ module: wasmBytes });
+};
 
 import {
   addressFromMnemonic,
@@ -21,19 +29,18 @@ import {
 } from "../src/lib/wallet/keys";
 import { hexToKvnc } from "../src/lib/wallet/address";
 
-const WORDS = wordlistText.trim().split(/\s+/);
 const W = "abandon";
 const M12 = [W, W, W, W, W, W, W, W, W, W, W, "about"].join(" ");
 const M24 = [W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, W, "art"].join(" ");
 
 test("BIP-39: zero 128-bit entropy maps to the 12-word 'abandon … about' vector", async () => {
-  const mnemonic = await entropyToMnemonic(new Uint8Array(16), WORDS);
+  const mnemonic = await entropyToMnemonic(new Uint8Array(16));
   assert.equal(mnemonic, M12);
   assert.equal(mnemonic.split(" ").length, 12);
 });
 
 test("BIP-39: zero 256-bit entropy maps to the 24-word 'abandon … art' vector", async () => {
-  const mnemonic = await entropyToMnemonic(new Uint8Array(32), WORDS);
+  const mnemonic = await entropyToMnemonic(new Uint8Array(32));
   assert.equal(mnemonic, M24);
   assert.equal(mnemonic.split(" ").length, 24);
 });

@@ -14,6 +14,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 kovanica-sdk = { path = "../../crates/kovanica-sdk" }
 wasm-bindgen = "0.2"
+hex = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 console_error_panic_hook = { version = "0.1", optional = true }

@@ -6,7 +6,6 @@ import { useState } from "react";
 import { Copy, Loader2, CheckCircle, AlertCircle, FileText, Download } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { api, apiPostJson, useApiSource, isPublic } from "@/lib/api/client";
 import { ATOM } from "@/lib/ledger/types";
 import { useLedger } from "@/lib/ledger/store";
@@ -150,6 +149,10 @@ export function AirdropsView() {
   async function signAndSubmitClaim() {
     if (!claimTx || !wallet) {
       toast.error("Claim transaction and wallet required");
+      return;
+    }
+    if (!wallet.mnemonic) {
+      toast.error("This wallet can't sign claims on this device");
       return;
     }
     setBusy(true);
