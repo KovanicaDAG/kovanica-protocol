@@ -219,7 +219,7 @@
 
 ### 13. Phase 3c (Android/iOS hand-written crypto → FFI) — NOT DONE, scoped
 - iOS already calls the FFI through `KovanicaKeys.swift` (see #11), so there is nothing to
-  replace there.
+  replace there (its vectors are verified on Linux per #14).
 - Android still holds **one** hand-written Kotlin derivation in
   `apps/android/app/src/main/java/com/kovanica/lightnode/ui/util/KovanicaKeys.kt`, and
   `KovanicaKeysTest.kt` pins it against `protocol/testvectors/vectors.json` (10 tests, green).
@@ -233,6 +233,31 @@
   until the host cdylib is on the JNA path, so 3c cannot be validated by the existing test
   harness without that setup.
 
+### 14. iOS golden vectors, verified on Linux (RESOLVED)
+- **Context:** the Phase 2 exit criterion asked every implementation to consume
+  `protocol/testvectors/vectors.json`. Android was closed by the 3d toolchain work;
+  iOS stayed open because `xcodebuild` is macOS-only and this workspace is Linux.
+- **Finding:** Swift 6.1.3 is already installed (`/usr/bin/swiftc`), and the iOS
+  derivation path has no Apple-specific code — `KovanicaWallet/KovanicaKeys.swift`
+  is Foundation-only and calls the crate-owned UniFFI binding over a C ABI. So the
+  vectors can be checked without Xcode.
+- **Decision (commit `efd21b1`):** add `apps/ios/tools/linux-vectors/` — a script
+  that builds `kovanica-ffi` for the host, compiles the **unmodified**
+  `KovanicaKeys.swift` + `bindings/swift/kovanica.swift` against
+  `target/debug/libkovanica_ffi.so`, and runs a harness mirroring
+  `KovanicaWalletTests/KovanicaKeysTests.swift` plus all 6 `derivation` vectors
+  (including the passphrase cases the web consumer cannot reach). It regenerates
+  `kovanicaFFI.modulemap` without the Darwin-only `use "Darwin"` line rather than
+  editing the committed binding, which stays byte-identical.
+- **Evidence:** `apps/ios/tools/linux-vectors/verify-vectors.sh` →
+  `iOS Swift harness: 35/35 checks passed`. The 10-test XCTest suite still needs
+  macOS; the harness is case-for-case equivalent for the answers.
+- **Not wired into CI:** hosted Linux runners have no Swift toolchain by default;
+  the `ios` job stays Xcode-on-macOS. Documented in the tool's README.
+- **Consensus impact:** none. Client-only; no FFI surface, ledger, or node change.
+- **Status:** Phase 2 exit criterion for iOS recorded as satisfied on Linux, with
+  the macOS-only parts (xcframework link, UIKit/Keychain) explicitly out of scope.
+
 ---
 
 ## Approved Decisions (to be filled during review)
@@ -245,6 +270,7 @@
 | #11 Phase 3d — one committed home for the UniFFI bindings | owner (Phase 3 direction) | 2026-10-03 | `b7875b3` |
 | #12 untrack Gradle build output + stale UniFFI native libs | owner (Phase 3 direction) | 2026-10-03 | `9c6c91d` |
 | #13 Phase 3c Android FFI migration — scoped, not done | owner (Phase 3 direction) | 2026-10-03 | — |
+| #14 iOS golden vectors verified on Linux (no Xcode) | owner (Phase 3 direction) | 2026-10-03 | `efd21b1` |
 
 ---
 
