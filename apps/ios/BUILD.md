@@ -93,6 +93,16 @@ xcodebuild test -scheme KovanicaWallet \
 ```
 `KovanicaWalletTests` pins the derivation vectors from the client side.
 
+#### Without a Mac
+
+`xcodebuild` is macOS-only, but the derivation code is not: the Swift sources
+are Foundation-only and the FFI is plain C. On a Linux box with `swiftc` and
+`cargo`, `tools/linux-vectors/verify-vectors.sh` compiles the **unmodified**
+`KovanicaKeys.swift` plus the committed Swift binding against a host build of
+`kovanica-ffi`, and runs every derivation vector from
+`protocol/testvectors/vectors.json` (including the passphrase cases). See
+`tools/linux-vectors/README.md` for what it does and does not cover.
+
 ### Release Build (Device)
 ```bash
 xcodebuild -scheme KovanicaWallet -configuration Release \
