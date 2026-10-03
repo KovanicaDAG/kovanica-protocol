@@ -11,6 +11,17 @@ android {
         minSdk = 24
     }
 
+    // Single committed home for the UniFFI Kotlin bindings: the generated file
+    // lives in the Rust crate that owns the interface
+    // (`protocol/crates/kovanica-ffi/bindings/kotlin`), and this module compiles
+    // it straight from there. `ci.yml` regenerates the file and fails the build
+    // if it drifts, so there is nothing to keep in sync by hand.
+    sourceSets {
+        getByName("main") {
+            java.srcDir("../../../protocol/crates/kovanica-ffi/bindings/kotlin")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false

@@ -23,10 +23,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kovanica.CoinJoinOutput
-import kovanica.CoinJoinParticipant
-import kovanica.CoinJoinPrepared
-import kovanica.HistoryEntry
+import uniffi.kovanica.CoinJoinOutput
+import uniffi.kovanica.CoinJoinParticipant
+import uniffi.kovanica.CoinJoinPrepared
+import uniffi.kovanica.HistoryEntry
 
 private const val ATOM: Long = 100_000_000L
 
@@ -110,7 +110,7 @@ class WalletViewModel(application: Application) : AndroidViewModel(application) 
     private fun HistoryEntry.toUiModel(): HistoryItem = HistoryItem(
         blockIdHex = blockIdHex,
         txIdHex = txIdHex,
-        direction = if (direction == kovanica.TxDirection.RECEIVED) {
+        direction = if (direction == uniffi.kovanica.TxDirection.RECEIVED) {
             TxDirection.RECEIVED
         } else {
             TxDirection.SENT

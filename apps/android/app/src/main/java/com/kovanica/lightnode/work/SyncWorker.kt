@@ -10,8 +10,8 @@ import com.kovanica.lightnode.data.formatKvnc
 import com.kovanica.lightnode.ui.prefs.WalletPrefs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kovanica.HistoryEntry
-import kovanica.TxDirection
+import uniffi.kovanica.HistoryEntry
+import uniffi.kovanica.TxDirection
 
 /**
  * Periodic background worker that light-syncs the wallet and posts local

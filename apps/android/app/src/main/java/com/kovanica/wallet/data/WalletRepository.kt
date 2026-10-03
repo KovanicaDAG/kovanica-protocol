@@ -1,9 +1,9 @@
 package com.kovanica.wallet.data
 
 import android.util.Log
-import kovanica.LightNode
-import kovanica.LightConfig
-import kovanica.HistoryEntry
+import uniffi.kovanica.LightNode
+import uniffi.kovanica.LightConfig
+import uniffi.kovanica.HistoryEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

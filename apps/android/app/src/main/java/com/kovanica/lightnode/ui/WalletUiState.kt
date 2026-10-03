@@ -2,8 +2,8 @@ package com.kovanica.lightnode.ui
 
 import com.kovanica.lightnode.ui.prefs.WalletPrefs
 import com.kovanica.lightnode.ui.util.KovanicaAddress
-import kovanica.CoinJoinPrepared
-import kovanica.SendReceipt
+import uniffi.kovanica.CoinJoinPrepared
+import uniffi.kovanica.SendReceipt
 
 data class WalletUiState(
     val isLoading: Boolean = false,

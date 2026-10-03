@@ -32,9 +32,9 @@ import com.kovanica.lightnode.ui.WalletViewModel
 import com.kovanica.lightnode.ui.components.AmountInput
 import com.kovanica.lightnode.ui.components.KvncButton
 import com.kovanica.lightnode.ui.components.KvncTopAppBar
-import kovanica.CoinJoinOutput
-import kovanica.CoinJoinParticipant
-import kovanica.CoinJoinPrepared
+import uniffi.kovanica.CoinJoinOutput
+import uniffi.kovanica.CoinJoinParticipant
+import uniffi.kovanica.CoinJoinPrepared
 
 @Composable
 fun CoinJoinScreen(

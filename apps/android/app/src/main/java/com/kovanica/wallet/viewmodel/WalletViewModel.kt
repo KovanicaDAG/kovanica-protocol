@@ -8,9 +8,9 @@ import com.kovanica.wallet.data.WalletRepository
 import com.kovanica.wallet.data.SendResult
 import com.kovanica.lightnode.ui.util.Bip39
 import com.kovanica.lightnode.ui.util.KovanicaKeys
-import kovanica.LightNode
-import kovanica.LightConfig
-import kovanica.HistoryEntry
+import uniffi.kovanica.LightNode
+import uniffi.kovanica.LightConfig
+import uniffi.kovanica.HistoryEntry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

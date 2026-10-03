@@ -1,6 +1,6 @@
 package com.kovanica.lightnode.data
 
-import kovanica.SendReceipt
+import uniffi.kovanica.SendReceipt
 
 /**
  * Wallet-side wrapper for RFC-001 M-of-N multisig operations.

@@ -15,8 +15,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kovanica.LightNode
-import kovanica.LightConfig
+import uniffi.kovanica.LightNode
+import uniffi.kovanica.LightConfig
 
 class KovanicaApplication : Application() {
     companion object {

@@ -13,15 +13,15 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONException
 import org.json.JSONObject
-import kovanica.BlockInfo
-import kovanica.CoinJoinParticipant
-import kovanica.CoinJoinOutput
-import kovanica.CoinJoinPrepared
-import kovanica.HistoryEntry
-import kovanica.LightConfig
-import kovanica.LightNode
-import kovanica.SendReceipt
-import kovanica.U128Parts
+import uniffi.kovanica.BlockInfo
+import uniffi.kovanica.CoinJoinParticipant
+import uniffi.kovanica.CoinJoinOutput
+import uniffi.kovanica.CoinJoinPrepared
+import uniffi.kovanica.HistoryEntry
+import uniffi.kovanica.LightConfig
+import uniffi.kovanica.LightNode
+import uniffi.kovanica.SendReceipt
+import uniffi.kovanica.U128Parts
 
 private const val ATOM: ULong = 100_000_000uL
 private const val LIGHT_SYNC_FILE = "light_sync.bin"

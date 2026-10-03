@@ -3,10 +3,10 @@ package com.kovanica.lightnode.data
 import android.content.Context
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kovanica.CoinJoinOutput
-import kovanica.CoinJoinParticipant
-import kovanica.CoinJoinPrepared
-import kovanica.SendReceipt
+import uniffi.kovanica.CoinJoinOutput
+import uniffi.kovanica.CoinJoinParticipant
+import uniffi.kovanica.CoinJoinPrepared
+import uniffi.kovanica.SendReceipt
 import com.kovanica.lightnode.ui.util.Bip39
 import com.kovanica.lightnode.ui.util.KovanicaAddress
 import com.kovanica.lightnode.ui.util.KovanicaKeys

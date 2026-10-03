@@ -1,6 +1,6 @@
 package com.kovanica.wallet.data
 
-import kovanica.LightConfig
+import uniffi.kovanica.LightConfig
 
 /**
  * Default light-node config for the Kovanica testnet.
