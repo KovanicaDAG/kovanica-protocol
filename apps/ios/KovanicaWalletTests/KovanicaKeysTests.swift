@@ -122,4 +122,35 @@ final class KovanicaKeysTests: XCTestCase {
             try KovanicaKeys.address(fromMnemonic: Self.zeroPhrase)
         )
     }
+
+    // MARK: - Shared golden vectors
+
+    /// Consume the canonical `protocol/testvectors/vectors.json` generated from
+    /// the Rust core. The file is added to this test target's resources by
+    /// `apps/ios/xcodegen.yml`; there is no second copy.
+    func testSharedGoldenVectorsMatch() throws {
+        let bundle = Bundle(for: type(of: self))
+        guard let url = bundle.url(forResource: "vectors", withExtension: "json") else {
+            return XCTFail("vectors.json missing from the test bundle")
+        }
+        let data = try Data(contentsOf: url)
+        let doc = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        let vectors = try XCTUnwrap(doc?["vectors"] as? [[String: Any]])
+
+        var checked = 0
+        for v in vectors where v["kind"] as? String == "derivation" {
+            let name = try XCTUnwrap(v["name"] as? String)
+            let phrase = try XCTUnwrap(v["mnemonic"] as? String)
+            let passphrase = v["passphrase"] as? String ?? ""
+            let index = UInt32(try XCTUnwrap(v["index"] as? Int))
+            let address = try KovanicaKeys.address(
+                fromMnemonic: phrase,
+                passphrase: passphrase,
+                index: index
+            )
+            XCTAssertEqual(address, v["address"] as? String, name)
+            checked += 1
+        }
+        XCTAssertGreaterThan(checked, 0, "expected derivation vectors in vectors.json")
+    }
 }

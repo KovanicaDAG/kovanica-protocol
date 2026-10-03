@@ -20,6 +20,9 @@ kovanica-state = { path = "../kovanica-state" }
 # Integration tests assert on the rendered address form, which lives in the
 # ledger crate. Regular dependencies are not visible to `tests/`.
 kovanica-state = { path = "../kovanica-state" }
+# The shared golden-vector file (`protocol/testvectors/vectors.json`) is JSON:
+# the generator example writes it and the consumer test parses it.
+serde_json = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

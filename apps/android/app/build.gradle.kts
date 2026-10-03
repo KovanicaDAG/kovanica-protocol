@@ -64,6 +64,14 @@ android {
         compose = true
         viewBinding = true
     }
+
+    // Unit tests load the canonical golden vectors straight from the Rust core
+    // tree (`protocol/testvectors/vectors.json`), so there is exactly one copy.
+    sourceSets {
+        getByName("test") {
+            resources.srcDir("../../../protocol/testvectors")
+        }
+    }
 }
 
 dependencies {
@@ -107,6 +115,9 @@ dependencies {
 
     // Testing
     testImplementation("junit:junit:4.13.2")
+    // JSON parser for the shared golden-vector file (JVM unit tests have no
+    // android.jar org.json implementation).
+    testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.04.01"))

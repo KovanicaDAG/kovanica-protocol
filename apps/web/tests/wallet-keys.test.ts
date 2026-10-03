@@ -19,6 +19,7 @@ import {
   importMnemonic,
   mnemonicToSeed,
 } from "../src/lib/wallet/keys";
+import { hexToKvnc } from "../src/lib/wallet/address";
 
 const WORDS = wordlistText.trim().split(/\s+/);
 const W = "abandon";
@@ -115,3 +116,44 @@ test("SLIP-0010: account index bounds are enforced", async () => {
   await assert.rejects(Promise.resolve(addressFromMnemonic(M12, -1)), /out of range/);
   await assert.rejects(Promise.resolve(addressFromMnemonic(M12, 0x80000000)), /out of range/);
 });
+
+// ---------------------------------------------------------------------------
+// Shared golden vectors: protocol/testvectors/vectors.json, generated from the
+// Rust implementation. The web must reproduce every empty-passphrase derivation
+// vector byte-for-byte; a mismatch is a finding, not something to "fix" by
+// editing the vector.
+// ---------------------------------------------------------------------------
+interface SharedVector {
+  kind: string;
+  name: string;
+  mnemonic: string;
+  passphrase: string;
+  index: number;
+  pubkey_hex: string;
+  address: string;
+}
+
+const sharedVectors = JSON.parse(
+  await readFile(
+    new URL("../../../protocol/testvectors/vectors.json", import.meta.url),
+    "utf8",
+  ),
+) as { vectors: SharedVector[] };
+
+// The web `addressFromMnemonic` has no passphrase argument, so only the
+// empty-passphrase cases apply here (the passphrase case is covered by Rust).
+const webDerivationVectors = sharedVectors.vectors.filter(
+  (v) => v.kind === "derivation" && v.passphrase === "",
+);
+
+test("shared vectors: the file has derivation cases to check", () => {
+  assert.ok(webDerivationVectors.length > 0);
+});
+
+for (const v of webDerivationVectors) {
+  test(`shared vectors: ${v.name} derives the pinned pubkey/address`, async () => {
+    const pub = await addressFromMnemonic(v.mnemonic, v.index);
+    assert.equal(pub, v.pubkey_hex);
+    assert.equal(hexToKvnc(pub), v.address);
+  });
+}

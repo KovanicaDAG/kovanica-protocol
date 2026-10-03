@@ -70,6 +70,9 @@ targets:
     platform: iOS
     sources:
       - path: KovanicaWalletTests
+      # Canonical golden vectors from the Rust core tree, loaded read-only.
+      - path: ../../protocol/testvectors/vectors.json
+        buildPhase: resources
     dependencies:
       - target: KovanicaWallet
     settings:

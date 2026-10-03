@@ -3,7 +3,9 @@ package com.kovanica.lightnode.ui.util
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 import java.util.Properties
 
 /**
@@ -121,6 +123,36 @@ class KovanicaKeysTest {
                 KovanicaKeys.addressFromSeed(Bip39.seedFromMnemonic(phrase), index).kvnc,
             )
         }
+    }
+
+    // --- shared golden vectors (protocol/testvectors/vectors.json) --------
+
+    /**
+     * Consume the canonical vector file generated from the Rust core. The file
+     * is wired into test resources by `sourceSets.test.resources.srcDir(...)`
+     * in `app/build.gradle.kts`, so this reads the one true copy — no duplication.
+     */
+    @Test
+    fun `shared golden vectors match the frozen derivation`() {
+        val loader = checkNotNull(KovanicaKeysTest::class.java.classLoader)
+        val stream = checkNotNull(loader.getResourceAsStream("vectors.json")) {
+            "vectors.json missing from test resources"
+        }
+        val doc = JSONObject(stream.bufferedReader().use { it.readText() })
+        val vectors = doc.getJSONArray("vectors")
+
+        var checked = 0
+        for (i in 0 until vectors.length()) {
+            val v = vectors.getJSONObject(i)
+            if (v.getString("kind") != "derivation") continue
+            val name = v.getString("name")
+            val seed = Bip39.seedFromMnemonic(v.getString("mnemonic"), v.getString("passphrase"))
+            val address = KovanicaKeys.addressFromSeed(seed, v.getInt("index"))
+            assertEquals("$name kvnc", v.getString("address"), address.kvnc)
+            assertEquals("$name hex", v.getString("address_hex"), address.hex)
+            checked++
+        }
+        assertTrue("expected derivation vectors in vectors.json", checked > 0)
     }
 
     // --- helpers ----------------------------------------------------------
