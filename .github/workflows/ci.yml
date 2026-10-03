@@ -327,6 +327,11 @@ jobs:
         working-directory: ${{ matrix.app }}
         run: npm run test
 
+      - name: Test (apps/dashboard/frontend)
+        if: matrix.app == 'apps/dashboard/frontend'
+        working-directory: ${{ matrix.app }}
+        run: npm run test
+
       - name: Build
         working-directory: ${{ matrix.app }}
         run: ${{ matrix.build }}

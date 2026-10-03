@@ -305,8 +305,12 @@
   current `kvnc.ts`, so the shared vectors gate the swap before any code moves.
 - **Consensus impact:** none (client-only). Private-key handling is
   security-sensitive, so the conservative split is deliberate.
-- **Status:** open, scoped follow-up. `@noble/curves`, `@noble/hashes`, and
-  `@scure/bip39` stay in the dashboard manifest until then.
+- **Status:** open, scoped follow-up. Step 1 landed: `src/lib/kvnc.test.ts`
+  (22 tests) pins the current implementation against the shared derivation
+  vectors and is wired into the `web` CI job (`npm run test` is now
+  `vitest run`). The crypto swap itself is still pending.
+  `@noble/curves`, `@noble/hashes`, and `@scure/bip39` stay in the dashboard
+  manifest until then.
 
 ---
 
