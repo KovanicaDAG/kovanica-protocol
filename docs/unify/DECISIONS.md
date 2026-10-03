@@ -217,21 +217,42 @@
 - **Report-only, untouched:** the tracked Android release keystore and the hardcoded signing
   material in `apps/android/app/build.gradle.kts` (DECISIONS #1 — rotation still pending).
 
-### 13. Phase 3c (Android/iOS hand-written crypto → FFI) — NOT DONE, scoped
-- iOS already calls the FFI through `KovanicaKeys.swift` (see #11), so there is nothing to
-  replace there (its vectors are verified on Linux per #14).
-- Android still holds **one** hand-written Kotlin derivation in
-  `apps/android/app/src/main/java/com/kovanica/lightnode/ui/util/KovanicaKeys.kt`, and
-  `KovanicaKeysTest.kt` pins it against `protocol/testvectors/vectors.json` (10 tests, green).
-  Replacing it with `uniffi.kovanica` calls is a separate sub-PR: Android **unit tests run on
-  the JVM**, so they need a *host* (`x86_64-unknown-linux-gnu`) `libkovanica_ffi.so` on the JNA
-  search path, not the Android ABI builds. That is build/test-harness work with its own
-  setup, so it is deliberately left out of 3d.
-- **Status:** tracked as remaining Phase 3 work. Current state is safe: the Kotlin
-  derivation is vector-correct, and it is a second *implementation* rather than a routing
-  bug. Note also that the FFI derivation functions are not usable from Android unit tests
-  until the host cdylib is on the JNA path, so 3c cannot be validated by the existing test
-  harness without that setup.
+### 13. Phase 3c — Android now uses the FFI for all key work (RESOLVED)
+- **Context:** Phase 3c asks the mobile apps to route key work through the UniFFI
+  surface instead of hand-written crypto. iOS already did (see #11; vectors on
+  Linux per #14). Android held the last duplicate implementation.
+- **Finding:** `ui/util/KovanicaKeys.kt` carried its own BouncyCastle SLIP-0010,
+  `KovanicaAddress.kt` its own Ed25519 + base58, and `Bip39.kt` its own PBKDF2
+  stretch. Android **unit tests run on the JVM**, so they need a *host*
+  (`x86_64-unknown-linux-gnu`) `libkovanica_ffi.so` on the JNA search path; the
+  `:uniffi` module ships Android ABIs only, which the JVM cannot load.
+- **Decision (commit `88c4047`):**
+  - `KovanicaKeys.kt` is now a thin adapter over `uniffi.kovanica`:
+    `accountFromMnemonic`, `addressFromMnemonic`, `signingKeyHex`,
+    `addressFromSigningKeyHex`, `isValidPhrase`, `derivationPath`, `coinType`.
+    `KovanicaAddress.kt` derives the 33-byte form from `DerivedAccount`
+    (`00` + `publicKeyHex`). `Bip39.kt` keeps generation only (the core has no
+    generator export);
+    validation, stretching and derivation go through the FFI.
+    `Base58.kt` is deleted, as is the BouncyCastle dependency.
+  - Call sites updated: `WalletRepository` (constructor loses `Context`),
+    both `WalletViewModel`s, `MnemonicUtil` (unused helpers dropped).
+  - `app/build.gradle.kts` gains a `buildHostFfi` `Exec` task
+    (`cargo build -p kovanica-ffi`) that every `Test` task depends on, plus
+    `systemProperty("jna.library.path", .../protocol/target/debug)`.
+  - CI: the `android` job step is now
+    `./gradlew :app:testDebugUnitTest assembleDebug --no-daemon`, so the vector
+    gate runs in CI instead of being assembled around.
+- **Evidence:** `:app:testDebugUnitTest` → 10 tests, 0 failures, 0 errors
+  (frozen constants, per-index signing key, address round-trip, distinct
+  indices, truncated-material regression, index bounds, malformed key
+  rejection via `DerivationException`, phrase validation, and ALL 6 shared
+  derivation vectors including the passphrase one). `clean` +
+  `testDebugUnitTest` + `assembleDebug` → BUILD SUCCESSFUL.
+- **Consensus impact:** none. Kotlin / Gradle / CI only; no FFI surface, ledger,
+  or node change. The derivation path stays `m/44'/3007'/0'/0'/i'`.
+- **Status:** Android and iOS both call the FFI. No hand-written crypto remains
+  on either mobile surface.
 
 ### 14. iOS golden vectors, verified on Linux (RESOLVED)
 - **Context:** the Phase 2 exit criterion asked every implementation to consume
@@ -323,7 +344,7 @@
 | #10 keys/tx canonical API — SDK is canonical, protocol re-exports | owner (Phase 3 direction) | 2026-10-03 | `df41252` |
 | #11 Phase 3d — one committed home for the UniFFI bindings | owner (Phase 3 direction) | 2026-10-03 | `b7875b3` |
 | #12 untrack Gradle build output + stale UniFFI native libs | owner (Phase 3 direction) | 2026-10-03 | `9c6c91d` |
-| #13 Phase 3c Android FFI migration — scoped, not done | owner (Phase 3 direction) | 2026-10-03 | — |
+| #13 Phase 3c — Android uses the FFI for all key work | owner (Phase 3 direction) | 2026-10-04 | `88c4047` |
 | #14 iOS golden vectors verified on Linux (no Xcode) | owner (Phase 3 direction) | 2026-10-03 | `efd21b1` |
 | #15 Phase 3b — web + extension use the shared wasm keys | owner (Phase 3 direction) | 2026-10-03 | `7c2ff8c`, `af1ada5` |
 | #16 Phase 3b — dashboard crypto migration deferred, scoped | owner (Phase 3 direction) | 2026-10-03 | — |
