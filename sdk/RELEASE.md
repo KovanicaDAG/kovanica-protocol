@@ -136,7 +136,7 @@ bookkeeping.
 | 5 | `cargo package` dry | leaf crate at least once: `cargo package -p kovanica-types --allow-dirty` |
 | 6 | Version bump agreed | `0.1.0-alpha.1` → next semver AFTER first publish (crates.io forbids re-publishing the same version) |
 | 7 | README examples warning | publish prints `ignoring example ... not included` for `sdk/examples/*` — **intentional**: examples stay monorepo-only, docs link to them |
-| 8 | Wasm/npm artifact | CI: publish `preflight` + `sdk-wasm.yml` gate — pinned `wasm-pack build --target web`, repo manifest overlay, `npm pack pkg --dry-run` |
+| 8 | Wasm/npm artifact | CI: publish `preflight` + `ci.yml` `sdk` gate — pinned `wasm-pack build --target web`, repo manifest overlay, `npm pack pkg --dry-run` |
 
 Manual gate (human, before wave):
 
@@ -163,7 +163,7 @@ npm pack pkg --dry-run              # inspect tarball: *.js, *.wasm, *.d.ts
 # npm publish --access public --tag alpha   # scoped package; 0.1.0-alpha.x je pre-release → NIKAD na latest
 ```
 
-The CI gate (`.github/workflows/sdk-wasm.yml`) runs the first four commands
+The CI gate (`.github/workflows/ci.yml`, job `sdk`) runs the first four commands
 automatically on any `sdk/**` change — local wasm32/`wasm-pack` are not
 required for SDK-only PRs.
 

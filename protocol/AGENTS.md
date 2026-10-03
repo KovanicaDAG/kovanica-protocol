@@ -1172,8 +1172,8 @@ deterministic + adversarial tests per the conventions above.
     `uniffi.kovanica`, minSdk 24) compiling the committed `bindings/kotlin`
     tree via `sourceSets`; sole runtime dep `net.java.dev.jna:jna:5.14.0@aar`;
     consumer R8 rules included.
-  - Drift guard: `.github/workflows/bindings-drift.yml` at the **repository
-    root** regenerates kotlin+swift
+  - Drift guard: the `protocol` job in `.github/workflows/ci.yml` at the
+    **repository root** regenerates kotlin+swift
     into a temp dir on every PR touching `crates/kovanica-ffi/**` and fails
     on any difference (`diff -r -x README.md` — the hand-written READMEs sit
     beside generated output and must not trip it), plus shellcheck of both

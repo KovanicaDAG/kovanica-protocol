@@ -70,6 +70,61 @@
 - **Constraint:** `sync-public-node.yml` mirrors `crates/**` — must not break public repo sync
 - **Decision:** Deferred to Phase 3 evaluation
 
+### 8. Root CI Consolidation — disposition of superseded workflows (Phase 2)
+- **Context:** Phase 2.3 asks to consolidate CI into one root, path-filtered workflow
+  (`templates/ci-root-skeleton.yml`). `.github/workflows/ci.yml` has been written and ports:
+  `rust-gate.yml` + `bindings-drift.yml` (job `protocol`), `sdk-wasm.yml` (job `sdk`),
+  `ci-cd.yml` web-consoles + nested `apps/web` CI (job `web`), `build-android.yml` + `ci-cd.yml`
+  android (job `android`), `ci-cd.yml` ios (job `ios`), `build-all.yml` linux/windows Tauri
+  (jobs `desktop-linux` / `desktop-windows`). The VPS deploy step and all release jobs are
+  **not** ported (owner approval required). `config-gate.yml`, `secret-scan.yml`,
+  `publish-sdk.yml`, `releases.yml` are intentionally kept separate.
+- **Open question:** what happens to the now-superseded workflow files? `ci-cd.yml` and
+  `build-all.yml` also carry deploy/release jobs (VPS deploy; app-artifact GitHub Release)
+  that are not duplicated elsewhere, so deleting them outright would drop those.
+- **Options:**
+  - A (recommended): ci.yml becomes the only gate workflow — delete `rust-gate.yml`,
+    `sdk-wasm.yml`, `build-android.yml`, `bindings-drift.yml`; strip `ci-cd.yml` and
+    `build-all.yml` down to their deploy/release-only jobs (preserved, not auto-gated).
+  - B (conservative): keep every existing workflow unchanged; ci.yml is additive and gates
+    run twice on matching paths until a later cleanup.
+  - C (middle): keep the files but re-trigger the old gate workflows to `workflow_dispatch`
+    (manual) so there are no duplicate auto-runs; deploy/release also become manual.
+- **Decision (approved by owner, 2026-10-03): Option A.**
+  - `rust-gate.yml`, `sdk-wasm.yml`, `build-android.yml`, `bindings-drift.yml` moved to
+    `archive/workflows/` (removed from active CI, preserved for history — the repo rule is
+    "never delete, archive instead").
+  - `ci-cd.yml` reduced to a deploy-only workflow (`Deploy Consoles`): builds the two web
+    consoles and runs the VPS `pm2 reload`. Trigger changed to `workflow_dispatch` + tag `v*`
+    (no PR / main-push auto-run), per the skeleton's "manual or tag-triggered" rule.
+  - `build-all.yml` reduced to a release-only workflow (`Release Apps`): keeps
+    `ffi-bindings`, `android`, `linux-tauri`, `windows-tauri`, `macos-tauri-ios`, `release`;
+    the `protocol-test` gate was removed (now in ci.yml). Trigger changed to `workflow_dispatch`
+    + tag `v*`.
+  - `ci.yml` is the only gate workflow. `config-gate.yml`, `secret-scan.yml`,
+    `publish-sdk.yml`, `releases.yml` untouched.
+  - Docs updated: `apps/ios/BUILD.md`, `sdk/RELEASE.md` now point at `ci.yml`.
+
+### 9. Pre-existing red gates on `main` (clippy + fmt) — OPEN
+- **Context:** While porting the `protocol` gate into `ci.yml`, verification showed
+  `main` was **already failing** `cargo clippy --workspace --all-targets -- -D warnings`
+  and `cargo fmt --all --check` before any Phase 2 change.
+- **Clippy findings** (`protocol/crates/kovanica-state/src/ledger.rs`):
+  - `122:33` — `pub const MAX_MINT_PRICE: u64 = 1 * ATOM;` ("this operation has no effect")
+  - `827:5` — unused variable `asset_logo_activation_score: u64`
+  - `1489:28` — manual `!RangeInclusive::contains` for `mint_price < MIN || > MAX`
+- **Fmt drift** (pre-existing) in 7 files: `protocol/crates/kovanica-ffi/src/light_node.rs`,
+  `protocol/crates/kovanica-node/src/{explorer.rs,node.rs}`,
+  `protocol/crates/kovanica-node/tests/poa_adversarial.rs`,
+  `protocol/crates/kovanica-state/src/{ledger.rs,lib.rs}`,
+  `protocol/crates/kovanica-state/tests/native_token_consensus.rs`.
+- **Origin:** commit `8f4cb30` — "feat(kvp-107): implement mint price & asset logos for KVP-102 tokens".
+- **Impact:** `ci.yml` ports the gate faithfully, so the new `protocol` job is red until this is
+  addressed. `kovanica-state` is consensus-critical, so the fix is **not** applied unilaterally.
+- **Decision:** OPEN — owner to choose between (a) a semantics-preserving cleanup commit
+  (`cargo fmt`, `#[allow]`/refactor the three lints) before Phase 2 is declared green, or
+  (b) leave red and track separately. Phase 2 report records the gate as "ported, pre-existing red".
+
 ---
 
 ## Approved Decisions (to be filled during review)

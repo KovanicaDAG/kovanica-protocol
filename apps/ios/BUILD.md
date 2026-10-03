@@ -133,8 +133,8 @@ xcodebuild -exportArchive \
 ## Regenerating the Swift bindings
 
 The bindings are **committed** and CI diffs them against a fresh generation
-(`.github/workflows/bindings-drift.yml` at the repository root), so any change
-to the Rust FFI surface must ship with regenerated bindings:
+(the `protocol` job in `.github/workflows/ci.yml` at the repository root), so
+any change to the Rust FFI surface must ship with regenerated bindings:
 
 ```bash
 cd protocol
@@ -161,10 +161,11 @@ adding a second rule is the bug this app had.
 
 ## CI/CD (GitHub Actions)
 
-`.github/workflows/ci-cd.yml` has an `ios` job on `macos-latest` that installs
-Xcode 15.4, runs `build-apple.sh`, runs `xcodegen generate`, then
-`xcodebuild -configuration Release`, and uploads the `.app`. It needs no
-secrets; code signing for device builds is a local/App Store step.
+`.github/workflows/ci.yml` has an `ios` job on `macos-latest` that selects the
+latest stable Xcode, runs `build-apple.sh`, verifies the committed Swift
+bindings, runs `xcodegen generate`, then `xcodebuild -configuration Release`,
+and uploads the `.app`. It needs no secrets; code signing for device builds is a
+local/App Store step.
 
 ## Troubleshooting
 
