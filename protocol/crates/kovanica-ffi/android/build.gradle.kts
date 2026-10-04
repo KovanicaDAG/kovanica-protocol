@@ -18,9 +18,10 @@ android {
         consumerProguardFiles("consumer-rules.pro")
     }
 
-    // The generated Kotlin bindings stay committed one level up
-    // (bindings/kotlin/uniffi/kovanica/kovanica.kt) so CI can drift-check
-    // them; this module just compiles them in.
+    // The generated Kotlin bindings are produced by uniffi-bindgen at CI time
+    // (see .github/workflows/build-all.yml) into bindings/kotlin/uniffi/kovanica/kovanica.kt;
+    // this module just compiles them in. A committed copy was archived to
+    // archive/protocol-bindings/ during the repo restructure.
     sourceSets["main"].java.srcDirs("../bindings/kotlin")
     // jniLibs/src/main/jniLibs is the default — populated by build-android.sh.
 

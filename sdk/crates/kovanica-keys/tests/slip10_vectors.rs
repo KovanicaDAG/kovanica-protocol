@@ -3,7 +3,7 @@
 //! Official SLIP-0010 vectors 1 & 2 (public spec) plus the **frozen**
 //! Kovanica path `m/44'/3007'/0'/0'/i'` vectors from
 //! `docs/backlog/DERIVATION.md`. These constants are shared with the
-//! TypeScript web wallet (`web/site/src/lib/wallet/keys.ts`) — if either side
+//! TypeScript web wallet (`apps/web/src/lib/wallet/keys.ts`) — if either side
 //! drifts, this suite (or the web suite) fails loudly.
 //!
 //! The frozen-path inputs use the standard **zero-entropy 128-bit phrase**
@@ -55,6 +55,69 @@ fn frozen_path_index_2() {
         0x34, 0x8e,
     ];
     assert_eq!(out, expected);
+}
+
+// --- Official SLIP-0010 ed25519 spec vectors -----------------------------
+//
+// Test vector 1 from the SLIP-0010 specification, whose input is 16 raw bytes
+// rather than a 64-byte BIP-39 output. The spec lists the key at every node of
+// the chain, so walking the prefixes checks the whole walk and not just the
+// leaf. This is what makes "SLIP-0010" a verified claim in this crate, not a
+// label.
+#[test]
+fn official_spec_vector_1() {
+    let material = [
+        0x00u8, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+
+    let expected: &[(&[u32], &str)] = &[
+        (
+            &[],
+            "2b4be7f19ee27bbf30c667b642d5f4aa69fd169872f8fc3059c08ebae2eb19e7",
+        ),
+        (
+            &[0],
+            "68e0fe46dfb67e368c75379acec591dad19df3cde26e63b93a8e704f1dade7a3",
+        ),
+        (
+            &[0, 1],
+            "b1d0bad404bf35da785a64ca1ac54b2617211d2777696fbffaf208f746ae84f2",
+        ),
+        (
+            &[0, 1, 2],
+            "92a5b23c0b8a99e37d07df3fb9966917f5d06e02ddbd909c7e184371463e9fc9",
+        ),
+        (
+            &[0, 1, 2, 2],
+            "30d1dc7e5fc04c31219ab25a27ae00b50f6fd66622f6e9c913253d6511d1e662",
+        ),
+        (
+            &[0, 1, 2, 2, 1_000_000_000],
+            "8f94d394a8e8fd6b1bc2f3f49f5c47e385281d5c17e65324b0f62483e37e8793",
+        ),
+    ];
+
+    for (path, key) in expected {
+        assert_eq!(
+            hex::encode(kovanica_keys::slip10::derive_path(&material, path)),
+            *key,
+            "path {path:?}"
+        );
+    }
+}
+
+/// The frozen Kovanica path must be exactly the generic path with the
+/// documented segments, so the constants and the code cannot drift apart.
+#[test]
+fn frozen_path_matches_generic_path() {
+    let material = [0x42u8; 64];
+    for index in 0..4u32 {
+        assert_eq!(
+            kovanica_keys::slip10::derive_ed25519(&material, index),
+            kovanica_keys::slip10::derive_path(&material, &[44, 3007, 0, 0, index])
+        );
+    }
 }
 
 #[test]

@@ -1,0 +1,2987 @@
+openapi: 3.1.0
+
+info:
+  title: Kovanica Node HTTP API
+  version: "1.0.0"
+  summary: The HTTP surface a Kovanica node exposes on its explorer port.
+  description: |
+    Single source of truth for the node HTTP API, transcribed from
+    `protocol/crates/kovanica-node/src/explorer.rs`. Regenerate the typed
+    TypeScript client with `npm run generate` in `packages/api-client`.
+
+    ## Transport facts that a spec alone does not convey
+
+    * **No CORS.** The node emits no `Access-Control-*` header, answers no
+      `OPTIONS` preflight, and has no 405 concept. A browser cannot call a node
+      cross-origin; web surfaces reach the node server-side and proxy to it.
+    * **No authentication.** Every route is unauthenticated except where a
+      *feature flag* gates it (see `x-kovanica-gating` on each operation).
+    * **Rate limiting.** A per-IP token bucket runs *before* routing:
+      `KOVANICA_RATE_LIMIT` (default 10 tokens/sec), `KOVANICA_RATE_BURST`
+      (default 60). Exhaustion yields `429` with the JSON error body. The node's
+      `respond()` has no 429 reason phrase, so the wire literally reads
+      `HTTP/1.1 429 Not Found`.
+    * **Error encoding is not uniform.** Most routes return
+      `{"ok":false,"error":"…"}` as JSON. All `POST /api/{action}` catch-all
+      routes, `/api/history` and `/api/utxos` return `text/plain`. An unknown
+      path returns `404 text/plain` with the body `not found`. Consumers must
+      handle both, which is why every operation below declares both shapes.
+    * **A `GET` on a POST-only path is a `404`**, not a 405.
+    * **Amounts are JSON numbers, not strings.** Atom counts are `u128` in Rust
+      emitted unquoted. A float64 is exact only to 2^53-1 = 9,007,199,254,740,991
+      atoms (~90,071,992.547 KVNC), which is **below** the RFC-006 cap of
+      90,200,000 KVNC. So the cumulative supply fields — `max_supply`,
+      `native_minted`, `total`, `burned` — are rounded before JS sees them, and
+      a balance plus change may not be either. Consumers that need exact supply
+      accounting must read those fields from the raw response text; see the
+      `Atoms` schema and `atomsFromWire` in `@kovanica/api-client`.
+    * **No static UI.** The node serves no `/` route and no HTML. The
+      `explorer.rs` module doc mentioning a "static UI" is stale.
+    * **A separate Prometheus listener** renders `/metrics` too, on
+      `KOVANICA_METRICS_LISTEN` (default `0.0.0.0:9090`), where the path is
+      ignored and every request answers 200.
+
+servers:
+  - url: http://127.0.0.1:8081
+    description: Local node explorer port
+  - url: https://explorer.kovanica.online
+    description: Public testnet explorer
+
+tags:
+  - name: chain
+    description: Chain tip, DAG shape, blocks and transactions
+  - name: node
+    description: Node configuration, peers, snapshots and metrics
+  - name: ledger
+    description: Addresses, balances, UTXOs and history
+  - name: assets
+    description: KVP-102 tokens, KVP-106 NFTs, RWAs and collections
+  - name: sync
+    description: Bulk and light-client synchronisation (binary framing)
+  - name: wallet
+    description: Transaction preparation, signing, submission and fees
+  - name: multisig
+    description: RFC-001 M-of-N P2SH helpers
+  - name: htlc
+    description: RFC-004 atomic-swap scripts
+  - name: admin
+    description: Operator, faucet and reset controls
+
+components:
+
+  schemas:
+
+    # ---------------------------------------------------------------- errors
+
+    Error:
+      type: object
+      required: [ok, error]
+      properties:
+        ok:
+          type: boolean
+          const: false
+        error:
+          type: string
+          description: Human-readable reason. Not machine-stable — do not match on it.
+      description: JSON error body. Almost every non-2xx response uses this shape.
+
+    PlainTextError:
+      type: string
+      description: |
+        Bare `text/plain` error body. Emitted by all `POST /api/{action}`
+        catch-all routes, by `/api/history` and `/api/utxos`, and by the
+        not-found fallback (where the body is the literal `not found`).
+
+    NotFound:
+      type: string
+      const: not found
+      description: Body of the catch-all 404.
+
+    # ------------------------------------------------------------ primitives
+
+    Atoms:
+      type: integer
+      format: int64
+      description: |
+        An amount in atoms. 1 KVNC = 100,000,000 atoms.
+        Sent as a JSON **number** by a `u128`. `format: int64` is only a size
+        hint; the RFC-006 cap (9,020,000,000,000,000 atoms) fits an int64.
+        float64, however, stops being exact at 2^53-1 = 9,007,199,254,740,991
+        atoms = ~90,071,992.547 KVNC, which is **below** the cap. So
+        `max_supply`, `native_minted`, `total` and `burned` are already rounded
+        by the time JSON.parse sees them. Never trust a cumulative supply field
+        parsed as a JS number: read it from the raw response text, or use
+        `atomsFromWire` in `@kovanica/api-client`, which refuses rather than
+        rounds.
+      minimum: 0
+
+    I128Delta:
+      type: integer
+      format: int64
+      description: A signed atom delta. Positive means credited to the address, negative debited.
+
+    Hex32:
+      type: string
+      pattern: "^[0-9a-fA-F]{64}$"
+      description: 32 bytes hex — a block id, tx id, hash or public key.
+
+    SignatureHex:
+      type: string
+      pattern: "^[0-9a-fA-F]{128}$"
+      description: 64-byte Ed25519 signature hex.
+
+    AddressHex:
+      type: string
+      pattern: "^[0-9a-f]{66}$"
+      description: Canonical 33-byte versioned address hex (`00` prefix for P2PK).
+
+    KvncAddress:
+      type: string
+      pattern: "^kvnc[1-9A-HJ-NP-Za-km-z]+dag$"
+      description: Human form — `kvnc` + base58(33 versioned bytes) + `dag`.
+
+    Address:
+      type: string
+      description: |
+        Any form the node accepts: a `kvnc…dag` address, 66-hex versioned, or
+        64-hex legacy public key. Responses are hex; query parameters accept
+        all three.
+
+    AssetId:
+      type: string
+      description: |
+        Wire form of an asset identifier: `"KVNC"` (case-insensitive), an empty
+        string, or absent all mean native KVNC. KVP-102 assets are 32-byte hex.
+
+    AssetKind:
+      type: string
+      enum: [fungible, nft]
+      description: Asset classification. Absent/null for native KVNC.
+
+    Colour:
+      type: string
+      enum: [genesis, chain, blue, red]
+      description: |
+        GHOSTDAG block colour. `blue` blocks feed the blue work; `red` blocks are
+        honest but orphaned. With k=3, up to 2 parents per block are red.
+
+    ConfirmingStatus:
+      type: string
+      enum: [tip, confirmed, accepted, pending]
+      description: Where a block sits relative to finality.
+
+    BlockKind:
+      type: string
+      enum: [poa, unsigned]
+      description: |
+        `poa` when the block carries a proof-of-authority signature, `unsigned`
+        otherwise. Note the node does **not** emit the older value `pow` here —
+        PoA replaced it.
+      deprecated: false
+
+    # -------------------------------------------------------------- /api/head
+
+    AuthoritySet:
+      type: object
+      description: |
+        RFC-005 authority set. `null` when proof-of-authority is disabled.
+        NOTE: this schema has no `hash` key — `/api/network` returns one that
+        does. That asymmetry is real; see `AuthoritySetWithHash`.
+      required: [authorities, threshold, count]
+      properties:
+        authorities:
+          type: array
+          items: { $ref: "#/components/schemas/Hex32" }
+        threshold:
+          type: integer
+          minimum: 1
+        count:
+          type: integer
+          minimum: 0
+
+    AuthoritySetWithHash:
+      type: object
+      description: Authority set as `/api/network` returns it, including the extra `hash`.
+      required: [authorities, threshold, count, hash]
+      properties:
+        authorities:
+          type: array
+          items: { $ref: "#/components/schemas/Hex32" }
+        threshold: { type: integer, minimum: 1 }
+        count: { type: integer, minimum: 0 }
+        hash: { $ref: "#/components/schemas/Hex32" }
+
+    Head:
+      type: object
+      required:
+        [network, genesis, tip, blocks, min_fee, atom, finality_depth,
+         payload_pruning_depth, block_pruning_depth, authority_set,
+         current_slot, slot_duration_ms]
+      properties:
+        network: { type: string, description: 'Network profile id, e.g. "kovanica-testnet".' }
+        genesis: { $ref: "#/components/schemas/Hex32" }
+        tip: { $ref: "#/components/schemas/Hex32" }
+        blocks: { type: integer, minimum: 0 }
+        min_fee: { $ref: "#/components/schemas/Atoms" }
+        atom: { type: integer, const: 100000000, description: "Atoms per KVNC." }
+        finality_depth: { type: integer, minimum: 0 }
+        payload_pruning_depth: { type: integer }
+        block_pruning_depth: { type: integer }
+        authority_set:
+          oneOf:
+            - $ref: "#/components/schemas/AuthoritySet"
+            - type: "null"
+        current_slot: { type: integer }
+        slot_duration_ms: { type: integer }
+
+    # --------------------------------------------------------- /api/bootstrap
+
+    LightConfig:
+      type: object
+      description: Genesis parameters a light client needs to validate the chain independently.
+      required: [k, subsidy, premine, founder_seed, finality_depth, payload_pruning_depth]
+      properties:
+        k: { type: integer, const: 3, description: "GHOSTDAG k parameter. Frozen at 3." }
+        subsidy: { $ref: "#/components/schemas/Atoms" }
+        premine: { $ref: "#/components/schemas/Atoms" }
+        founder_seed: { type: integer }
+        finality_depth: { type: integer }
+        payload_pruning_depth: { type: integer }
+
+    Bootstrap:
+      type: object
+      description: |
+        Everything a client needs to bootstrap, including supply accounting.
+        Never errors — with no mesh node attached the supply fields fall back
+        to `(0, 0, 0, 0, MAX_SUPPLY)`.
+      required:
+        [network, genesis, tip, listen, peers, admission, poa_enabled, min_fee,
+         atom, token, k, subsidy, founder_amount, founder_seed, finality_depth,
+         payload_pruning_depth, block_pruning_depth, native_minted, total,
+         circulating, burned, max_supply, operator_wallet_address, light_config]
+      properties:
+        network: { type: string }
+        genesis: { $ref: "#/components/schemas/Hex32" }
+        tip: { $ref: "#/components/schemas/Hex32" }
+        listen: { type: string, description: "The node's own listen address, as a string." }
+        peers: { type: array, items: { type: string } }
+        admission: { type: string, const: poa }
+        poa_enabled: { type: boolean }
+        min_fee: { $ref: "#/components/schemas/Atoms" }
+        atom: { type: integer, const: 100000000 }
+        token: { type: string, const: KVNC }
+        k: { type: integer, const: 3 }
+        subsidy: { $ref: "#/components/schemas/Atoms" }
+        founder_amount: { $ref: "#/components/schemas/Atoms" }
+        founder_seed: { type: integer }
+        finality_depth: { type: integer }
+        payload_pruning_depth: { type: integer }
+        block_pruning_depth: { type: integer }
+        native_minted: { $ref: "#/components/schemas/Atoms" }
+        total: { $ref: "#/components/schemas/Atoms" }
+        circulating: { $ref: "#/components/schemas/Atoms" }
+        burned: { $ref: "#/components/schemas/Atoms" }
+        max_supply:
+          allOf: [{ $ref: "#/components/schemas/Atoms" }]
+          description: RFC-006 hard cap. 9,020,000,000,000,000 atoms = 90.2M KVNC.
+        operator_wallet_address:
+          type: string
+          description: |
+            Address of the mesh node literally named `alpha`, or `""` when there
+            is no such node. Hard-coded name — see `x-kovanica-note`.
+        light_config: { $ref: "#/components/schemas/LightConfig" }
+
+    # ----------------------------------------------------------- /api/network
+
+    Network:
+      type: object
+      required: [network, genesis, tip, blue_score, peers]
+      properties:
+        network: { type: string }
+        genesis: { $ref: "#/components/schemas/Hex32" }
+        tip: { $ref: "#/components/schemas/Hex32" }
+        blue_score: { type: integer, minimum: 0 }
+        peers: { type: array, items: { type: string } }
+        authority_set:
+          oneOf:
+            - $ref: "#/components/schemas/AuthoritySetWithHash"
+            - type: "null"
+          description: Present only when proof-of-authority is enabled.
+        current_slot: { type: integer }
+        slot_duration_ms: { type: integer }
+        time_to_next_slot_ms: { type: integer }
+        next_slot_timestamp_ms: { type: integer }
+
+    # --------------------------------------------------------------- /api/p2p
+
+    P2p:
+      type: object
+      required: [path, listen, peers, bootstrap]
+      properties:
+        path: { type: string, const: tcp, description: "Plaintext TCP. There is no other transport." }
+        listen: { type: string }
+        peers:
+          type: array
+          items: { type: string }
+          description: Peer addresses this node will dial (plaintext TCP:9000).
+        bootstrap:
+          type: string
+          description: |
+            The network profile's default seed peers, **comma-joined into one
+            string** rather than an array. Split on `,` before use.
+
+    # ------------------------------------------------------------ /api/origins
+
+    Origins:
+      type: object
+      required: [pulses]
+      properties:
+        pulses:
+          type: array
+          description: Sorted by pulse count descending, then country code ascending.
+          items:
+            type: object
+            required: [iso3, pulses]
+            properties:
+              iso3: { type: string, minLength: 3, maxLength: 3 }
+              pulses: { type: integer, minimum: 0 }
+
+    # -------------------------------------------------------------- /api/state
+
+    MeshNode:
+      type: object
+      required: [name, blocks, tip, peers, mempool]
+      properties:
+        name: { type: string }
+        blocks: { type: integer }
+        tip: { $ref: "#/components/schemas/Hex32" }
+        peers: { type: array, items: { type: string } }
+        mempool: { type: integer }
+
+    MeshEvent:
+      type: object
+      required: [at, from, to, kind]
+      properties:
+        at: { type: integer }
+        from: { type: string }
+        to: { type: string }
+        kind: { type: string }
+
+    Mesh:
+      type: object
+      required: [now, queued, nodes, events]
+      properties:
+        now: { type: string }
+        queued: { type: integer }
+        nodes: { type: array, items: { $ref: "#/components/schemas/MeshNode" } }
+        events: { type: array, items: { $ref: "#/components/schemas/MeshEvent" } }
+
+    DagOutput:
+      type: object
+      required: [value, owner]
+      properties:
+        value: { $ref: "#/components/schemas/Atoms" }
+        owner: { type: string, description: Owner address hex or `kvnc…dag`, as the ledger renders it. }
+
+    DagTx:
+      type: object
+      required: [id, coinbase, inputs, outputs]
+      properties:
+        id: { $ref: "#/components/schemas/Hex32" }
+        coinbase: { type: boolean }
+        inputs:
+          type: integer
+          minimum: 0
+          description: Input **count**, not the input list. This route is a summary view.
+        outputs:
+          type: array
+          items: { $ref: "#/components/schemas/DagOutput" }
+
+    DagBlock:
+      type: object
+      required: [id, parents, selected_parent, work, timestamp_ms, nonce, blue_score, colour, txs]
+      properties:
+        id: { $ref: "#/components/schemas/Hex32" }
+        parents: { type: array, items: { $ref: "#/components/schemas/Hex32" } }
+        selected_parent:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        work: { type: integer }
+        timestamp_ms: { type: integer }
+        nonce: { type: integer }
+        blue_score: { type: integer }
+        colour: { $ref: "#/components/schemas/Colour" }
+        txs: { type: array, items: { $ref: "#/components/schemas/DagTx" } }
+
+    PendingTx:
+      type: object
+      required: [id, coinbase, fee, inputs, outputs]
+      properties:
+        id: { $ref: "#/components/schemas/Hex32" }
+        coinbase: { type: boolean }
+        fee: { $ref: "#/components/schemas/Atoms" }
+        inputs: { type: integer, minimum: 0 }
+        outputs: { type: array, items: { $ref: "#/components/schemas/DagOutput" } }
+
+    SelectedNode:
+      type: object
+      required: [blocks, tips, selected_tip, blue_score, blue_work, k, subsidy, issuance,
+                 halving_era, min_fee, genesis, supply, native_minted, circulating, burned,
+                 max_supply, token, decimals, authority_pk, atom, admission, poa_enabled,
+                 ui, utxos, chain_len, mempool, tx_count, dag, order, pending]
+      properties:
+        blocks: { type: integer }
+        tips: { type: array, items: { $ref: "#/components/schemas/Hex32" } }
+        selected_tip: { $ref: "#/components/schemas/Hex32" }
+        blue_score: { type: integer }
+        blue_work: { type: integer }
+        k: { type: integer, const: 3 }
+        subsidy: { $ref: "#/components/schemas/Atoms" }
+        issuance: { type: integer }
+        halving_era: { type: integer }
+        min_fee: { $ref: "#/components/schemas/Atoms" }
+        genesis: { $ref: "#/components/schemas/Hex32" }
+        supply: { type: integer }
+        native_minted: { $ref: "#/components/schemas/Atoms" }
+        circulating: { $ref: "#/components/schemas/Atoms" }
+        burned: { $ref: "#/components/schemas/Atoms" }
+        max_supply: { $ref: "#/components/schemas/Atoms" }
+        token: { type: string, const: KVNC }
+        decimals: { type: integer, const: 8 }
+        authority_pk:
+          oneOf: [{ type: string }, { type: "null" }]
+        atom: { type: integer, const: 100000000 }
+        admission: { type: string, const: poa }
+        poa_enabled: { type: boolean }
+        ui: { type: string, const: v5 }
+        utxos: { type: integer }
+        chain_len: { type: integer }
+        mempool: { type: integer }
+        tx_count: { type: integer }
+        dag: { type: array, items: { $ref: "#/components/schemas/DagBlock" } }
+        order: { type: array, items: { type: string } }
+        pending: { type: array, items: { $ref: "#/components/schemas/PendingTx" } }
+
+    SnapshotWallet:
+      type: object
+      required: [seed, address, balance]
+      properties:
+        seed:
+          type: string
+          description: |
+            Faucet wallet seed label. The node renders this as an identifier
+            string, never as raw key material.
+        address: { type: string }
+        balance: { $ref: "#/components/schemas/Atoms" }
+
+    State:
+      type: object
+      description: |
+        The whole node snapshot, and by far the largest response the API
+        produces. `/api/state` **mutates** the node's globally selected mesh node
+        as a side effect of a GET.
+      required:
+        [selected, producing, faucet, allow_reset, operator, network, listen,
+         peers, mesh, node, wallets]
+      properties:
+        selected: { type: string, description: "Name of the mesh node this snapshot came from." }
+        producing: { type: boolean }
+        faucet: { type: boolean, description: "Whether KOVANICA_FAUCET is enabled on this node." }
+        allow_reset: { type: boolean }
+        operator: { type: boolean }
+        network: { type: string }
+        listen: { type: string }
+        peers: { type: array, items: { type: string } }
+        mesh: { $ref: "#/components/schemas/Mesh" }
+        node: { $ref: "#/components/schemas/SelectedNode" }
+        wallets: { type: array, items: { $ref: "#/components/schemas/SnapshotWallet" } }
+
+    # ---------------------------------------------------------- /api/history
+
+    HistoryTx:
+      type: object
+      required: [block, tx, kind, delta, asset_id, asset_kind, metadata_hash, collection_id]
+      properties:
+        block: { $ref: "#/components/schemas/Hex32" }
+        tx: { $ref: "#/components/schemas/Hex32" }
+        kind: { type: string, enum: [coinbase, in, out] }
+        delta: { $ref: "#/components/schemas/I128Delta" }
+        asset_id: { $ref: "#/components/schemas/AssetId" }
+        asset_kind:
+          oneOf: [{ $ref: "#/components/schemas/AssetKind" }, { type: "null" }]
+        metadata_hash:
+          oneOf: [{ type: string }, { type: "null" }]
+        collection_id:
+          oneOf: [{ type: string }, { type: "null" }]
+
+    History:
+      type: object
+      description: |
+        Ledger events for one address, `limit`/`offset` paginated. `total` is the
+        count *before* pagination. Errors from this route are `text/plain`.
+      required: [address, balance, balances, txs, limit, offset, total]
+      properties:
+        address: { $ref: "#/components/schemas/AddressHex" }
+        balance: { $ref: "#/components/schemas/Atoms" }
+        balances:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/Atoms" }
+          description: Per-asset balances. The key is the asset id, or `KVNC` for native.
+        txs: { type: array, items: { $ref: "#/components/schemas/HistoryTx" } }
+        limit: { type: integer }
+        offset: { type: integer }
+        total: { type: integer }
+
+    # ------------------------------------------------------------ /api/utxos
+
+    Utxo:
+      type: object
+      required: [tx, index, value, asset_id, kind, metadata_hash, collection_id]
+      properties:
+        tx: { $ref: "#/components/schemas/Hex32" }
+        index: { type: integer, minimum: 0 }
+        value: { $ref: "#/components/schemas/Atoms" }
+        asset_id: { $ref: "#/components/schemas/AssetId" }
+        kind:
+          oneOf: [{ $ref: "#/components/schemas/AssetKind" }, { type: "null" }]
+        metadata_hash:
+          oneOf: [{ type: string }, { type: "null" }]
+        collection_id:
+          oneOf: [{ type: string }, { type: "null" }]
+
+    Utxos:
+      type: object
+      required: [address, balance, balances, utxos, limit, offset, total]
+      properties:
+        address: { $ref: "#/components/schemas/AddressHex" }
+        balance: { $ref: "#/components/schemas/Atoms" }
+        balances:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/Atoms" }
+        utxos: { type: array, items: { $ref: "#/components/schemas/Utxo" } }
+        limit: { type: integer }
+        offset: { type: integer }
+        total: { type: integer }
+
+    # -------------------------------------------------- /api/block/{block_id}
+
+    BlockDetail:
+      type: object
+      required:
+        [id, prev_hash, merkle_root, height, timestamp_ms, nonce, blue_score,
+         chain_blue_work, work, parents, children, txs, kind, colour,
+         confirming_status, authority_sig, slot, active_authority]
+      properties:
+        id: { $ref: "#/components/schemas/Hex32" }
+        prev_hash: { $ref: "#/components/schemas/Hex32" }
+        merkle_root: { $ref: "#/components/schemas/Hex32" }
+        height: { type: integer, minimum: 0 }
+        timestamp_ms: { type: integer }
+        nonce: { type: integer }
+        blue_score: { type: integer }
+        chain_blue_work: { type: integer }
+        work: { type: integer }
+        parents: { type: array, items: { $ref: "#/components/schemas/Hex32" } }
+        children: { type: array, items: { $ref: "#/components/schemas/Hex32" } }
+        txs:
+          type: array
+          items: { $ref: "#/components/schemas/Hex32" }
+          description: Tx ids only — fetch each with `/api/tx/{tx_id}`.
+        kind: { $ref: "#/components/schemas/BlockKind" }
+        colour: { $ref: "#/components/schemas/Colour" }
+        confirming_status: { $ref: "#/components/schemas/ConfirmingStatus" }
+        authority_sig:
+          oneOf: [{ type: string }, { type: "null" }]
+        slot:
+          oneOf: [{ type: string }, { type: "null" }]
+          description: Present only under proof-of-authority; rendered as a string.
+        active_authority:
+          oneOf: [{ type: string }, { type: "null" }]
+
+    # ------------------------------------------------------ /api/tx/{tx_id}
+
+    TxInput:
+      type: object
+      required: [tx, index, prev_owner, value]
+      properties:
+        tx: { $ref: "#/components/schemas/Hex32" }
+        index: { type: integer, minimum: 0 }
+        prev_owner:
+          oneOf: [{ type: string }, { type: "null" }]
+          description: Owner of the spent output, or null for a coinbase input.
+        value: { $ref: "#/components/schemas/Atoms" }
+
+    TxOutput:
+      type: object
+      required: [value, owner]
+      properties:
+        value: { $ref: "#/components/schemas/Atoms" }
+        owner: { $ref: "#/components/schemas/AddressHex" }
+      description: |
+        This route emits **no `asset_id`** on outputs, unlike `/api/utxos`.
+        Native-only view.
+
+    TxDetail:
+      type: object
+      description: |
+        One transaction, confirmed or in the mempool. Mempool entries carry
+        `confirmed: false`, `confirmations: 0`, and null `block`/`blue_score`.
+      required:
+        [id, coinbase, confirmed, confirmations, block, blue_score, amount, fee,
+         addresses, inputs, outputs, size]
+      properties:
+        id: { $ref: "#/components/schemas/Hex32" }
+        coinbase: { type: boolean }
+        confirmed: { type: boolean }
+        confirmations: { type: integer, minimum: 0 }
+        block:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        blue_score:
+          oneOf: [{ type: integer }, { type: "null" }]
+        amount: { $ref: "#/components/schemas/Atoms" }
+        fee: { $ref: "#/components/schemas/Atoms" }
+        addresses:
+          type: array
+          items: { $ref: "#/components/schemas/AddressHex" }
+          description: Sorted unique owners touched by this tx.
+        inputs: { type: array, items: { $ref: "#/components/schemas/TxInput" } }
+        outputs: { type: array, items: { $ref: "#/components/schemas/TxOutput" } }
+        size: { type: integer, minimum: 0, description: Encoded size in bytes. }
+
+    # ------------------------------------------------ /api/address/{address}
+
+    AddressDetail:
+      type: object
+      description: |
+        Address view with `page`/`per_page` pagination. This is a **different
+        pagination model** from `/api/history` and `/api/utxos` (which use
+        `limit`/`offset`/`total`), and it carries no `balances` map and no
+        `asset_id` on its entries.
+      required: [address, balance, page, per_page, total, pages, txs]
+      properties:
+        address: { $ref: "#/components/schemas/AddressHex" }
+        balance: { $ref: "#/components/schemas/Atoms" }
+        page: { type: integer, minimum: 1 }
+        per_page: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer }
+        pages: { type: integer, description: ceil(total / per_page). }
+        txs:
+          type: array
+          items:
+            type: object
+            required: [tx, block, kind, amount]
+            properties:
+              tx: { $ref: "#/components/schemas/Hex32" }
+              block: { $ref: "#/components/schemas/Hex32" }
+              kind: { type: string, enum: [in, out] }
+              amount: { $ref: "#/components/schemas/Atoms" }
+
+    # ------------------------------------------------------------- assets
+
+    NftDetail:
+      type: object
+      description: "The same key set is returned for `/api/rwa/{asset_id}` with `kind: \"rwa\"`."
+      required:
+        [asset_id, kind, max_supply, minted, metadata_hash, collection_id,
+         creator, owner, owner_tx, owner_index]
+      properties:
+        asset_id: { $ref: "#/components/schemas/Hex32" }
+        kind: { type: string, const: nft }
+        max_supply: { type: integer }
+        minted: { type: integer }
+        metadata_hash:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        collection_id:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        creator:
+          oneOf: [{ type: string }, { type: "null" }]
+        owner:
+          oneOf: [{ $ref: "#/components/schemas/KvncAddress" }, { type: "null" }]
+        owner_tx:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        owner_index:
+          oneOf: [{ type: integer }, { type: "null" }]
+
+    RwaDetail:
+      type: object
+      required:
+        [asset_id, kind, max_supply, minted, metadata_hash, collection_id,
+         creator, owner, owner_tx, owner_index]
+      properties:
+        asset_id: { $ref: "#/components/schemas/Hex32" }
+        kind: { type: string, const: rwa }
+        max_supply: { type: integer }
+        minted: { type: integer }
+        metadata_hash:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        collection_id:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        creator:
+          oneOf: [{ type: string }, { type: "null" }]
+        owner:
+          oneOf: [{ $ref: "#/components/schemas/KvncAddress" }, { type: "null" }]
+        owner_tx:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        owner_index:
+          oneOf: [{ type: integer }, { type: "null" }]
+
+    CollectionDetail:
+      type: object
+      required: [collection_id, assets]
+      properties:
+        collection_id: { $ref: "#/components/schemas/Hex32" }
+        assets:
+          type: array
+          items:
+            type: object
+            required: [asset_id, metadata_hash, owner_address]
+            properties:
+              asset_id: { $ref: "#/components/schemas/Hex32" }
+              metadata_hash:
+                oneOf: [{ type: string }, { type: "null" }]
+              owner_address:
+                oneOf: [{ $ref: "#/components/schemas/KvncAddress" }, { type: "null" }]
+
+    DexTokens:
+      type: object
+      required: [tokens]
+      properties:
+        tokens:
+          type: array
+          description: Fungible non-native tokens only — NFTs and native KVNC are filtered out.
+          items:
+            type: object
+            required: [asset_id, total_supply, metadata_hash, holder]
+            properties:
+              asset_id: { $ref: "#/components/schemas/Hex32" }
+              total_supply: { type: integer }
+              metadata_hash:
+                oneOf: [{ type: string }, { type: "null" }]
+              holder:
+                oneOf: [{ $ref: "#/components/schemas/KvncAddress" }, { type: "null" }]
+
+    TokenDetail:
+      type: object
+      required:
+        [asset_id, kind, max_supply, minted, total_supply, metadata_hash,
+         collection_id, creator, holders]
+      properties:
+        asset_id: { $ref: "#/components/schemas/Hex32" }
+        kind: { type: string, const: token }
+        max_supply: { type: integer }
+        minted: { type: integer }
+        total_supply: { type: integer }
+        metadata_hash:
+          oneOf: [{ type: string }, { type: "null" }]
+        collection_id:
+          oneOf: [{ $ref: "#/components/schemas/Hex32" }, { type: "null" }]
+        creator:
+          oneOf: [{ type: string }, { type: "null" }]
+        holders:
+          type: array
+          description: Sorted by balance descending. Unpaginated.
+          items:
+            type: object
+            required: [address, balance]
+            properties:
+              address: { $ref: "#/components/schemas/KvncAddress" }
+              balance: { $ref: "#/components/schemas/Atoms" }
+
+    RwaDerive:
+      type: object
+      required: [asset_id, asset_id_kvnc]
+      properties:
+        asset_id: { $ref: "#/components/schemas/Hex32" }
+        asset_id_kvnc:
+          type: string
+          description: The derived id wrapped as an address — literally `kvnc<hex>dag`, not base58.
+
+    # ---------------------------------------------------------- fee estimate
+
+    FeeEstimateGet:
+      type: object
+      description: |
+        The **GET** fee estimate. A single live rate for the current mempool.
+        This is not the same shape as `POST /api/fee_estimate`.
+      required: [fee_rate, unit, mempool, bytes]
+      properties:
+        fee_rate: { $ref: "#/components/schemas/Atoms" }
+        unit: { type: string, const: atoms/byte }
+        mempool: { type: integer, description: Pending transaction count. }
+        bytes: { type: integer, description: Total pending size in bytes. }
+
+    FeeEstimatePost:
+      type: object
+      description: The **POST** fee estimate — a slow/normal/fast triple. The `amount` query param is accepted but ignored.
+      required: [ok, slow, normal, fast]
+      properties:
+        ok: { type: boolean, const: true }
+        slow: { $ref: "#/components/schemas/Atoms" }
+        normal: { $ref: "#/components/schemas/Atoms" }
+        fast: { $ref: "#/components/schemas/Atoms" }
+
+    # --------------------------------------------------------- wallet / tx
+
+    Outpoint:
+      type: object
+      required: [tx, index]
+      properties:
+        tx: { $ref: "#/components/schemas/Hex32" }
+        index: { type: integer, minimum: 0 }
+        asset_id:
+          type: string
+          description: |
+            Present on `POST /api/prepare` but **absent** on every other
+            prepare route. Do not rely on it being present.
+
+    Prepared:
+      type: object
+      description: |
+        An unsigned transaction plus the sighash to sign. Sign the sighash with
+        the account's Ed25519 key offline and submit the result. This is the
+        documented prepare → sign → submit flow; it never leaves the node with a
+        private key.
+      required: [ok, sighash, value, fee, asset_id, outpoint]
+      properties:
+        ok: { type: boolean, const: true }
+        sighash: { $ref: "#/components/schemas/Hex32" }
+        value: { $ref: "#/components/schemas/Atoms" }
+        fee: { $ref: "#/components/schemas/Atoms" }
+        fee_asset_id:
+          type: string
+          description: Always `KVNC` here — fees are paid in native KVNC even for a KVP-102 asset transfer.
+        change: { $ref: "#/components/schemas/Atoms" }
+        asset_id: { $ref: "#/components/schemas/AssetId" }
+        outpoint: { $ref: "#/components/schemas/Outpoint" }
+
+    PreparedHtlc:
+      type: object
+      description: |
+        An unsigned HTLC output with its script and address. `outpoint` here has
+        **no `asset_id`**, unlike `POST /api/prepare`.
+      required: [ok, sighash, htlc_script, htlc_address, value, fee, outpoint]
+      properties:
+        ok: { type: boolean, const: true }
+        sighash: { $ref: "#/components/schemas/Hex32" }
+        htlc_script: { type: string, description: Hex-encoded HTLC script. }
+        htlc_address: { $ref: "#/components/schemas/KvncAddress" }
+        value: { $ref: "#/components/schemas/Atoms" }
+        fee: { $ref: "#/components/schemas/Atoms" }
+        change: { $ref: "#/components/schemas/Atoms" }
+        asset_id: { $ref: "#/components/schemas/AssetId" }
+        outpoint: { $ref: "#/components/schemas/Outpoint" }
+
+    PreparedSpend:
+      type: object
+      description: |
+        An unsigned spend against an existing outpoint, used by the HTLC redeem
+        and refund steps.
+      required: [ok, sighash, value, fee, outpoint]
+      properties:
+        ok: { type: boolean, const: true }
+        sighash: { $ref: "#/components/schemas/Hex32" }
+        value: { $ref: "#/components/schemas/Atoms" }
+        fee: { $ref: "#/components/schemas/Atoms" }
+        outpoint: { $ref: "#/components/schemas/Outpoint" }
+
+    PreparedAsset:
+      type: object
+      description: |
+        An unsigned KVP-102 asset create or mint. `outpoint` has no
+        `asset_id` here.
+      required: [ok, sighash, asset_id, value, fee, outpoint]
+      properties:
+        ok: { type: boolean, const: true }
+        sighash: { $ref: "#/components/schemas/Hex32" }
+        asset_id: { $ref: "#/components/schemas/AssetId" }
+        value: { $ref: "#/components/schemas/Atoms" }
+        fee: { $ref: "#/components/schemas/Atoms" }
+        change: { $ref: "#/components/schemas/Atoms" }
+        outpoint: { $ref: "#/components/schemas/Outpoint" }
+
+    AirdropClaim:
+      type: object
+      description: Unsigned airdrop claim, proven against a Merkle campaign.
+      required: [ok, sighash, campaign_id, claimant, amount, asset_id]
+      properties:
+        ok: { type: boolean, const: true }
+        sighash: { $ref: "#/components/schemas/Hex32" }
+        campaign_id: { $ref: "#/components/schemas/Hex32" }
+        claimant: { $ref: "#/components/schemas/KvncAddress" }
+        amount: { $ref: "#/components/schemas/Atoms" }
+        asset_id: { $ref: "#/components/schemas/AssetId" }
+
+    OkOnly:
+      type: object
+      description: |
+        The bare acknowledgement the operator routes return. The node does not
+        echo back a block or transaction id on these, so a `200` is the only
+        signal that the action took effect.
+      required: [ok]
+      properties:
+        ok: { type: boolean, const: true }
+
+    Submitted:
+      type: object
+      required: [ok, tx]
+      properties:
+        ok: { type: boolean, const: true }
+        tx:
+          type: string
+          description: |
+            The transaction id. Most submit routes render it with the ledger's
+            `to_string()` form; `POST /api/multisig/submit` returns raw
+            hex-encoded bytes under the key `tx_id_hex` instead. Normalise both.
+    SubmitBlockJson:
+        type: object
+        description: |
+          JSON form of a block submission. The node reads these fields by hand
+          out of the raw body, so unknown fields are ignored and there are no
+          defaults beyond what is written here.
+        required: [parents, work, timestamp_ms, nonce, payload]
+        properties:
+          parents:
+            type: array
+            minItems: 1
+            description: Parent block ids as 32-byte hex. Must not be empty.
+            items: { $ref: "#/components/schemas/Hex32" }
+          work:
+            oneOf:
+              - { type: integer }
+              - { type: string }
+              - { type: number }
+            description: >-
+              Chain work. The node's lenient parser accepts a number, a string or
+              a float here, so it must be sent as a decimal string when it
+              exceeds 2^53.
+          timestamp_ms:
+            oneOf:
+              - { type: integer }
+              - { type: string }
+            description: Block timestamp in milliseconds, same lenient parsing.
+          nonce:
+            oneOf:
+              - { type: integer }
+              - { type: string }
+            description: Proof-of-work nonce, same lenient parsing.
+          payload:
+            type: string
+            description: Hex-encoded block payload.
+  
+  # ---------------------------------------------------------------------
+  # Reusable responses.
+  #
+  # The node encodes errors three different ways, so almost every operation
+  # can answer with more than one shape. These exist so that a consumer only
+  # has to learn the three encodings once instead of per operation.
+  # ---------------------------------------------------------------------
+  responses:
+    ErrorJson:
+      description: |
+        `{"ok":false,"error":"<message>"}`. The default error encoding.
+        `message` is a human-readable string; only the ones documented per
+        operation are stable.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    ErrorText:
+      description: |
+        The bare message as `text/plain; charset=utf-8`, with no JSON
+        wrapper. Used by every `POST /api/{action}` route, by
+        `GET /api/history` and by `GET /api/utxos`.
+      content:
+        text/plain:
+          schema:
+            $ref: "#/components/schemas/PlainTextError"
+    NotFoundText:
+      description: |
+        The catch-all body `not found`. Returned when the path matches no arm,
+        when the path is a POST-only route reached with GET, and — because the
+        `let-else` guards simply fall through — when no mesh node is selected
+        for a route that needs one.
+      content:
+        text/plain:
+          schema:
+            $ref: "#/components/schemas/NotFound"
+    RateLimited:
+      description: |
+        Per-IP token bucket exhausted before routing
+        (`KOVANICA_RATE_LIMIT`, default 10/s; `KOVANICA_RATE_BURST`, default 60).
+        The status line reads `HTTP/1.1 429 Not Found` because `respond()` has
+        no 429 reason phrase.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  # ---------------------------------------------------------------------
+  # Reusable parameters.
+  # ---------------------------------------------------------------------
+  parameters:
+    node:
+      name: node
+      in: query
+      required: false
+      description: |
+        Mesh node name to answer from; defaults to the node's currently
+        selected one. Ignored by `GET /api/block/{block_id}` and
+        `GET /api/tx/{tx_id}`, which always read the selected node.
+        An unknown name is a `400`, not a `404`.
+      schema:
+        type: string
+    limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum rows. Default 100, clamped to 1000.
+      schema:
+        type: integer
+        minimum: 0
+        maximum: 1000
+        default: 100
+    offset:
+      name: offset
+      in: query
+      required: false
+      description: Rows to skip. Default 0.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    amount:
+      name: amount
+      in: query
+      required: false
+      description: Amount in atoms. Default 0.
+      schema:
+        $ref: "#/components/schemas/Atoms"
+    assetId:
+      name: asset_id
+      in: query
+      required: false
+      description: |
+        Asset id, 64 hex chars. Absent, empty, or the case-insensitive string
+        `KVNC` all mean the native asset.
+      schema:
+        $ref: "#/components/schemas/AssetId"
+    addressQuery:
+      name: address
+      in: query
+      required: true
+      description: Wallet address as `kvnc…dag` or 64-hex.
+      schema:
+        $ref: "#/components/schemas/Address"
+    blockIdPath:
+      name: block_id
+      in: path
+      required: true
+      description: |
+        32-byte block id, 64 hex chars. The segment is not URL-decoded, so a
+        trailing slash yields an empty id and a `400`.
+      schema:
+        $ref: "#/components/schemas/Hex32"
+    txIdPath:
+      name: tx_id
+      in: path
+      required: true
+      description: |
+        32-byte transaction id, 64 hex chars. Not URL-decoded; a trailing
+        slash yields an empty id and a `400`.
+      schema:
+        $ref: "#/components/schemas/Hex32"
+    addressPath:
+      name: address
+      in: path
+      required: true
+      description: Wallet address as `kvnc…dag` or 64-hex.
+      schema:
+        $ref: "#/components/schemas/Address"
+    assetIdPath:
+      name: asset_id
+      in: path
+      required: true
+      description: 32-byte asset id, 64 hex chars.
+      schema:
+        $ref: "#/components/schemas/Hex32"
+    collectionIdPath:
+      name: collection_id
+      in: path
+      required: true
+      description: 32-byte collection id, 64 hex chars.
+      schema:
+        $ref: "#/components/schemas/Hex32"
+    signature:
+      name: sig
+      in: query
+      required: true
+      description: Ed25519 signature over the sighash, 128 hex chars.
+      schema:
+        $ref: "#/components/schemas/SignatureHex"
+
+# =========================================================================
+# GET routes
+#
+# Every one of them can also answer with the catch-all `404 not found`, so
+# that response is declared once per operation rather than left implicit.
+# =========================================================================
+paths:
+  /api/bootstrap:
+    get:
+      operationId: getBootstrap
+      tags: [node]
+      summary: Genesis and supply parameters.
+      description: |
+        Never fails. With no mesh node selected the supply fields fall back to
+        `(0, 0, 0, 0, MAX_SUPPLY)`, so treat a zero `native_minted` on a fresh
+        node as "no node", not "nothing minted".
+
+        `operator_wallet_address` is read from the mesh node literally named
+        `alpha` and is `""` when there is none.
+      security: []
+      responses:
+        "200":
+          description: Node parameters.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Bootstrap" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/head:
+    get:
+      operationId: getHead
+      tags: [chain]
+      summary: Current tip, consensus parameters and the PoA authority set.
+      description: |
+        The cheapest call that answers "is the node alive and what is the
+        tip". `authority_set` is `null` when proof-of-authority is off.
+
+        Note `authority_set` here has no `hash` key; `GET /api/network`
+        includes one. Do not reuse the type blindly.
+      security: []
+      responses:
+        "200":
+          description: Head state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Head" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/network:
+    get:
+      operationId: getNetwork
+      tags: [chain]
+      summary: Network identity, tip and PoA slot schedule.
+      description: |
+        `authority_set`, `current_slot`, `slot_duration_ms`,
+        `time_to_next_slot_ms` and `next_slot_timestamp_ms` are appended only
+        when proof-of-authority is enabled; the object is smaller otherwise.
+      security: []
+      responses:
+        "200":
+          description: Network state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Network" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/state:
+    get:
+      operationId: getState
+      tags: [node]
+      summary: "Full operator snapshot: mesh topology, DAG window and wallets."
+      description: |
+        The largest response on the node — it serialises a DAG window, the
+        mempool, every known wallet and the whole mesh.
+
+        Two things to know before calling it:
+        * it **mutates** the node's globally selected mesh node as a side
+          effect of a GET (`?node=`), so it is a control-plane call and not
+          safe to poll from several browser tabs;
+        * it echoes the `faucet`, `operator` and `allow_reset` flags, so it
+          leaks the node's configuration to anyone who can reach the port.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Operator snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/State" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/p2p:
+    get:
+      operationId: getP2p
+      tags: [node]
+      summary: Listening address, dialable peers and the configured bootstrap seeds.
+      description: |
+        `bootstrap` is a **comma-joined string**, not an array, and it is the
+        node's configured default seed list — not the peers it is actually
+        connected to. `peers` is the dialable set.
+      security: []
+      responses:
+        "200":
+          description: P2P status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/P2p" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/origins:
+    get:
+      operationId: getOrigins
+      tags: [node]
+      summary: Observed client geolocations, aggregated by ISO country code.
+      description: |
+        Sorted by pulse count descending, then by country code ascending.
+        Persisted on the node, so the list outlives a restart.
+      security: []
+      responses:
+        "200":
+          description: Origin pulses.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Origins" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/history:
+    get:
+      operationId: getHistory
+      tags: [ledger]
+      summary: Ledger history for an address, with its multi-asset balances.
+      description: |
+        `kind` is `coinbase`, `in` or `out`. `delta` is signed: negative for
+        an outgoing event.
+
+        Errors on this route are **`text/plain`**, not JSON, which is why the
+        error responses below are not `ErrorJson`.
+
+        The server scans the linearised chain with no index, so cost grows
+        with chain length — page with `limit`/`offset` rather than asking for
+        everything.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/addressQuery"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: History page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/History" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/utxos:
+    get:
+      operationId: getUtxos
+      tags: [ledger]
+      summary: Spendable outputs for an address, with its multi-asset balances.
+      description: |
+        Unlike `GET /api/history`, `outputs` in `GET /api/tx/{tx_id}` carry no
+        `asset_id`; here they do, so this is the endpoint to build a wallet's
+        spendable set from.
+
+        Errors on this route are **`text/plain`**, not JSON.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/addressQuery"
+        - $ref: "#/components/parameters/limit"
+        - $ref: "#/components/parameters/offset"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: UTXO page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Utxos" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/block/{block_id}:
+    get:
+      operationId: getBlock
+      tags: [chain]
+      summary: One block with its parents, children and transaction ids.
+      description: |
+        `?node=` is **silently ignored** here; the selected node always answers.
+
+        `kind` is `poa` for a proof-of-authority block and `unsigned` for a
+        proof-of-work one — the older `pow` spelling is never emitted.
+        `confirming_status` is one of `tip`, `confirmed`, `accepted` or
+        `pending`.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/blockIdPath"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Block detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BlockDetail" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/ErrorJson" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/tx/{tx_id}:
+    get:
+      operationId: getTx
+      tags: [chain]
+      summary: One transaction, mempool or confirmed.
+      description: |
+        One shape, two states: a mempool transaction has `confirmed: false`,
+        `confirmations: 0` and null `block`/`blue_score`; a confirmed one fills
+        both in.
+
+        `?node=` is **silently ignored** here, as on `GET /api/block/{block_id}`.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/txIdPath"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Transaction detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TxDetail" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/ErrorJson" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/address/{address}:
+    get:
+      operationId: getAddress
+      tags: [ledger]
+      summary: Address ledger, paged by page number.
+      description: |
+        This route uses the **other** pagination model: `page`/`per_page`/
+        `pages`, not `limit`/`offset`/`total` as on `GET /api/history` and
+        `GET /api/utxos`. It also returns no `balances` map and no `asset_id`
+        per row, so it cannot answer a multi-asset wallet question — use
+        `GET /api/utxos` for that.
+
+        `kind` is `in` or `out`; there is no `coinbase` row here.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/addressPath"
+        - name: page
+          in: query
+          required: false
+          description: 1-based page number. Default 1, clamped to at least 1.
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: per_page
+          in: query
+          required: false
+          description: Rows per page. Default 20, clamped to 1..100.
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Address page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AddressDetail" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/ErrorJson" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/nft/{asset_id}:
+    get:
+      operationId: getNft
+      tags: [assets]
+      summary: "NFT state: supply, metadata hash, collection and current owner."
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/assetIdPath"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: NFT detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NftDetail" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/ErrorJson" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/rwa/{asset_id}:
+    get:
+      operationId: getRwa
+      tags: [assets]
+      summary: "RWA state — the same keys as `GET /api/nft/{asset_id}` with `kind: \"rwa\"`."
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/assetIdPath"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: RWA detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RwaDetail" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/ErrorJson" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/collection/{collection_id}:
+    get:
+      operationId: getCollection
+      tags: [assets]
+      summary: Every asset in an NFT collection, with owners and metadata hashes.
+      description: Unpaginated — a collection with many assets returns them all.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/collectionIdPath"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Collection detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CollectionDetail" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/ErrorJson" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/token/{asset_id}:
+    get:
+      operationId: getToken
+      tags: [assets]
+      summary: Fungible token state and every holder's balance.
+      description: |
+        `holders` is sorted by balance descending and is **unpaginated**.
+
+        Native KVNC is not a token here: the all-zero asset id answers with
+        "use /api/head for native KVNC info", and NFTs/RWAs are rejected.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/assetIdPath"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Token detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TokenDetail" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/ErrorJson" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/dex/tokens:
+    get:
+      operationId: getDexTokens
+      tags: [assets]
+      summary: Fungible tokens available for trading, optionally filtered by search text.
+      description: |
+        `search` is matched as a lowercased substring against
+        **`metadata_hash` only** — not against a name or ticker, because the
+        ledger does not store one. A search that looks like a ticker therefore
+        returns nothing.
+
+        Native KVNC, NFTs and non-`Fungible` kinds are filtered out.
+      security: []
+      parameters:
+        - name: search
+          in: query
+          required: false
+          description: Lowercased substring matched against the metadata hash hex.
+          schema: { type: string }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Matching tokens.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DexTokens" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/blocks:
+    get:
+      operationId: exportBlocks
+      tags: [sync]
+      summary: Bulk chain export as the gossip wire format.
+      description: |
+        **Binary**, not JSON: the body is the same record framing the node
+        gossips on TCP 9000, which is also what `POST /api/mine/submit` accepts
+        with an `application/octet-stream` body. Use it for node-to-node
+        backfill, not for browser consumption.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: |
+            32-byte hex block id to export from. Absent exports the whole
+            chain. A bad value is a `400`.
+          schema: { $ref: "#/components/schemas/Hex32" }
+      responses:
+        "200":
+          description: Wire-format block records.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/light_sync:
+    get:
+      operationId: lightSync
+      tags: [sync]
+      summary: SPV headers plus per-block transaction filters.
+      description: |
+        **Binary** blob, format `KVLS` v1: a 4-byte magic, a version byte and
+        a big-endian `u32` count, then per block a 160-byte header followed by a
+        Golomb-Rice transaction filter with `k = 8`.
+
+        This route **never** returns a 4xx. An unknown, malformed or
+        off-chain `from` silently falls back to the full blob, so a client that
+        sees a large payload should assume the incremental fast path failed
+        rather than treating it as a protocol error.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: 32-byte hex block id to start strictly after.
+          schema: { $ref: "#/components/schemas/Hex32" }
+      responses:
+        "200":
+          description: "`KVLS` v1 light-client blob."
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/light_proof:
+    get:
+      operationId: lightProof
+      tags: [sync]
+      summary: Merkle inclusion proof for one transaction in one block.
+      description: |
+        **Binary**: the 32-byte transaction id, the 32-byte merkle root, a
+        big-endian `u32` path length, that many 32-byte hashes, then the
+        big-endian `u64` index and transaction count.
+
+        Both `block` and `tx` are required and must be 32-byte hex. This is the
+        primitive behind a light client proving inclusion without the block
+        body.
+      security: []
+      parameters:
+        - name: block
+          in: query
+          required: true
+          description: 32-byte hex block id.
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: tx
+          in: query
+          required: true
+          description: 32-byte hex transaction id.
+          schema: { $ref: "#/components/schemas/Hex32" }
+      responses:
+        "200":
+          description: Merkle proof.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/ErrorJson" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/fee_estimate:
+    get:
+      operationId: getFeeEstimate
+      tags: [chain]
+      summary: Live fee rate from the current mempool pressure.
+      description: |
+        **This is not the same route as `POST /api/fee_estimate`.** The GET
+        form returns a single rate derived from mempool state
+        (`fee_rate`, `mempool`, `bytes`); the POST form returns the
+        `slow`/`normal`/`fast` triple. Pick the one that matches the shape you
+        need — they are separate endpoints that happen to share a path.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Live fee rate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeeEstimateGet" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+    post:
+      operationId: postFeeEstimate
+      tags: [chain]
+      summary: Tiered fee estimate for a transaction size.
+      description: |
+        Returns `slow`, `normal` and `fast` rates for the given `amount`.
+
+        `amount` is accepted but **ignored** by the estimator — it is a
+        placeholder, so do not expect size-accurate output from it.
+      security: []
+      parameters:
+        - name: amount
+          in: query
+          required: false
+          description: Accepted and ignored.
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Tiered fee estimate.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeeEstimatePost" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /metrics:
+    get:
+      operationId: getMetrics
+      tags: [node]
+      summary: Prometheus exposition for this node.
+      description: |
+        Refreshes the peer-count and supply gauges before rendering.
+
+        A **second, independent** listener serves the same payload on
+        `KOVANICA_METRICS_LISTEN` (default `0.0.0.0:9090`, disabled by the
+        values `off`, `none`, `0` or `disabled`). That listener ignores the
+        request path and always answers `200`, so scrape it directly and
+        prefer it for a scrape job.
+      security: []
+      responses:
+        "200":
+          description: Prometheus text exposition.
+          content:
+            text/plain:
+              schema: { type: string }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /ws:
+    get:
+      operationId: websocketEvents
+      tags: [node]
+      summary: WebSocket upgrade for live block, tx, tip, peer and state events.
+      description: |
+        Hand-rolled WebSocket, not described by OpenAPI — the `101` response
+        below stands for "upgrade succeeded", and this entry exists so the
+        surface is discoverable and gated on the documented upgrade header.
+
+        Requires `Upgrade: websocket`, otherwise the node answers with its
+        normal HTTP handling and this path is simply unknown (`404 not
+        found`).
+
+        Server-to-client frames are JSON objects tagged by `type`: `block`
+        (`id`, `blue_score`), `tx` (`id`, `from`, `to`, `amount`), `tip`
+        (`id`, `blue_score`), `peer` (`addr`, `connected`) and `state` (the
+        full snapshot object). The server only ever **responds** to client
+        frames that are ping — there are no client-to-server application
+        messages, so this is a read-only feed.
+      security: []
+      responses:
+        "101":
+          description: |
+            Switching protocols. The node emits `Sec-WebSocket-Accept` and
+            then streams tagged JSON frames.
+          headers:
+            Sec-WebSocket-Accept:
+              required: true
+              schema: { type: string }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/rwa/derive:
+    post:
+      operationId: deriveRwaAssetId
+      tags: [assets]
+      summary: Derive an RWA asset id from its issuer, class and id.
+      description: |
+        Pure computation — no ledger read, no signing, always `200` when the
+        inputs parse.
+
+        **This route reads query parameters and ignores the request body.**
+        The asset id is `SHA256("KVP106-RWA" || issuer32 || class || id ||
+        version)`.
+
+        `asset_id_kvnc` is literally `kvnc` + the hex asset id + `dag` — it is
+        **not** base58 like a real address, so do not feed it to an address
+        parser.
+      security: []
+      parameters:
+        - name: issuer
+          in: query
+          required: true
+          description: Issuing entity public key, 32 bytes (64 hex chars).
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: class
+          in: query
+          required: true
+          description: Instrument class, for example a bond or share series.
+          schema: { type: string }
+        - name: id
+          in: query
+          required: true
+          description: Instrument identifier inside the class.
+          schema: { type: string }
+        - name: version
+          in: query
+          required: false
+          description: Version byte; defaults to 1.
+          schema: { type: integer, minimum: 0, maximum: 255, default: 1 }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Derived asset id.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RwaDerive" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/mine/submit:
+    post:
+      operationId: submitBlock
+      tags: [chain]
+      summary: Submit a mined block, as JSON or as the gossip wire format.
+      description: |
+        **The request body format is chosen by `Content-Type`.** With
+        `application/octet-stream` the body is the same record framing that
+        `GET /api/blocks` exports; with any other type (including none) the
+        node reads the JSON body described by `SubmitBlockJson`.
+
+        There is **no proof-of-work or operator pre-check here** — admission is
+        delegated to the node's block receive path, which applies the PoA
+        authority-signature and future-drift rules. `200` means accepted, not
+        mined.
+
+        The JSON path carries no `authority_sig`; the node sets it to none.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SubmitBlockJson" }
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Block accepted into the DAG.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, block]
+                properties:
+                  ok: { type: boolean, const: true }
+                  block: { $ref: "#/components/schemas/Hex32" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/submit_tx:
+    post:
+      operationId: submitSignedTx
+      tags: [wallet]
+      summary: Submit an already-signed transaction by hex.
+      description: |
+        The general submit path for a signed transaction — multisig, hardware
+        wallet, or a client that signs locally and posts the result. **No key
+        material is sent to the node**, only the encoded transaction.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tx_hex]
+              properties:
+                tx_hex: { type: string, description: Hex-encoded transaction. }
+      responses:
+        "200":
+          description: Transaction accepted into the mempool.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/multisig/create:
+    post:
+      operationId: multisigCreate
+      tags: [multisig]
+      summary: Build the P2SH redeem script and address for an M-of-N set.
+      description: |
+        `threshold` must be between 1 and 16 inclusive. Returns the pay-to-
+        script-hash address to fund plus the redeem script that signers need
+        in order to spend from it.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [threshold, pubkeys_hex]
+              properties:
+                threshold:
+                  type: integer
+                  minimum: 1
+                  maximum: 16
+                  description: Signatures required out of the key set.
+                pubkeys_hex:
+                  type: array
+                  minItems: 1
+                  items: { $ref: "#/components/schemas/Hex32" }
+      responses:
+        "200":
+          description: Multisig address and redeem script.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [address, redeem_script_hex]
+                properties:
+                  address: { $ref: "#/components/schemas/KvncAddress" }
+                  redeem_script_hex: { type: string }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/multisig/build:
+    post:
+      operationId: multisigBuild
+      tags: [multisig]
+      summary: Build an unsigned spend from a funded multisig address.
+      description: |
+        Produces `tx_blob_hex` to hand to the signing step and `sighash_hex` to
+        sign. The node never holds a key here.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, outputs]
+              properties:
+                address:
+                  $ref: "#/components/schemas/Address"
+                outputs:
+                  type: array
+                  minItems: 1
+                  items:
+                    type: object
+                    required: [address, amount_atoms]
+                    properties:
+                      address: { $ref: "#/components/schemas/Address" }
+                      amount_atoms: { $ref: "#/components/schemas/Atoms" }
+      responses:
+        "200":
+          description: Unsigned transaction and its sighash.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tx_blob_hex, sighash_hex]
+                properties:
+                  tx_blob_hex: { type: string }
+                  sighash_hex: { type: string }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/multisig/sign:
+    post:
+      operationId: multisigSign
+      tags: [multisig]
+      summary: Add one partial signature to an unsigned multisig transaction.
+      description: |
+        **This is the only route in the API that accepts a private key over
+        HTTP.** `secret_hex` is the signer's 32-byte Ed25519 signing key and it
+        transits the network in the request body.
+
+        Prefer signing locally against `sighash_hex` from `multisigBuild` and
+        combining the partial signatures offline: send only signatures to the
+        node. Nothing else in the API needs key material.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tx_blob_hex, secret_hex]
+              properties:
+                tx_blob_hex:
+                  type: string
+                  description: Unsigned blob from `multisigBuild`.
+                secret_hex:
+                  type: string
+                  description: >-
+                    Signer's 32-byte Ed25519 signing key, 64 hex chars. Leaves
+                    the client — never do this against a public node.
+      responses:
+        "200":
+          description: Partial signature for this signer.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [partial_sig_hex]
+                properties:
+                  partial_sig_hex: { $ref: "#/components/schemas/SignatureHex" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/multisig/combine:
+    post:
+      operationId: multisigCombine
+      tags: [multisig]
+      summary: Merge partial signatures into a spendable transaction.
+      description: |
+        Order does not matter — the node matches each signature to its public
+        key. Fails if fewer than the threshold signatures are present.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tx_blob_hex, partial_sigs_hex]
+              properties:
+                tx_blob_hex: { type: string }
+                partial_sigs_hex:
+                  type: array
+                  minItems: 1
+                  items: { $ref: "#/components/schemas/SignatureHex" }
+      responses:
+        "200":
+          description: Fully signed transaction.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [signed_tx_blob_hex]
+                properties:
+                  signed_tx_blob_hex: { type: string }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/multisig/submit:
+    post:
+      operationId: multisigSubmit
+      tags: [multisig]
+      summary: Broadcast a fully signed multisig transaction.
+      description: |
+        **The response key is `tx_id_hex`, not `tx`,** and the value is the raw
+        hex of the tx id bytes. Every other route that returns a transaction id
+        returns the `to_string()` form under the key `tx`.
+      security: []
+      parameters:
+        - $ref: "#/components/parameters/node"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signed_tx_blob_hex]
+              properties:
+                signed_tx_blob_hex: { type: string }
+      responses:
+        "200":
+          description: Transaction accepted into the mempool.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tx_id_hex]
+                properties:
+                  tx_id_hex: { $ref: "#/components/schemas/Hex32" }
+        "400": { $ref: "#/components/responses/ErrorJson" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/prepare:
+    post:
+      operationId: prepareTransfer
+      tags: [wallet]
+      summary: Prepare a spend and return the sighash to sign.
+      description: |
+        **All inputs are query parameters — the JSON request body is ignored.**
+        This is the documented prepare → offline sign → submit flow:
+        sign `sighash` with the account's Ed25519 key, then call
+        `POST /api/submit` with the signature.
+
+        The node never receives a private key on this route. `fee_asset_id` is
+        always `KVNC`, even for a KVP-102 asset transfer, because fees are paid
+        in native KVNC.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Funding address to spend from.
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: to
+          in: query
+          required: true
+          description: Destination address.
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: amount
+          in: query
+          required: false
+          description: Amount in atoms; defaults to 0.
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - $ref: "#/components/parameters/assetId"
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Unsigned spend and its sighash.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Prepared" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/submit:
+    post:
+      operationId: submitTransfer
+      tags: [wallet]
+      summary: Submit a locally signed spend.
+      description: |
+        **All inputs are query parameters — the JSON request body is ignored.**
+        `sig` is the 64-byte Ed25519 signature over the sighash from
+        `POST /api/prepare`, hex encoded.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Funding address that was spent from.
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: to
+          in: query
+          required: true
+          description: Destination address.
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: amount
+          in: query
+          required: false
+          description: Amount in atoms; defaults to 0.
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - name: sig
+          in: query
+          required: true
+          description: Ed25519 signature over the prepared sighash, 128 hex chars.
+          schema: { $ref: "#/components/schemas/SignatureHex" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Transaction accepted into the mempool.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/mine:
+    post:
+      operationId: mineBlock
+      tags: [admin]
+      summary: Ask the node to mine one block from its mempool.
+      description: |
+        Not operator-gated, but the empty-block fallback used when the mempool
+        is empty **is** operator-gated.
+      security: []
+      x-kovanica-gating: none
+      parameters:
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: A block was mined.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/produce:
+    post:
+      operationId: produceBlock
+      tags: [admin]
+      summary: Start continuous block production.
+      description: |
+        Falls back to producing empty blocks **only if the node is an
+        operator**; otherwise an empty mempool is an error.
+      security: []
+      x-kovanica-gating: operator only, for the empty-block fallback
+      parameters:
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Production started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/empty:
+    post:
+      operationId: mineEmptyBlock
+      tags: [admin]
+      summary: Mine an empty block.
+      description: Testnet operator route.
+      security: []
+      x-kovanica-gating: operator only
+      parameters:
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: An empty block was mined.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/send:
+    post:
+      operationId: operatorSend
+      tags: [admin]
+      summary: Operator self-transfer of test coins.
+      description: |
+        Testnet operator route. **Never enable the operator flag on a
+        public-facing node.**
+      security: []
+      x-kovanica-gating: operator only
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: Source account index; defaults to 1.
+          schema: { type: integer, default: 1 }
+        - name: amount
+          in: query
+          required: false
+          description: Amount in coins; defaults to 50.
+          schema: { type: integer, default: 50 }
+        - name: to
+          in: query
+          required: false
+          description: Destination account index; defaults to 2.
+          schema: { type: integer, default: 2 }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Transfer submitted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/pool:
+    post:
+      operationId: operatorPool
+      tags: [admin]
+      summary: Operator loop moving coins between two accounts.
+      description: Testnet operator route.
+      security: []
+      x-kovanica-gating: operator only
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema: { type: integer, default: 1 }
+        - name: amount
+          in: query
+          required: false
+          schema: { type: integer, default: 50 }
+        - name: to
+          in: query
+          required: false
+          schema: { type: integer, default: 2 }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Pool loop started.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/parallel:
+    post:
+      operationId: operatorParallel
+      tags: [admin]
+      summary: Operator route issuing several transfers at once.
+      security: []
+      x-kovanica-gating: operator only
+      parameters:
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Transfers submitted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/fork:
+    post:
+      operationId: operatorFork
+      tags: [admin]
+      summary: Operator route forking the chain.
+      security: []
+      x-kovanica-gating: operator only
+      parameters:
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Fork submitted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/producing:
+    post:
+      operationId: setProducing
+      tags: [admin]
+      summary: Turn block production on or off.
+      description: |
+        Passing `on=0` stops production; any other present value, or omitting
+        it entirely, turns it on.
+      security: []
+      x-kovanica-gating: operator only
+      parameters:
+        - name: on
+          in: query
+          required: false
+          description: "`0` stops production; absent or anything else starts it."
+          schema: { type: string }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Production flag updated.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/reset:
+    post:
+      operationId: resetChainData
+      tags: [admin]
+      summary: Wipe the data directory and re-boot the node.
+      description: |
+        **Destructive.** This deletes the ledger and re-bootstraps from genesis,
+        which is why the node refuses unless its reset flag is set. Never set
+        that flag on a public-facing node, or on a node that holds chain data
+        you cannot rebuild.
+
+        Work through the `kovanica-genesis-ops` checklist before calling it, and
+        confirm `KOVANICA_DATA` points where you think it does.
+      security: []
+      x-kovanica-gating: requires the KOVANICA_ALLOW_RESET flag
+      parameters:
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Data directory reset and the node re-booted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/origin:
+    post:
+      operationId: recordOrigin
+      tags: [node]
+      summary: Record a connection origin for the geo pulse counter.
+      description: |
+        `iso3` must be exactly three ASCII letters.
+      security: []
+      parameters:
+        - name: iso3
+          in: query
+          required: true
+          description: Three-letter country code.
+          schema: { type: string, pattern: "^[A-Za-z]{3}$" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Origin recorded.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, iso3, pulses]
+                properties:
+                  ok: { type: boolean, const: true }
+                  iso3: { type: string }
+                  pulses: { type: integer }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/faucet:
+    post:
+      operationId: requestFaucet
+      tags: [wallet]
+      summary: Request test coins.
+      description: |
+        Three independent gates apply, all on the node: the faucet flag, a hard
+        testnet-only check, and a per-address cap. The default and maximum
+        request size are 1 KVNC and 5 KVNC respectively, plus a lifetime
+        per-address cumulative cap. **The node refuses on mainnet even when the
+        faucet flag is set.**
+
+        Do not enable the faucet on a public-facing node.
+      security: []
+      x-kovanica-gating: requires the KOVANICA_FAUCET flag and network id kovanica-testnet
+      parameters:
+        - name: to
+          in: query
+          required: true
+          description: Address to credit.
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: amount
+          in: query
+          required: false
+          description: Atoms to request; defaults to 1 KVNC, capped at 5 KVNC.
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Coins credited in a newly mined block.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, block]
+                properties:
+                  ok: { type: boolean, const: true }
+                  block: { $ref: "#/components/schemas/Hex32" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/htlc/prepare:
+    post:
+      operationId: htlcPrepare
+      tags: [htlc]
+      summary: Prepare an HTLC output locked to a preimage hash.
+      description: |
+        **All inputs are query parameters — the JSON request body is ignored.**
+        Sign `sighash` offline, then call `/api/htlc/submit`. The contract
+        details are in RFC-004 / KVP-104.
+
+        `outpoint` here has **no `asset_id`**, unlike `POST /api/prepare`.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Funding address to lock from.
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: amount
+          in: query
+          required: false
+          description: Amount in atoms; defaults to 0.
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - $ref: "#/components/parameters/assetId"
+        - name: recipient_pk
+          in: query
+          required: true
+          description: Recipient Ed25519 public key.
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: preimage_hash
+          in: query
+          required: true
+          description: Hash the redeemer must reveal.
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: timeout
+          in: query
+          required: false
+          description: Block height after which a refund unlocks; defaults to 0.
+          schema: { type: integer, default: 0 }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Unsigned HTLC output, script and sighash.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreparedHtlc" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/htlc/submit:
+    post:
+      operationId: htlcSubmit
+      tags: [htlc]
+      summary: Submit the signed funding transaction for an HTLC.
+      description: |
+        Takes the same query parameters as `/api/htlc/prepare` plus `sig`, the
+        Ed25519 signature over the prepared sighash.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: amount
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - $ref: "#/components/parameters/assetId"
+        - name: recipient_pk
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: preimage_hash
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: timeout
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: sig
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/SignatureHex" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Funding transaction accepted into the mempool.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/htlc/redeem/prepare:
+    post:
+      operationId: htlcRedeemPrepare
+      tags: [htlc]
+      summary: Prepare the claim of a funded HTLC.
+      description: |
+        `script` must be **exactly 100 bytes** (200 hex chars) and `preimage`
+        must hash to the `preimage_hash` the output was locked with.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: outpoint_tx
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: outpoint_index
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: script
+          in: query
+          required: true
+          description: Exactly 100 bytes of hex.
+          schema: { type: string }
+        - name: preimage
+          in: query
+          required: true
+          description: The revealed preimage.
+          schema: { type: string }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Unsigned redemption.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreparedSpend" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/htlc/redeem/submit:
+    post:
+      operationId: htlcRedeemSubmit
+      tags: [htlc]
+      summary: Submit the signed redemption.
+      description: Same query parameters as the prepare step plus `sig`.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: outpoint_tx
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: outpoint_index
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: script
+          in: query
+          required: true
+          schema: { type: string }
+        - name: preimage
+          in: query
+          required: true
+          schema: { type: string }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: sig
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/SignatureHex" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Redemption accepted into the mempool.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/htlc/refund/prepare:
+    post:
+      operationId: htlcRefundPrepare
+      tags: [htlc]
+      summary: Prepare the refund of an expired HTLC.
+      description: |
+        Only valid once the timeout height has passed. `script` must be exactly
+        100 bytes.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: outpoint_tx
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: outpoint_index
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: script
+          in: query
+          required: true
+          schema: { type: string }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Unsigned refund.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreparedSpend" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/htlc/refund/submit:
+    post:
+      operationId: htlcRefundSubmit
+      tags: [htlc]
+      summary: Submit the signed refund.
+      description: Same query parameters as the prepare step plus `sig`.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: outpoint_tx
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: outpoint_index
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: script
+          in: query
+          required: true
+          schema: { type: string }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: sig
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/SignatureHex" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Refund accepted into the mempool.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/asset/create/prepare:
+    post:
+      operationId: assetCreatePrepare
+      tags: [assets]
+      summary: Prepare a KVP-102 native asset creation.
+      description: |
+        Every off-chain URI needs a matching hash parameter — `logo_uri_hash`
+        when `logo_uri` is set, `metadata_uri_hash` when `metadata_uri` is set.
+        A URI without its hash is rejected.
+
+        `data:` URIs are accepted for a logo but **not** for metadata. The
+        accepted schemes are `ipfs://`, `ar://` (which expands to
+        `https://arweave.net/`), `http(s)://` and `data:`.
+
+        Note the asset is created by a transaction, not by this endpoint:
+        sign the sighash and use the ordinary submit flow.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: max_supply
+          in: query
+          required: false
+          description: Maximum supply in atoms; defaults to 0.
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - name: kind
+          in: query
+          required: true
+          description: One of `fungible`, `nonfungible` or `nft`.
+          schema: { type: string, enum: [fungible, nonfungible, nft] }
+        - name: mint_price_per_unit
+          in: query
+          required: false
+          description: Mint price per unit in atoms; defaults to 0.
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - name: logo_uri
+          in: query
+          required: false
+          description: Logo URI. Requires `logo_uri_hash`.
+          schema: { type: string }
+        - name: logo_uri_hash
+          in: query
+          required: false
+          description: Hash of the logo content. Required when `logo_uri` is set.
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: metadata_uri
+          in: query
+          required: false
+          description: Metadata URI. Requires `metadata_uri_hash`. No `data:` scheme.
+          schema: { type: string }
+        - name: metadata_uri_hash
+          in: query
+          required: false
+          description: Hash of the metadata content. Required when `metadata_uri` is set.
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Unsigned asset creation.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreparedAsset" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/mint/prepare:
+    post:
+      operationId: mintPrepare
+      tags: [assets]
+      summary: Prepare a mint against an existing KVP-102 asset.
+      description: |
+        `asset_id` must be a 32-byte hex asset id. **Native KVNC is rejected**
+        — use the plain transfer flow for KVNC.
+      security: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: asset_id
+          in: query
+          required: true
+          description: 32-byte hex asset id. Native KVNC is rejected.
+          schema: { $ref: "#/components/schemas/AssetId" }
+        - name: amount
+          in: query
+          required: false
+          description: Amount in atoms; defaults to 0.
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Unsigned mint.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PreparedAsset" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/airdrop/prepare-claim:
+    post:
+      operationId: airdropPrepareClaim
+      tags: [assets]
+      summary: Prepare a Merkle-proven airdrop claim.
+      description: |
+        **All inputs are query parameters — the JSON request body is ignored,
+        and the proof itself is JSON encoded *inside* a query value.**
+        `merkle_siblings` is a JSON array of hex strings and `merkle_is_left` a
+        JSON array of booleans, both percent-encoded into their own query
+        parameters.
+
+        This is an odd shape. Prefer building the claim locally against the
+        campaign proof and submitting the signed transaction with
+        `/api/submit_tx`.
+      security: []
+      parameters:
+        - name: campaign_id
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: claimant
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: amount
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - $ref: "#/components/parameters/assetId"
+        - name: merkle_siblings
+          in: query
+          required: true
+          description: JSON array of 32-byte hex strings, encoded into this value.
+          schema: { type: string }
+        - name: merkle_is_left
+          in: query
+          required: true
+          description: JSON array of booleans, encoded into this value.
+          schema: { type: string }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Unsigned airdrop claim.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AirdropClaim" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/airdrop/finalize-claim:
+    post:
+      operationId: airdropFinalizeClaim
+      tags: [assets]
+      summary: Submit the signed airdrop claim.
+      description: |
+        Takes every parameter of the prepare step plus `sig`, the signature over
+        the prepared sighash.
+      security: []
+      parameters:
+        - name: campaign_id
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Hex32" }
+        - name: claimant
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: amount
+          in: query
+          required: false
+          schema: { $ref: "#/components/schemas/Atoms" }
+        - $ref: "#/components/parameters/assetId"
+        - name: merkle_siblings
+          in: query
+          required: true
+          schema: { type: string }
+        - name: merkle_is_left
+          in: query
+          required: true
+          schema: { type: string }
+        - name: to
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/Address" }
+        - name: sig
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/SignatureHex" }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Claim accepted into the mempool.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Submitted" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/coinjoin_prepare:
+    post:
+      operationId: coinjoinPrepare
+      tags: [wallet]
+      summary: Coordinate a coinjoin round.
+      description: |
+        **A whole JSON document is URL-encoded into the `body` query
+        parameter.** There is no request body. Amounts inside it are encoded as
+        **strings**, not numbers.
+
+        The response hands back everything each participant needs to sign, plus
+        the fee. Submit the signatures with `/api/coinjoin_submit`.
+      security: []
+      parameters:
+        - name: body
+          in: query
+          required: true
+          description: >-
+            URL-encoded JSON document with a `participants` array of
+            `{address, amount (string), recipient, asset_id}` objects.
+          schema: { type: string }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Prepared coinjoin.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tx_hex, sighashes_hex, outpoints_hex, values, fee]
+                properties:
+                  tx_hex: { type: string }
+                  sighashes_hex: { type: array, items: { type: string } }
+                  outpoints_hex:
+                    type: array
+                    description: Each entry is `txid:index` as a single string.
+                    items: { type: string }
+                  values: { type: array, items: { type: string } }
+                  fee: { type: string }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }
+
+  /api/coinjoin_submit:
+    post:
+      operationId: coinjoinSubmit
+      tags: [wallet]
+      summary: Submit a coinjoin once every participant has signed.
+      description: |
+        `body` carries the same document the prepare step returned, and
+        `signatures` is a JSON array of hex signature strings encoded into its
+        own query value.
+      security: []
+      parameters:
+        - name: body
+          in: query
+          required: true
+          description: >-
+            URL-encoded JSON document with `tx_hex`, `sighashes_hex`,
+            `outpoints_hex`, `values` and `fee`, all strings.
+          schema: { type: string }
+        - name: signatures
+          in: query
+          required: true
+          description: JSON array of 64-byte hex signatures, encoded into this value.
+          schema: { type: string }
+        - $ref: "#/components/parameters/node"
+      responses:
+        "200":
+          description: Coinjoin submitted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/OkOnly" }
+        "400": { $ref: "#/components/responses/ErrorText" }
+        "404": { $ref: "#/components/responses/NotFoundText" }
+        "429": { $ref: "#/components/responses/RateLimited" }

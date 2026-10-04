@@ -11,12 +11,14 @@ use kovanica_dag::AuthoritySet;
 fn test_authority_set() -> AuthoritySet {
     // Use deterministic test keys (not production keys)
     // KeyPair::from_seed is the frozen SLIP-0010 path; wallet.rs delegates to this crate.
-    let keys: Vec<_> = (0..3).map(|i| {
-        let seed = [i as u8; 32];
-        let pk_bytes = kovanica_state::KeyPair::from_seed(seed).public_key();
-        // Convert 32-byte array to VerifyingKey
-        ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes).unwrap()
-    }).collect();
+    let keys: Vec<_> = (0..3)
+        .map(|i| {
+            let seed = [i as u8; 32];
+            let pk_bytes = kovanica_state::KeyPair::from_seed(seed).public_key();
+            // Convert 32-byte array to VerifyingKey
+            ed25519_dalek::VerifyingKey::from_bytes(&pk_bytes).unwrap()
+        })
+        .collect();
     AuthoritySet::new(keys, 2).expect("valid test authority set")
 }
 
@@ -55,7 +57,11 @@ fn adversarial_missing_sig() {
 /// V5 — work_inflation: block claims work != POA_NOMINAL_WORK (regression for §6.1(b)).
 #[test]
 fn adversarial_work_inflation() {
-    assert_eq!(kovanica_dag::POA_NOMINAL_WORK, 1, "PoA nominal work pinned to 1");
+    assert_eq!(
+        kovanica_dag::POA_NOMINAL_WORK,
+        1,
+        "PoA nominal work pinned to 1"
+    );
     // Block with work != 1 must fail at admission (§6.1(b) regression guard).
 }
 

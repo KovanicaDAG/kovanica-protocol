@@ -1,0 +1,653 @@
+name: ci
+
+# Consolidated root CI (Phase 2 of the unify restructure).
+#
+# This is the single path-filtered workflow for the repo. It ports the gates
+# that previously lived in several root workflows so a change only runs the jobs
+# it can affect:
+#
+#   protocol  <- rust-gate.yml (fmt / clippy / test / lockfiles) + bindings-drift.yml
+#   sdk       <- sdk-wasm.yml
+#   web       <- ci-cd.yml "web-consoles" + the nested apps/web CI + app builds
+#   android   <- build-android.yml (FFI AAR) + ci-cd.yml "android" (APK)
+#   ios       <- ci-cd.yml "ios"
+#   desktop   <- build-all.yml "linux-tauri" + "windows-tauri"
+#
+# Kept as separate workflows on purpose (do NOT fold in here):
+#   - config-gate.yml, secret-scan.yml   (always-on, no path filter)
+#   - publish-sdk.yml, releases.yml      (tag-driven publish / release)
+#
+# Deploy / publish / sync-public-node jobs are NOT enabled here: they need
+# explicit owner approval (see PROMPT.md hard rules). The VPS deploy step that
+# used to sit inside ci-cd.yml's web-consoles job is intentionally omitted.
+#
+# `protocol` also covers `node/**`: rust-gate.yml gated the deployable
+# node-bin workspace there, and it must keep being checked.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.98.0"
+  WASM_PACK_VERSION: "0.15.0"
+
+jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      protocol: ${{ steps.f.outputs.protocol }}
+      sdk: ${{ steps.f.outputs.sdk }}
+      web: ${{ steps.f.outputs.web }}
+      android: ${{ steps.f.outputs.android }}
+      ios: ${{ steps.f.outputs.ios }}
+      desktop: ${{ steps.f.outputs.desktop }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: f
+        with:
+          filters: |
+            protocol: ['protocol/**', 'node/**']
+            sdk: ['sdk/**', 'protocol/crates/kovanica-types/**']
+            web: ['apps/web/**', 'apps/dashboard/**', 'apps/extension/**', 'packages/**', 'sdk/bindings/**']
+            android: ['apps/android/**', 'protocol/crates/kovanica-ffi/**']
+            ios: ['apps/ios/**', 'protocol/crates/kovanica-ffi/**']
+            desktop: ['apps/desktop-node/**', 'apps/console-*/**', 'protocol/crates/**']
+
+  # ───────────────────────────────────────────────────────────────────
+  # protocol: ported from rust-gate.yml + bindings-drift.yml
+  # ───────────────────────────────────────────────────────────────────
+  protocol:
+    name: protocol (fmt / clippy / test / lockfiles / bindings drift)
+    needs: changes
+    if: needs.changes.outputs.protocol == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # `protocol/rust-toolchain.toml` pins 1.98.0 (rustfmt + clippy), so the
+      # toolchain follows the repo rather than a workflow-local `stable`.
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            protocol/target
+            node/target
+          key: ${{ runner.os }}-rust-gate-${{ hashFiles('protocol/Cargo.lock', 'node/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-rust-gate-
+
+      # Catches an inconsistent committed lockfile before anything is built.
+      # Both workspaces are checked: `node/` is the one the VPS deploys from.
+      - name: Verify lockfiles are consistent (--locked)
+        run: |
+          cargo metadata --locked --format-version 1 --manifest-path protocol/Cargo.toml > /dev/null
+          cargo metadata --locked --format-version 1 --manifest-path node/Cargo.toml > /dev/null
+
+      - name: Assert lockfiles are not mutated by the check
+        run: |
+          # `--locked` must not have rewritten anything; if it did, the commit
+          # shipped an inconsistent lockfile.
+          if ! git diff --quiet -- protocol/Cargo.lock node/Cargo.lock; then
+            echo "::error::a committed lockfile was inconsistent with its manifests and cargo rewrote it."
+            git diff -- protocol/Cargo.lock node/Cargo.lock
+            exit 1
+          fi
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+        working-directory: protocol
+
+      # `-D warnings`, matching AGENTS.md §3. A bare "clippy is clean" is a much
+      # weaker gate and lets warnings accumulate until one becomes a deny.
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        working-directory: protocol
+
+      - name: cargo test
+        run: cargo test --workspace
+        working-directory: protocol
+
+      # `node/` builds the deploy artifact, so it is built for real rather than
+      # merely resolved. This is what would have caught the node lockfile gap.
+      - name: Build the node release artifact
+        run: cargo build --release --workspace
+        working-directory: node
+
+      # ── bindings-drift.yml ──────────────────────────────────────────
+      - name: Build FFI cdylib
+        working-directory: protocol
+        run: cargo build --release -p kovanica-ffi
+
+      - name: Generate Kotlin bindings
+        working-directory: protocol
+        run: |
+          mkdir -p /tmp/bindgen/kotlin
+          cargo run -p kovanica-ffi --bin uniffi-bindgen -- \
+            generate --library target/release/libkovanica_ffi.so \
+            --language kotlin --out-dir /tmp/bindgen/kotlin
+
+      - name: Generate Swift bindings
+        working-directory: protocol
+        run: |
+          mkdir -p /tmp/bindgen/swift
+          cargo run -p kovanica-ffi --bin uniffi-bindgen -- \
+            generate --library target/release/libkovanica_ffi.so \
+            --language swift --out-dir /tmp/bindgen/swift
+
+      - name: Diff generated vs committed bindings
+        working-directory: protocol
+        run: |
+          set -euo pipefail
+          # -x README.md: hand-written docs live beside generated output;
+          # they are not bindgen artifacts and must not trip the guard.
+          fail=0
+          diff -r -x README.md /tmp/bindgen/kotlin crates/kovanica-ffi/bindings/kotlin \
+            || fail=1
+          diff -r -x README.md /tmp/bindgen/swift crates/kovanica-ffi/bindings/swift \
+            || fail=1
+          if [ "$fail" != "0" ]; then
+            echo "::error::Committed bindings drifted from crates/kovanica-ffi."
+            echo "Regenerate and commit (from the protocol/ directory):"
+            echo "  cargo build --release -p kovanica-ffi"
+            echo "  cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \\"
+            echo "    --library target/release/libkovanica_ffi.so \\"
+            echo "    --language kotlin --out-dir crates/kovanica-ffi/bindings/kotlin"
+            echo "  cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \\"
+            echo "    --library target/release/libkovanica_ffi.so \\"
+            echo "    --language swift --out-dir crates/kovanica-ffi/bindings/swift"
+          fi
+          exit "$fail"
+
+      - name: Shellcheck packaging scripts
+        working-directory: protocol
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck crates/kovanica-ffi/build-android.sh \
+                    crates/kovanica-ffi/build-apple.sh
+
+  # ───────────────────────────────────────────────────────────────────
+  # sdk: ported from sdk-wasm.yml
+  # ───────────────────────────────────────────────────────────────────
+  sdk:
+    name: sdk (wasm-pack build + npm pack dry-run)
+    needs: changes
+    if: needs.changes.outputs.sdk == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: sdk
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust (wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache wasm-pack ${{ env.WASM_PACK_VERSION }}
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-${{ env.WASM_PACK_VERSION }}
+
+      - name: Install wasm-pack ${{ env.WASM_PACK_VERSION }}
+        run: |
+          if command -v wasm-pack >/dev/null 2>&1; then wasm-pack --version
+          else cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked; fi
+
+      - name: Build web target
+        # wasm-pack 0.15 resolves --out-dir relative to the *crate* dir, not
+        # the CWD — bare "pkg" lands at bindings/kovanica-wasm/pkg.
+        run: >
+          wasm-pack build bindings/kovanica-wasm --target web
+          --out-dir pkg
+
+      - name: Stamp npm identity onto the generated manifest
+        # The crate-root package.json is the *development* manifest: it points
+        # into pkg/ (module/types/exports) so a `file:` dependency resolves for
+        # tsc/tsx/Vite. The tarball manifest is the wasm-pack-generated
+        # pkg/package.json, whose entry paths are already pkg-relative; carry
+        # over only the npm identity (name/version) from the dev manifest.
+        run: node bindings/kovanica-wasm/stamp-pkg-manifest.mjs
+
+      - name: Version lockstep check (npm vs workspace)
+        run: |
+          npm_ver=$(python3 -c "import tomllib,json; print(json.load(open('bindings/kovanica-wasm/package.json'))['version'])")
+          ws_ver=$(python3 -c "import tomllib; print(tomllib.load(open('Cargo.toml','rb'))['workspace']['package']['version'])")
+          test "$npm_ver" = "$ws_ver" || { echo "version drift: npm=$npm_ver workspace=$ws_ver"; exit 1; }
+          echo "lockstep ok: $npm_ver"
+
+      - name: npm pack dry-run (tarball contents)
+        run: npm pack --dry-run
+        working-directory: sdk/bindings/kovanica-wasm/pkg
+
+      - name: Host compile of the binding
+        run: cargo check -p kovanica-wasm
+
+  # ───────────────────────────────────────────────────────────────────
+  # web: ported from ci-cd.yml "web-consoles" + the nested apps/web CI
+  # (VPS deploy step deliberately omitted — owner approval required)
+  # ───────────────────────────────────────────────────────────────────
+  web:
+    name: web (${{ matrix.app }})
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - app: apps/web
+            build: npm run build
+          - app: apps/dashboard/frontend
+            build: npm run build
+          - app: apps/extension
+            build: npm run build
+          - app: apps/console-kovanica
+            build: npm run build
+          - app: apps/console-enterprise
+            build: npm run build
+          # packages/api-client is a library, so there is no bundler build: the
+          # gate is that the committed types still match the committed spec.
+          - app: packages/api-client
+            build: npm run typecheck
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # apps/web, apps/extension and apps/dashboard/frontend consume
+      # @kovanica/sdk-wasm as a file: dependency on its pkg/ build output (build
+      # output is not committed), so the wasm package must exist before npm ci /
+      # typecheck / test / build.
+      - name: Setup Rust (wasm32 target for sdk-wasm)
+        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache wasm-pack ${{ env.WASM_PACK_VERSION }}
+        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/wasm-pack
+          key: wasm-pack-${{ runner.os }}-${{ env.WASM_PACK_VERSION }}
+
+      - name: Install wasm-pack ${{ env.WASM_PACK_VERSION }}
+        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
+        run: |
+          if command -v wasm-pack >/dev/null 2>&1; then wasm-pack --version
+          else cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked; fi
+
+      - name: Build @kovanica/sdk-wasm
+        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
+        run: wasm-pack build sdk/bindings/kovanica-wasm --target web --out-dir pkg
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # 24, not 20: these lockfiles were written by npm 11, and npm 10
+          # resolves some transitive peer dependencies differently. npm ci then
+          # refuses the tree it is handed (EUSAGE, "Missing: lru-cache@…").
+          # The desktop jobs already pin 24; this keeps one JS runtime in CI.
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.app }}
+        run: npm ci
+
+      - name: Typecheck (apps/web)
+        if: matrix.app == 'apps/web'
+        working-directory: ${{ matrix.app }}
+        run: npm run typecheck
+
+      - name: Lint (apps/web)
+        if: matrix.app == 'apps/web'
+        working-directory: ${{ matrix.app }}
+        run: npm run lint
+
+      - name: Test (apps/extension)
+        if: matrix.app == 'apps/extension'
+        working-directory: ${{ matrix.app }}
+        run: npm run test
+
+      - name: Test (apps/dashboard/frontend)
+        if: matrix.app == 'apps/dashboard/frontend'
+        working-directory: ${{ matrix.app }}
+        run: npm run test
+
+      # The spec is hand-maintained and the node is not, so the committed
+      # src/schema.d.ts can go stale without any compiler noticing. Fail the
+      # build instead.
+      - name: API contract drift (packages/api-client)
+        if: matrix.app == 'packages/api-client'
+        working-directory: ${{ matrix.app }}
+        run: npm run check:drift
+
+      - name: Test (packages/api-client)
+        if: matrix.app == 'packages/api-client'
+        working-directory: ${{ matrix.app }}
+        run: npm test
+
+      - name: Build
+        working-directory: ${{ matrix.app }}
+        run: ${{ matrix.build }}
+
+  # ───────────────────────────────────────────────────────────────────
+  # android: ported from build-android.yml (FFI AAR) + ci-cd.yml (APK)
+  # ───────────────────────────────────────────────────────────────────
+  android:
+    name: android (FFI AAR + vectors + debug APK)
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-linux-android, x86_64-linux-android
+
+      - name: Install cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Setup Android SDK + NDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: 34
+          ndk-version: r27c
+          cache-key: ${{ runner.os }}-android-ndk-r27c
+          # The action's default `packages` is `tools platform-tools`, but the
+          # obsolete `tools` package was removed from Google's SDK repository.
+          # An empty string skips the extra package install entirely.
+          packages: ''
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            protocol/target
+            apps/android/uniffi/src/main/jniLibs
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build AAR (both ABIs)
+        working-directory: protocol/crates/kovanica-ffi
+        run: |
+          # setup-android exports ANDROID_NDK_ROOT into the *shell* environment,
+          # but build-android.sh wants ANDROID_NDK_HOME.
+          if [ -z "$ANDROID_NDK_ROOT" ]; then
+            ANDROID_NDK_ROOT="${ANDROID_NDK_HOME:-$ANDROID_SDK_ROOT/ndk/$(ls "$ANDROID_SDK_ROOT/ndk" 2>/dev/null | head -1)}"
+          fi
+          export ANDROID_NDK_HOME="$ANDROID_NDK_ROOT"
+          chmod +x ./build-android.sh
+          ./build-android.sh
+
+      - name: Upload AAR artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-ffi-aar
+          path: protocol/crates/kovanica-ffi/android/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x apps/android/gradlew
+
+      # `:app:testDebugUnitTest` runs the golden-vector known-answer tests. They
+      # load a host build of the FFI cdylib that `app/build.gradle.kts` compiles
+      # first (the AAR above only carries the Android ABIs, which the JVM cannot
+      # load), so the vector gate actually runs in CI instead of being skipped.
+      - name: Run unit tests + build Debug APK
+        run: |
+          cd apps/android
+          ./gradlew :app:testDebugUnitTest assembleDebug --no-daemon
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-wallet-debug-apk
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────
+  # ios: ported from ci-cd.yml "ios"
+  # ───────────────────────────────────────────────────────────────────
+  ios:
+    name: ios (Xcode build)
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          # `latest-stable` rather than a hard pin: a pin that has already gone
+          # stale on the runner image is a guaranteed failure.
+          xcode-version: 'latest-stable'
+
+      - name: Select Xcode
+        run: |
+          sudo xcode-select -s /Applications/Xcode.app
+          xcodebuild -version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # The app links the Rust light node and compiles its generated Swift
+      # bindings, so the framework must exist before xcodegen runs. This is
+      # also the build that catches an FFI surface change without a matching
+      # bindings regeneration.
+      - name: Build the light-node xcframework
+        run: ./protocol/crates/kovanica-ffi/build-apple.sh
+
+      - name: Verify committed Swift bindings match the Rust surface
+        working-directory: protocol
+        run: |
+          set -euo pipefail
+          # Build the host library the generator reads its metadata from. The
+          # staticlib is used rather than the cdylib because its filename does
+          # not change with the platform: the cdylib is `libkovanica_ffi.so` on
+          # Linux (what the `protocol` job points at) and `.dylib` on macOS,
+          # where this job runs. `uniffi-bindgen --library` accepts either.
+          cargo build --release -p kovanica-ffi
+          cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \
+            --library target/release/libkovanica_ffi.a \
+            --language swift --out-dir /tmp/bindgen-swift
+          diff -r -x README.md /tmp/bindgen-swift crates/kovanica-ffi/bindings/swift
+
+      - name: Generate the Xcode project
+        run: |
+          cd apps/ios
+          xcodegen generate --spec xcodegen.yml
+
+      - name: Build iOS App
+        run: |
+          cd apps/ios
+          # BUILD.md: "It needs no secrets; code signing for device builds is a
+          # local/App Store step." A generic/platform=iOS build is a device
+          # build, so without these the CodeSign phase fails with "Signing for
+          # KovanicaWallet requires a development team" — the project sets
+          # CODE_SIGN_STYLE: Automatic with an empty DEVELOPMENT_TEAM, and CI
+          # has no certificate. The uploaded .app is a build artifact, not a
+          # distributable one.
+          xcodebuild -scheme KovanicaWallet -configuration Release \
+            -destination generic/platform=iOS -derivedDataPath build -quiet \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Upload iOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kovanica-wallet-ios
+          path: apps/ios/build/Build/Products/Release-iphoneos/*.app
+          retention-days: 30
+
+  # ───────────────────────────────────────────────────────────────────
+  # desktop: ported from build-all.yml "linux-tauri" + "windows-tauri"
+  #
+  # Non-blocking by design (`continue-on-error: true` on both jobs). They are
+  # release-shaped jobs: producing signed desktop artifacts is a maintainer
+  # decision, not a merge gate.
+  #
+  # desktop-linux is additionally blocked by something no config change can
+  # fix: this app is on Tauri v1 (tauri 1.8.3 -> wry 0.24 -> webkit2gtk-sys
+  # 0.18), which hard-requires pkg-config `webkit2gtk-4.0` /
+  # `javascriptcoregtk-4.0`. ubuntu-latest is Ubuntu 24.04 (noble), which ships
+  # only `libwebkit2gtk-4.1-dev`; `libwebkit2gtk-4.0-dev` does not exist there.
+  # Upstream tauri-apps/tauri#9662 is closed `not_planned` — the only supported
+  # fix is Tauri v2. Do not "repair" this by pinning a deprecated runner image
+  # or by adding another Ubuntu release's apt sources into noble. Migrating the
+  # console app to Tauri v2 is the real follow-up; until then Linux bundling is
+  # exercised locally / on release only.
+  #
+  # desktop-windows does build: WebView2 is preinstalled on windows-latest and
+  # mingw comes from choco, so no webkit version is involved.
+  # ───────────────────────────────────────────────────────────────────
+  desktop-linux:
+    name: desktop (Linux Tauri)
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libsoup-3.0-dev \
+            libjavascriptcoregtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            rpm \
+            fuse \
+            libfuse2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: apps/console-kovanica/package-lock.json
+
+      - name: Install frontend dependencies (Kovanica Console)
+        working-directory: ./apps/console-kovanica
+        run: npm ci
+
+      - name: Build Tauri (Kovanica Console)
+        working-directory: ./apps/console-kovanica
+        run: npm run tauri build
+
+      - name: Upload Linux bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-tauri-bundles
+          path: |
+            apps/console-kovanica/src-tauri/target/release/bundle/
+          retention-days: 30
+
+  desktop-windows:
+    name: desktop (Windows Tauri)
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          target: x86_64-pc-windows-gnu
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: apps/console-kovanica/package-lock.json
+
+      - name: Install mingw-w64
+        run: choco install mingw -y
+
+      - name: Add mingw to PATH
+        run: echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install frontend dependencies (Kovanica Console)
+        working-directory: ./apps/console-kovanica
+        run: npm ci
+
+      - name: Build Tauri (Kovanica Console)
+        working-directory: ./apps/console-kovanica
+        run: npm run tauri build
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-tauri-installer
+          path: apps/console-kovanica/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
+          retention-days: 30

@@ -1,12 +1,23 @@
-name: Build All Apps & Artifacts
+name: Release Apps
+
+# App-artifact release workflow (Phase 2 CI consolidation).
+#
+# The build/test gates that used to live here moved to `.github/workflows/ci.yml`.
+# What remains is the tag-driven release of the Android APK/AAB and the Tauri
+# desktop bundles. Kept separate and **tag-triggered or manual on purpose**:
+# cutting a release is a maintainer decision. See `docs/unify/DECISIONS.md` #8.
+#
+# The archived original is at `archive/workflows/` for reference. The node
+# binary release lives in `releases.yml`; the SDK publish lives in
+# `publish-sdk.yml`.
 
 on:
   push:
-    branches: [main]
     tags: ['v*']
-  pull_request:
-    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 env:
   RUST_VERSION: "1.98.0"
@@ -110,46 +121,46 @@ jobs:
 
       - name: Copy .so files to Android module
         run: |
-          mkdir -p mobile/android/uniffi/src/main/jniLibs/arm64-v8a
-          mkdir -p mobile/android/uniffi/src/main/jniLibs/armeabi-v7a
-          mkdir -p mobile/android/uniffi/src/main/jniLibs/x86_64
+          mkdir -p apps/android/uniffi/src/main/jniLibs/arm64-v8a
+          mkdir -p apps/android/uniffi/src/main/jniLibs/armeabi-v7a
+          mkdir -p apps/android/uniffi/src/main/jniLibs/x86_64
           cp protocol/target/aarch64-linux-android/release/libkovanica_ffi.so \
-             mobile/android/uniffi/src/main/jniLibs/arm64-v8a/
+             apps/android/uniffi/src/main/jniLibs/arm64-v8a/
           cp protocol/target/armv7-linux-androideabi/release/libkovanica_ffi.so \
-             mobile/android/uniffi/src/main/jniLibs/armeabi-v7a/
+             apps/android/uniffi/src/main/jniLibs/armeabi-v7a/
           cp protocol/target/x86_64-linux-android/release/libkovanica_ffi.so \
-             mobile/android/uniffi/src/main/jniLibs/x86_64/
+             apps/android/uniffi/src/main/jniLibs/x86_64/
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build Debug APK
-        working-directory: ./mobile/android
+        working-directory: ./apps/android
         run: ./gradlew assembleDebug
 
       - name: Build Release APK
-        working-directory: ./mobile/android
+        working-directory: ./apps/android
         run: ./gradlew assembleRelease
 
       - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: mobile/android/app/build/outputs/apk/debug/app-debug.apk
+          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 30
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
         with:
           name: android-release-apk
-          path: mobile/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          path: apps/android/app/build/outputs/apk/release/app-release-unsigned.apk
           retention-days: 30
 
       - name: Upload AAB
         uses: actions/upload-artifact@v4
         with:
           name: android-aab
-          path: mobile/android/app/build/outputs/bundle/release/app-release.aab
+          path: apps/android/app/build/outputs/bundle/release/app-release.aab
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
@@ -190,17 +201,17 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: mobile/console/kovanica/package-lock.json
+          cache-dependency-path: apps/console-kovanica/package-lock.json
 
       - name: Install pnpm
         run: npm install -g pnpm
 
       - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm run tauri build
 
       - name: Upload Linux bundles
@@ -208,7 +219,7 @@ jobs:
         with:
           name: linux-tauri-bundles
           path: |
-            mobile/console/kovanica/src-tauri/target/release/bundle/
+            apps/console-kovanica/src-tauri/target/release/bundle/
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
@@ -235,7 +246,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: mobile/console/kovanica/package-lock.json
+          cache-dependency-path: apps/console-kovanica/package-lock.json
 
       - name: Install pnpm
         run: npm install -g pnpm
@@ -247,18 +258,18 @@ jobs:
         run: echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm run tauri build
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
           name: windows-tauri-installer
-          path: mobile/console/kovanica/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
+          path: apps/console-kovanica/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
           retention-days: 30
 
   # ─────────────────────────────────────────────────────────────────
@@ -284,7 +295,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: mobile/console/kovanica/package-lock.json
+          cache-dependency-path: apps/console-kovanica/package-lock.json
 
       - name: Install pnpm
         run: npm install -g pnpm
@@ -293,18 +304,18 @@ jobs:
         run: cargo install tauri-cli
 
       - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm install --frozen-lockfile
 
       - name: Build Tauri (macOS DMG)
-        working-directory: ./mobile/console/kovanica
+        working-directory: ./apps/console-kovanica
         run: pnpm run tauri build
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
         with:
           name: macos-tauri-dmg
-          path: mobile/console/kovanica/src-tauri/target/release/bundle/dmg/*.dmg
+          path: apps/console-kovanica/src-tauri/target/release/bundle/dmg/*.dmg
           retention-days: 30
 
       # iOS build (needs Xcode, signing certs — placeholder for now)
@@ -314,7 +325,7 @@ jobs:
           echo "  - Xcode (available on macos-latest)"
           echo "  - Apple Developer account + signing certs"
           echo "  - Provisioning profiles"
-          echo "  - Run: cd mobile/ios && xcodebuild -scheme KovanicaWallet -configuration Release"
+          echo "  - Run: cd apps/ios && xcodebuild -scheme KovanicaWallet -configuration Release"
         shell: bash
 
       - name: Download Swift bindings
@@ -327,38 +338,6 @@ jobs:
         run: |
           ls -la protocol/bindings/swift/
           echo "Swift bindings ready for iOS integration"
-
-  # ─────────────────────────────────────────────────────────────────
-  # Protocol crates test (consensus/ledger sanity)
-  # ─────────────────────────────────────────────────────────────────
-  protocol-test:
-    name: Protocol Tests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Cargo fmt check
-        working-directory: ./protocol
-        run: cargo fmt --all --check
-
-      - name: Cargo clippy
-        working-directory: ./protocol
-        run: cargo clippy --all-targets --workspace -- -D warnings
-
-      - name: Cargo test (all crates)
-        working-directory: ./protocol
-        run: cargo test --workspace
-
-      - name: Run P2P resync tests
-        working-directory: ./protocol
-        run: cargo test -p kovanica-node --test p2p_resync
 
   # ─────────────────────────────────────────────────────────────────
   # Release: publish artifacts on tag

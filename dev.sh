@@ -48,7 +48,7 @@ headline() { printf '\n== %s ==\n' "$*"; }
 # Component dirs are tracked by the monorepo itself (old separate repos
 # were consolidated and deleted). No per-component git sync anymore.
 component_dirs() {
-    printf '%s\n' protocol node web wallet mobile cli installer ledger-app data
+    printf '%s\n' protocol sdk node apps web wallet mobile cli installer ledger-app data ops packages tools archive
 }
 
 # agent + brain-vault live OUTSIDE the workspace (separate repos):
@@ -275,7 +275,7 @@ setup_agent() {
 gradle_warm() {
     if [ "$DO_DEPS" -eq 0 ]; then return 0; fi
     if [ "$JAVA_OK" != yes ]; then return 0; fi
-    for d in "$ROOT/wallet/android" "$ROOT/mobile/android"; do
+    for d in "$ROOT/archive/wallet-android" "$ROOT/apps/android"; do
         if [ -x "$d/gradlew" ]; then
             (cd "$d" && ./gradlew --version >/dev/null 2>&1) \
                 && note "gradle: warmed $d" \
@@ -358,23 +358,21 @@ doctor() {
     fi
     [ -d node/target ] && printf '  %-22s target/ built\n' node || \
         printf '  %-22s target/ not built\n' node
-    [ -d web/site/node_modules ] && printf '  %-22s node_modules/\n' web/site || \
-        printf '  %-22s not installed (npm ci)\n' web/site
-    [ -d wallet/extension/node_modules ] && printf '  %-22s node_modules/\n' wallet/extension || \
-        printf '  %-22s not installed (npm ci)\n' wallet/extension
-    [ -x "$HOME/kovanica-agent/venv/bin/python" ] && printf '  %-22s venv/\n' agent || \
-        printf '  %-22s no venv yet\n' agent
+    [ -d apps/web/node_modules ] && printf '  %-22s node_modules/\n' apps/web || \
+        printf '  %-22s not installed (npm ci)\n' apps/web
+    [ -d apps/extension/node_modules ] && printf '  %-22s node_modules/\n' apps/extension || \
+        printf '  %-22s not installed (npm ci)\n' apps/extension
 
     headline "Run"
     cat <<RUN
-  web dev (all interfaces):   cd web/site && npm run dev          -> http://localhost:8080
+  web dev (all interfaces):   cd apps/web && npm run dev          -> http://localhost:8080
   web dev (local only):       npx vite dev --host 127.0.0.1 --port 8080
   node (solo, cargo):         cd node && KOVANICA_POW=1 KOVANICA_MINE=0 KOVANICA_DATA=\$PWD/data \\
                               cargo run --release -p kovanica-node -- explorer 127.0.0.1:8080
   node (public testnet):      see node/README.md (KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000)
   agent REPL:                 (cd ~/kovanica-agent && ./kovanica.local repl)   # portable launcher written by this script
   agent stack (needs docker): docker compose -f ~/kovanica-agent/docker-compose.yml up -d qdrant vllm sandbox-runner agent-api
-  wallet extension:           cd wallet/extension && npm run dev
+  wallet extension:           cd apps/extension && npm run dev
 RUN
 }
 
@@ -397,8 +395,8 @@ check_vault_drift
 if [ "$DO_DEPS" -eq 1 ]; then
     cargo_check protocol --workspace
     cargo_check node -p kovanica-node
-    npm_deps web site
-    npm_deps wallet extension
+    npm_deps apps web
+    npm_deps apps extension
     setup_agent
 else
     note "deps step skipped (--status)"

@@ -233,7 +233,7 @@ Declaring a different minor pulls a second `crossterm` into the tree, which
 makes `crossterm::event::KeyEvent` and `ratatui::crossterm::event::KeyEvent`
 distinct types and silently breaks `Screen::handle_key`'s trait/impl match.
 
-⚠️ **`crates/*/data/` and `desktop-app/data/` are gitignored and hold secrets.**
+⚠️ **`crates/*/data/` and `apps/desktop-node/data/` are gitignored and hold secrets.**
 `Node::data_dir()` defaults to a relative `data/`, so test runs drop the founder
 premine key, the operator wallet (possibly a BIP-39 phrase) and validator seeds
 into the source tree. Point `KOVANICA_DATA` outside the checkout.
@@ -1172,8 +1172,8 @@ deterministic + adversarial tests per the conventions above.
     `uniffi.kovanica`, minSdk 24) compiling the committed `bindings/kotlin`
     tree via `sourceSets`; sole runtime dep `net.java.dev.jna:jna:5.14.0@aar`;
     consumer R8 rules included.
-  - Drift guard: `.github/workflows/bindings-drift.yml` at the **repository
-    root** regenerates kotlin+swift
+  - Drift guard: the `protocol` job in `.github/workflows/ci.yml` at the
+    **repository root** regenerates kotlin+swift
     into a temp dir on every PR touching `crates/kovanica-ffi/**` and fails
     on any difference (`diff -r -x README.md` — the hand-written READMEs sit
     beside generated output and must not trip it), plus shellcheck of both

@@ -119,7 +119,7 @@ pub const ASSET_CREATION_FEE: u64 = 1000 * ATOM;
 pub const MIN_MINT_PRICE: u64 = 1;
 
 /// KVP-107: maximum mint price per unit (1 KVNC per base unit = 100_000_000 atoms).
-pub const MAX_MINT_PRICE: u64 = 1 * ATOM;
+pub const MAX_MINT_PRICE: u64 = ATOM;
 
 /// RFC-006 emission schedule for block subsidy.
 ///
@@ -824,7 +824,9 @@ fn apply_regular(
     htlc_activation_score: u64,
     vault_activation_score: u64,
     mint_price_activation_score: u64,
-    asset_logo_activation_score: u64,
+    // KVP-107: logo_uri/metadata_uri validation is not yet enforced; the
+    // activation score is threaded through for forward compatibility.
+    _asset_logo_activation_score: u64,
 ) -> Result<u64, LedgerError> {
     if tx.inputs().is_empty() || tx.outputs().is_empty() {
         return Err(LedgerError::EmptyTransaction(tx.id()));
@@ -1478,7 +1480,9 @@ fn apply_regular(
     if blue_score > mint_price_activation_score {
         for (asset_id_opt, out_val) in &asset_outputs {
             // Skip native KVNC (asset_id = None)
-            let Some(asset_id) = *asset_id_opt else { continue; };
+            let Some(asset_id) = *asset_id_opt else {
+                continue;
+            };
             let in_val = asset_inputs.get(asset_id_opt).copied().unwrap_or(0);
             if *out_val > in_val {
                 let minted_amount = out_val - in_val;
@@ -1486,7 +1490,7 @@ fn apply_regular(
                     let mint_price = entry.mint_price_per_unit;
                     if mint_price > 0 {
                         // Validate mint price bounds
-                        if mint_price < MIN_MINT_PRICE || mint_price > MAX_MINT_PRICE {
+                        if !(MIN_MINT_PRICE..=MAX_MINT_PRICE).contains(&mint_price) {
                             return Err(LedgerError::InsufficientMintFee {
                                 tx: tx.id(),
                                 asset_id,

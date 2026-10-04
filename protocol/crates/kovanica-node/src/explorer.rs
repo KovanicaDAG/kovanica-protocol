@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use kovanica_dag::{AuthoritySet, BlockId};
 use kovanica_state::{
-    decode_block_payload, Address, AssetId, AssetKind, HtlcScript, LogoUri, LogoScheme,
-    MetadataUri, MetadataScheme, OutPoint, Transaction, TxId, TxOutput, MAX_SUPPLY,
+    decode_block_payload, Address, AssetId, AssetKind, HtlcScript, LogoScheme, LogoUri,
+    MetadataScheme, MetadataUri, OutPoint, Transaction, TxId, TxOutput, MAX_SUPPLY,
 };
 
 use crate::dht::{NodeId, PeerContact, RoutingTable};
@@ -3642,10 +3642,20 @@ fn dispatch(
             let metadata_uri = parse_metadata_uri(q, "metadata_uri", "metadata_uri_hash")?;
             let n = app.mesh.node(&node).ok_or("unknown node")?;
             let p = n
-                .prepare_create_asset(from, max_supply, kind, mint_price_per_unit, logo_uri, metadata_uri)
+                .prepare_create_asset(
+                    from,
+                    max_supply,
+                    kind,
+                    mint_price_per_unit,
+                    logo_uri,
+                    metadata_uri,
+                )
                 .map_err(|e| e.to_string())?;
             let asset_id = crate::node::asset_id_to_wire(Some(p.tx.outputs()[0].asset_id.unwrap()));
-            let change = p.value.saturating_sub(kovanica_state::ASSET_CREATION_FEE).saturating_sub(p.fee);
+            let change = p
+                .value
+                .saturating_sub(kovanica_state::ASSET_CREATION_FEE)
+                .saturating_sub(p.fee);
             return Ok(format!(
                 "{{\"ok\":true,\"sighash\":{},\"asset_id\":{},\"value\":{},\"fee\":{},\"change\":{},\"outpoint\":{{\"tx\":{},\"index\":{}}}}}",
                 jstr(&hex::encode(p.sighash)),
@@ -4943,7 +4953,9 @@ fn parse_logo_uri(
     let Some(uri) = q.get(uri_key).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    let hash_str = q.get(hash_key).ok_or(format!("{hash_key} required when {uri_key} is present"))?;
+    let hash_str = q
+        .get(hash_key)
+        .ok_or(format!("{hash_key} required when {uri_key} is present"))?;
     let content_hash = parse_hash(hash_str)?;
     // Determine scheme from URI prefix
     let scheme = if uri.starts_with("ipfs://") {
@@ -4972,7 +4984,9 @@ fn parse_metadata_uri(
     let Some(uri) = q.get(uri_key).filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
-    let hash_str = q.get(hash_key).ok_or(format!("{hash_key} required when {uri_key} is present"))?;
+    let hash_str = q
+        .get(hash_key)
+        .ok_or(format!("{hash_key} required when {uri_key} is present"))?;
     let content_hash = parse_hash(hash_str)?;
     // Determine scheme from URI prefix
     let scheme = if uri.starts_with("ipfs://") {

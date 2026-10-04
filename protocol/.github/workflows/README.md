@@ -11,7 +11,7 @@ workflows at **`<repo-root>/.github/workflows/`**, so it never descends into
 `protocol/.github/workflows/`. A workflow placed here parses as valid YAML and
 looks entirely plausible — it simply never gets scheduled.
 
-The same applies to `web/site/.github/` and `node/.github/`.
+The same applies to `apps/web/.github/` and `node/.github/`.
 
 ## What is live instead
 
@@ -19,15 +19,16 @@ All real CI lives in the **repository root** `.github/workflows/`:
 
 | Workflow | Covers |
 | --- | --- |
-| `bindings-drift.yml` | kotlin + swift binding drift (the real Slice 6 guard) |
-| `rust-gate.yml` | `--locked`, fmt, clippy, test, release build over `protocol/` |
-| `ci-cd.yml` | core tests, Tauri desktop builds, consoles, Android/iOS |
-| `build-all.yml` | full app matrix + FFI binding artifacts |
-| `build-android.yml` | Android SDK + AAR |
-| `secret-scan.yml` | gitleaks |
+| `ci.yml` | the single path-filtered gate: `protocol` (fmt/clippy/test/lockfiles + binding drift), `sdk`, `web`, `android`, `ios`, `desktop` |
 | `config-gate.yml` | env vars, network identity, safety invariants |
-| `sdk-wasm.yml` | wasm-pack |
+| `secret-scan.yml` | gitleaks |
+| `ci-cd.yml` | console deploy to the VPS (manual / tag only) |
+| `build-all.yml` | release app matrix + FFI binding artifacts (manual / tag only) |
 | `publish-sdk.yml`, `releases.yml` | publishing |
+
+The former standalone gate workflows (`rust-gate.yml`, `bindings-drift.yml`,
+`sdk-wasm.yml`, `build-android.yml`) were folded into `ci.yml` and archived
+under `archive/workflows/`.
 
 ## The one that caused real damage
 
@@ -37,7 +38,7 @@ guard by `protocol/AGENTS.md`, `mobile/ios/BUILD.md` and
 could change the Rust FFI surface and ship stale Kotlin and Swift bindings
 without any check failing — mobile clients then fail at runtime with
 "method not found". Those three documents now point at the root-level
-`bindings-drift.yml`.
+`ci.yml` (`protocol` job).
 
 ## What to do with these files
 

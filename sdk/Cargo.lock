@@ -745,6 +745,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.17",
+ "hex",
  "kovanica-sdk",
  "serde",
  "serde_json",

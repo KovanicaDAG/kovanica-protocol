@@ -1263,11 +1263,16 @@ fn test_fungible_asset_kind_registry() {
 
 #[test]
 fn test_kvp107_asset_registry_entry_with_mint_price() {
-    use kovanica_state::{AssetKind, AssetRegistryEntry, LogoScheme, LogoUri, MetadataScheme, MetadataUri};
+    use kovanica_state::{AssetRegistryEntry, LogoScheme, LogoUri, MetadataScheme, MetadataUri};
 
     let asset_id = make_asset_id(300);
     let logo = LogoUri::new(LogoScheme::Ipfs, [0xAAu8; 32], "ipfs://QmTest".to_string()).unwrap();
-    let meta = MetadataUri::new(MetadataScheme::Ipfs, [0xBBu8; 32], "ipfs://QmMeta".to_string()).unwrap();
+    let meta = MetadataUri::new(
+        MetadataScheme::Ipfs,
+        [0xBBu8; 32],
+        "ipfs://QmMeta".to_string(),
+    )
+    .unwrap();
     let creator = Some([0xCCu8; 32]);
 
     let entry = AssetRegistryEntry::new_fungible_with_mint_price(
@@ -1287,7 +1292,7 @@ fn test_kvp107_asset_registry_entry_with_mint_price() {
 
 #[test]
 fn test_kvp107_nft_asset_registry_entry_with_mint_price() {
-    use kovanica_state::{AssetKind, AssetRegistryEntry, LogoScheme, LogoUri, MetadataScheme, MetadataUri};
+    use kovanica_state::{AssetKind, AssetRegistryEntry, LogoScheme, LogoUri};
 
     let asset_id = make_asset_id(301);
     let logo = LogoUri::new(LogoScheme::Ipfs, [0xAAu8; 32], "ipfs://QmNFT".to_string()).unwrap();
@@ -1316,7 +1321,11 @@ fn test_kvp107_logo_uri_validation() {
     assert!(logo.is_ok());
 
     // Valid Data URI (small)
-    let logo = LogoUri::new(LogoScheme::Data, [0xAAu8; 32], "data:image/svg+xml;base64,PHN2Zz4=".to_string());
+    let logo = LogoUri::new(
+        LogoScheme::Data,
+        [0xAAu8; 32],
+        "data:image/svg+xml;base64,PHN2Zz4=".to_string(),
+    );
     assert!(logo.is_ok());
 
     // Too long URI
@@ -1331,7 +1340,11 @@ fn test_kvp107_metadata_uri_validation() {
     use kovanica_state::{MetadataScheme, MetadataUri};
 
     // Valid IPFS URI
-    let meta = MetadataUri::new(MetadataScheme::Ipfs, [0xAAu8; 32], "ipfs://QmMeta".to_string());
+    let meta = MetadataUri::new(
+        MetadataScheme::Ipfs,
+        [0xAAu8; 32],
+        "ipfs://QmMeta".to_string(),
+    );
     assert!(meta.is_ok());
 
     // Too long URI
@@ -1343,19 +1356,22 @@ fn test_kvp107_metadata_uri_validation() {
 
 #[test]
 fn test_kvp107_mint_price_bounds() {
-    use kovanica_state::{MIN_MINT_PRICE, MAX_MINT_PRICE, ATOM};
+    use kovanica_state::{ATOM, MAX_MINT_PRICE, MIN_MINT_PRICE};
 
     assert_eq!(MIN_MINT_PRICE, 1);
-    assert_eq!(MAX_MINT_PRICE, 1 * ATOM); // 1 KVNC per unit
+    assert_eq!(MAX_MINT_PRICE, ATOM); // 1 KVNC per unit
 }
 
 // Helper to create an asset in the ledger's registry with mint price
 fn register_asset_with_mint_price(
-    asset_registry: &mut std::collections::HashMap<kovanica_state::AssetId, kovanica_state::AssetRegistryEntry>,
+    asset_registry: &mut std::collections::HashMap<
+        kovanica_state::AssetId,
+        kovanica_state::AssetRegistryEntry,
+    >,
     asset_id: kovanica_state::AssetId,
     mint_price: u64,
 ) {
-    use kovanica_state::{AssetKind, AssetRegistryEntry, LogoScheme, LogoUri};
+    use kovanica_state::{AssetRegistryEntry, LogoScheme, LogoUri};
 
     let logo = LogoUri::new(LogoScheme::Ipfs, [0xAAu8; 32], "ipfs://QmTest".to_string()).unwrap();
     let entry = AssetRegistryEntry::new_fungible_with_mint_price(

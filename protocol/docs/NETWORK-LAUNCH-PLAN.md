@@ -17,7 +17,7 @@ anything recorded here.
 | Network | Binary profile | Deploy status |
 | --- | --- | --- |
 | `kovanica-testnet` | active, default when `KOVANICA_NETWORK` is unset | **STOPPED + DISABLED** (seed3, 2026-09-28). Backup: `/var/backups/kovanica/seed3-final-20260928-231354.tar.gz` |
-| `kovanica-devnet` | **new** — implemented 2026-09-28 | not launched; local use via `installer/docker/docker-compose.devnet.yml` |
+| `kovanica-devnet` | **new** — implemented 2026-09-28 | not launched; local use via `ops/installer/docker/docker-compose.devnet.yml` |
 | `kovanica-mainnet` | **dormant** — panics without `KOVANICA_MAINNET_OVERRIDE=1` | not launchable. Genesis parameters TBD |
 
 `kovanica-testnet.service` still exists at `/etc/systemd/system/` and is
@@ -115,7 +115,7 @@ try to work around them:
 
 ## Docker: what is and isn't containerised
 
-- **Devnet** — `installer/docker/docker-compose.devnet.yml`. Worth it:
+- **Devnet** — `ops/installer/docker/docker-compose.devnet.yml`. Worth it:
   reproducible multi-node P2P on one host.
 - **Testnet seeds** — stay on systemd. They were already deployed, and a
   container layer in front of inbound P2P adds NAT/`docker-proxy` failure modes
@@ -123,7 +123,7 @@ try to work around them:
 - **Mainnet** — not yet. Dormant, and the authority set is an OPEN governance
   input (RFC-POA §0.7.2).
 
-`installer/docker/docker-compose.yml` is **retired**, gated behind a
+`ops/installer/docker/docker-compose.yml` is **retired**, gated behind a
 `retired-do-not-use` compose profile. It was never runnable: its build pointed at
 `kovanica-install/docker/Dockerfile` (no such path) with a build context
 (`/root/kovanica`) that has no `Cargo.toml` — the cargo workspace is
@@ -157,4 +157,4 @@ every container at the public seeds.
 - `protocol/docs/MAINNET-CRITERIA.md` · `protocol/docs/AUTHORITY-KEY-CEREMONY.md`
 - `protocol/docs/RFC-POA-Migration.md` §0.7.2 (the open governance question)
 - `protocol/OPERATIONS.md` · `protocol/docs/DEPLOY-SEED.md`
-- `installer/docker/docker-compose.devnet.yml` (devnet bring-up)
+- `ops/installer/docker/docker-compose.devnet.yml` (devnet bring-up)

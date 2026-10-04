@@ -843,6 +843,29 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
     func loadSnapshot(path: String, config: LightConfig) throws 
     
     /**
+     * Prepare an unsigned asset creation transaction (KVP-107).
+     *
+     * The caller must fund the creation fee (1000 KVNC) + protocol fee from the
+     * signing key's native KVNC UTXOs. The transaction creates an output with the
+     * new asset_id (value = 0 for fungible, 1 for NFT) to the signer, registering
+     * the asset in the ledger's asset registry with the specified parameters.
+     *
+     * Returns the unsigned transaction, sighash, derived asset_id, and other details.
+     */
+    func prepareCreateAsset(signingSecretHex: String, maxSupply: UInt64, kind: UInt8, mintPricePerUnit: UInt64, logoUri: LogoUriRecord?, metadataUri: MetadataUriRecord?) throws  -> PrepareCreateAssetResult
+    
+    /**
+     * Prepare an unsigned mint transaction for an existing asset (KVP-107).
+     *
+     * The caller must pay the mint fee = `mint_price_per_unit * amount` in native KVNC
+     * (enforced by the ledger). The fee is paid from the signing key's native KVNC UTXOs.
+     * The newly minted `amount` of `asset_id` is sent to `to`.
+     *
+     * Returns the unsigned transaction, sighash, and other details.
+     */
+    func prepareMintAsset(signingSecretHex: String, assetIdHex: String, amount: UInt64, toAddress: String) throws  -> PrepareMintAssetResult
+    
+    /**
      * Pack pending mempool transactions into the next block, signing with this
      * node's authority key. `None` when nothing is pending.
      *
@@ -1576,6 +1599,53 @@ open func loadSnapshot(path: String, config: LightConfig)throws   {try rustCallW
         FfiConverterTypeLightConfig_lower(config),uniffiCallStatus
     )
 }
+}
+    
+    /**
+     * Prepare an unsigned asset creation transaction (KVP-107).
+     *
+     * The caller must fund the creation fee (1000 KVNC) + protocol fee from the
+     * signing key's native KVNC UTXOs. The transaction creates an output with the
+     * new asset_id (value = 0 for fungible, 1 for NFT) to the signer, registering
+     * the asset in the ledger's asset registry with the specified parameters.
+     *
+     * Returns the unsigned transaction, sighash, derived asset_id, and other details.
+     */
+open func prepareCreateAsset(signingSecretHex: String, maxSupply: UInt64, kind: UInt8, mintPricePerUnit: UInt64, logoUri: LogoUriRecord?, metadataUri: MetadataUriRecord?)throws  -> PrepareCreateAssetResult  {
+    return try  FfiConverterTypePrepareCreateAssetResult_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_prepare_create_asset(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(signingSecretHex),
+        FfiConverterUInt64.lower(maxSupply),
+        FfiConverterUInt8.lower(kind),
+        FfiConverterUInt64.lower(mintPricePerUnit),
+        FfiConverterOptionTypeLogoUriRecord.lower(logoUri),
+        FfiConverterOptionTypeMetadataUriRecord.lower(metadataUri),uniffiCallStatus
+    )
+})
+}
+    
+    /**
+     * Prepare an unsigned mint transaction for an existing asset (KVP-107).
+     *
+     * The caller must pay the mint fee = `mint_price_per_unit * amount` in native KVNC
+     * (enforced by the ledger). The fee is paid from the signing key's native KVNC UTXOs.
+     * The newly minted `amount` of `asset_id` is sent to `to`.
+     *
+     * Returns the unsigned transaction, sighash, and other details.
+     */
+open func prepareMintAsset(signingSecretHex: String, assetIdHex: String, amount: UInt64, toAddress: String)throws  -> PrepareMintAssetResult  {
+    return try  FfiConverterTypePrepareMintAssetResult_lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
+        uniffiCallStatus in
+    uniffi_kovanica_ffi_fn_method_lightnode_prepare_mint_asset(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(signingSecretHex),
+        FfiConverterString.lower(assetIdHex),
+        FfiConverterUInt64.lower(amount),
+        FfiConverterString.lower(toAddress),uniffiCallStatus
+    )
+})
 }
     
     /**
@@ -2850,6 +2920,164 @@ public func FfiConverterTypeLightConfig_lower(_ value: LightConfig) -> RustBuffe
 
 
 /**
+ * Logo URI for asset branding (KVP-107) — FFI representation.
+ */
+public struct LogoUriRecord: Equatable, Hashable {
+    /**
+     * URI scheme: 0 = IPFS, 1 = Arweave, 2 = HTTPS, 3 = Data.
+     */
+    public var scheme: UInt8
+    /**
+     * BLAKE3 content hash of the logo image (32 bytes, hex).
+     */
+    public var contentHash: String
+    /**
+     * The URI string (max 256 bytes).
+     */
+    public var uri: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * URI scheme: 0 = IPFS, 1 = Arweave, 2 = HTTPS, 3 = Data.
+         */scheme: UInt8, 
+        /**
+         * BLAKE3 content hash of the logo image (32 bytes, hex).
+         */contentHash: String, 
+        /**
+         * The URI string (max 256 bytes).
+         */uri: String) {
+        self.scheme = scheme
+        self.contentHash = contentHash
+        self.uri = uri
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension LogoUriRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLogoUriRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LogoUriRecord {
+        return
+            try LogoUriRecord(
+                scheme: FfiConverterUInt8.read(from: &buf), 
+                contentHash: FfiConverterString.read(from: &buf), 
+                uri: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LogoUriRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.scheme, into: &buf)
+        FfiConverterString.write(value.contentHash, into: &buf)
+        FfiConverterString.write(value.uri, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLogoUriRecord_lift(_ buf: RustBuffer) throws -> LogoUriRecord {
+    return try FfiConverterTypeLogoUriRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLogoUriRecord_lower(_ value: LogoUriRecord) -> RustBuffer {
+    return FfiConverterTypeLogoUriRecord.lower(value)
+}
+
+
+/**
+ * Extended metadata URI for asset (KVP-107) — FFI representation.
+ */
+public struct MetadataUriRecord: Equatable, Hashable {
+    /**
+     * URI scheme: 0 = IPFS, 1 = Arweave, 2 = HTTPS.
+     */
+    public var scheme: UInt8
+    /**
+     * BLAKE3 content hash of the JSON metadata (32 bytes, hex).
+     */
+    public var contentHash: String
+    /**
+     * The URI string (max 256 bytes).
+     */
+    public var uri: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * URI scheme: 0 = IPFS, 1 = Arweave, 2 = HTTPS.
+         */scheme: UInt8, 
+        /**
+         * BLAKE3 content hash of the JSON metadata (32 bytes, hex).
+         */contentHash: String, 
+        /**
+         * The URI string (max 256 bytes).
+         */uri: String) {
+        self.scheme = scheme
+        self.contentHash = contentHash
+        self.uri = uri
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension MetadataUriRecord: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeMetadataUriRecord: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> MetadataUriRecord {
+        return
+            try MetadataUriRecord(
+                scheme: FfiConverterUInt8.read(from: &buf), 
+                contentHash: FfiConverterString.read(from: &buf), 
+                uri: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: MetadataUriRecord, into buf: inout [UInt8]) {
+        FfiConverterUInt8.write(value.scheme, into: &buf)
+        FfiConverterString.write(value.contentHash, into: &buf)
+        FfiConverterString.write(value.uri, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMetadataUriRecord_lift(_ buf: RustBuffer) throws -> MetadataUriRecord {
+    return try FfiConverterTypeMetadataUriRecord.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeMetadataUriRecord_lower(_ value: MetadataUriRecord) -> RustBuffer {
+    return FfiConverterTypeMetadataUriRecord.lower(value)
+}
+
+
+/**
  * A newly created multisig P2SH address plus its redeem script.
  */
 public struct MultisigAddress: Equatable, Hashable {
@@ -2994,6 +3222,272 @@ public func FfiConverterTypeMultisigSpendOutput_lift(_ buf: RustBuffer) throws -
 #endif
 public func FfiConverterTypeMultisigSpendOutput_lower(_ value: MultisigSpendOutput) -> RustBuffer {
     return FfiConverterTypeMultisigSpendOutput.lower(value)
+}
+
+
+/**
+ * Result of preparing an asset creation transaction (KVP-107).
+ */
+public struct PrepareCreateAssetResult: Equatable, Hashable {
+    /**
+     * The unsigned transaction, hex-encoded.
+     */
+    public var txHex: String
+    /**
+     * The sighash to sign (32 bytes, hex).
+     */
+    public var sighashHex: String
+    /**
+     * The derived asset ID (32 bytes, lowercase hex).
+     */
+    public var assetIdHex: String
+    /**
+     * Total input value in atoms (decimal string).
+     */
+    public var value: String
+    /**
+     * Protocol fee in atoms (decimal string).
+     */
+    public var fee: String
+    /**
+     * Change amount in atoms (decimal string).
+     */
+    public var change: String
+    /**
+     * The funding outpoint (tx_id:hex, index:u32).
+     */
+    public var outpointTx: String
+    public var outpointIndex: UInt32
+    /**
+     * The logo URI (if provided).
+     */
+    public var logoUri: LogoUriRecord?
+    /**
+     * The metadata URI (if provided).
+     */
+    public var metadataUri: MetadataUriRecord?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The unsigned transaction, hex-encoded.
+         */txHex: String, 
+        /**
+         * The sighash to sign (32 bytes, hex).
+         */sighashHex: String, 
+        /**
+         * The derived asset ID (32 bytes, lowercase hex).
+         */assetIdHex: String, 
+        /**
+         * Total input value in atoms (decimal string).
+         */value: String, 
+        /**
+         * Protocol fee in atoms (decimal string).
+         */fee: String, 
+        /**
+         * Change amount in atoms (decimal string).
+         */change: String, 
+        /**
+         * The funding outpoint (tx_id:hex, index:u32).
+         */outpointTx: String, outpointIndex: UInt32, 
+        /**
+         * The logo URI (if provided).
+         */logoUri: LogoUriRecord?, 
+        /**
+         * The metadata URI (if provided).
+         */metadataUri: MetadataUriRecord?) {
+        self.txHex = txHex
+        self.sighashHex = sighashHex
+        self.assetIdHex = assetIdHex
+        self.value = value
+        self.fee = fee
+        self.change = change
+        self.outpointTx = outpointTx
+        self.outpointIndex = outpointIndex
+        self.logoUri = logoUri
+        self.metadataUri = metadataUri
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PrepareCreateAssetResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePrepareCreateAssetResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PrepareCreateAssetResult {
+        return
+            try PrepareCreateAssetResult(
+                txHex: FfiConverterString.read(from: &buf), 
+                sighashHex: FfiConverterString.read(from: &buf), 
+                assetIdHex: FfiConverterString.read(from: &buf), 
+                value: FfiConverterString.read(from: &buf), 
+                fee: FfiConverterString.read(from: &buf), 
+                change: FfiConverterString.read(from: &buf), 
+                outpointTx: FfiConverterString.read(from: &buf), 
+                outpointIndex: FfiConverterUInt32.read(from: &buf), 
+                logoUri: FfiConverterOptionTypeLogoUriRecord.read(from: &buf), 
+                metadataUri: FfiConverterOptionTypeMetadataUriRecord.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PrepareCreateAssetResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.txHex, into: &buf)
+        FfiConverterString.write(value.sighashHex, into: &buf)
+        FfiConverterString.write(value.assetIdHex, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+        FfiConverterString.write(value.fee, into: &buf)
+        FfiConverterString.write(value.change, into: &buf)
+        FfiConverterString.write(value.outpointTx, into: &buf)
+        FfiConverterUInt32.write(value.outpointIndex, into: &buf)
+        FfiConverterOptionTypeLogoUriRecord.write(value.logoUri, into: &buf)
+        FfiConverterOptionTypeMetadataUriRecord.write(value.metadataUri, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrepareCreateAssetResult_lift(_ buf: RustBuffer) throws -> PrepareCreateAssetResult {
+    return try FfiConverterTypePrepareCreateAssetResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrepareCreateAssetResult_lower(_ value: PrepareCreateAssetResult) -> RustBuffer {
+    return FfiConverterTypePrepareCreateAssetResult.lower(value)
+}
+
+
+/**
+ * Result of preparing a mint transaction (KVP-107).
+ */
+public struct PrepareMintAssetResult: Equatable, Hashable {
+    /**
+     * The unsigned transaction, hex-encoded.
+     */
+    public var txHex: String
+    /**
+     * The sighash to sign (32 bytes, hex).
+     */
+    public var sighashHex: String
+    /**
+     * The asset ID being minted (32 bytes, lowercase hex).
+     */
+    public var assetIdHex: String
+    /**
+     * Total input value in atoms (decimal string).
+     */
+    public var value: String
+    /**
+     * Protocol fee in atoms (decimal string).
+     */
+    public var fee: String
+    /**
+     * Change amount in atoms (decimal string).
+     */
+    public var change: String
+    /**
+     * The funding outpoint (tx_id:hex, index:u32).
+     */
+    public var outpointTx: String
+    public var outpointIndex: UInt32
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * The unsigned transaction, hex-encoded.
+         */txHex: String, 
+        /**
+         * The sighash to sign (32 bytes, hex).
+         */sighashHex: String, 
+        /**
+         * The asset ID being minted (32 bytes, lowercase hex).
+         */assetIdHex: String, 
+        /**
+         * Total input value in atoms (decimal string).
+         */value: String, 
+        /**
+         * Protocol fee in atoms (decimal string).
+         */fee: String, 
+        /**
+         * Change amount in atoms (decimal string).
+         */change: String, 
+        /**
+         * The funding outpoint (tx_id:hex, index:u32).
+         */outpointTx: String, outpointIndex: UInt32) {
+        self.txHex = txHex
+        self.sighashHex = sighashHex
+        self.assetIdHex = assetIdHex
+        self.value = value
+        self.fee = fee
+        self.change = change
+        self.outpointTx = outpointTx
+        self.outpointIndex = outpointIndex
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension PrepareMintAssetResult: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypePrepareMintAssetResult: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> PrepareMintAssetResult {
+        return
+            try PrepareMintAssetResult(
+                txHex: FfiConverterString.read(from: &buf), 
+                sighashHex: FfiConverterString.read(from: &buf), 
+                assetIdHex: FfiConverterString.read(from: &buf), 
+                value: FfiConverterString.read(from: &buf), 
+                fee: FfiConverterString.read(from: &buf), 
+                change: FfiConverterString.read(from: &buf), 
+                outpointTx: FfiConverterString.read(from: &buf), 
+                outpointIndex: FfiConverterUInt32.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: PrepareMintAssetResult, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.txHex, into: &buf)
+        FfiConverterString.write(value.sighashHex, into: &buf)
+        FfiConverterString.write(value.assetIdHex, into: &buf)
+        FfiConverterString.write(value.value, into: &buf)
+        FfiConverterString.write(value.fee, into: &buf)
+        FfiConverterString.write(value.change, into: &buf)
+        FfiConverterString.write(value.outpointTx, into: &buf)
+        FfiConverterUInt32.write(value.outpointIndex, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrepareMintAssetResult_lift(_ buf: RustBuffer) throws -> PrepareMintAssetResult {
+    return try FfiConverterTypePrepareMintAssetResult.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypePrepareMintAssetResult_lower(_ value: PrepareMintAssetResult) -> RustBuffer {
+    return FfiConverterTypePrepareMintAssetResult.lower(value)
 }
 
 
@@ -3628,6 +4122,54 @@ fileprivate struct FfiConverterOptionTypeBlockInfo: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeLogoUriRecord: FfiConverterRustBuffer {
+    typealias SwiftType = LogoUriRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeLogoUriRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeLogoUriRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterOptionTypeMetadataUriRecord: FfiConverterRustBuffer {
+    typealias SwiftType = MetadataUriRecord?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeMetadataUriRecord.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeMetadataUriRecord.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]
 
@@ -4011,6 +4553,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_load_snapshot() != 1056) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_prepare_create_asset() != 11118) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_kovanica_ffi_checksum_method_lightnode_prepare_mint_asset() != 58074) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_produce_block() != 12284) {

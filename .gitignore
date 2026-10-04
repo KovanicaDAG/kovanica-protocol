@@ -18,11 +18,31 @@ dist/
 .tanstack/
 .vercel/
 
+# Gradle / Android build output. Bare forms because every Gradle module
+# (apps/android/{app,uniffi}, apps/*/android) grows its own `build/` and
+# `.gradle/`; no legitimate source directory in the tree is named `build`.
+# Anchoring these would silently miss nested modules, which is how ~2.2k
+# generated `.dex`/`.bin` files under apps/android got committed in the first
+# place. If a future package genuinely needs a `build/` source dir, negate it
+# explicitly (`!path/to/build/`).
+build/
+.gradle/
+.kotlin/
+
+# UniFFI native libraries are build output too: `kovanica-ffi/build-android.sh`
+# (and the release CI) cross-compile them straight into this tree, and the copy
+# that used to be committed had already drifted — it predated the derivation
+# entry points in `kovanica-ffi/src/deriv.rs`, so an APK built from a fresh
+# checkout threw UnsatisfiedLinkError on every derive call. Run
+# `protocol/crates/kovanica-ffi/build-android.sh` once (or the `android` job in
+# .github/workflows/ci.yml) before `./gradlew assembleDebug`.
+**/jniLibs/
+
 # Runtime chain data. Contains the founder premine key, operator wallet
 # (possibly a 12/24-word BIP-39 phrase), validator seeds, faucet ledgers and
 # peer ban state. All regenerable; set KOVANICA_DATA outside the checkout.
 crates/*/data/
-desktop-app/data/
+apps/desktop-node/data/
 # Anchorless so it also covers protocol/data/ and any other nested crate —
 # a pattern with a slash is anchored to this file's directory, which silently
 # misses nested trees (this is what let protocol/data/alpha.snap get committed).
@@ -35,12 +55,12 @@ desktop-app/data/
 # must agree on the set. Never add a secret to it.
 authority-keys/*.env
 mainnet-authority-keys/*.env
-deploy/*/data/
-deploy/*/keys/
-deploy/*/logs/
-deploy/*/seeds/*/keys/
-deploy/testnet/authority-keys/*.env
-deploy/mainnet/authority-keys/*.env
+ops/deploy/*/data/
+ops/deploy/*/keys/
+ops/deploy/*/logs/
+ops/deploy/*/seeds/*/keys/
+ops/deploy/testnet/authority-keys/*.env
+ops/deploy/mainnet/authority-keys/*.env
 
 # Local environment. *.example files are the documented exception.
 .env
@@ -62,6 +82,10 @@ deploy/mainnet/authority-keys/*.env
 /kovanica-clean-setup.sh
 /kovanica_dev_setup.sh
 /PRE-MIGRATION-LS.txt
+
+# Unify kit — unzipped at .unify-kit/, never commit it.
+/.unify-kit/
+/kovanica-unify-kit.zip
 
 # Editor / OS noise
 .DS_Store

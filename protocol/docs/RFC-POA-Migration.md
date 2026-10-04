@@ -443,7 +443,7 @@ difficulty carries a short note pointing here. Canonical list:
 `protocol/OPERATIONS.md`, `protocol/HOWTO_MINE.md` (superseded tombstone),
 `protocol/HOWTO_GET_KVNC.md`, `protocol/TESTNET.md`,
 `protocol/TESTNET-RFC006.md`, `protocol/README.md`, `protocol/TODO.md`,
-`MASTER-ROADMAP.md`, `NETWORK.md`, `web/site/DEPLOY.md`, `node/README.md`,
+`MASTER-ROADMAP.md`, `NETWORK.md`, `apps/web/DEPLOY.md`, `node/README.md`,
 `node/JOIN.md`, `node/TESTNET.md`, `sdk/COOKBOOK.md`, and the superseded hybrid
 plans in `TODO/plans/RFC-008/`.
 

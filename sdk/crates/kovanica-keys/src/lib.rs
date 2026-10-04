@@ -67,6 +67,16 @@ impl Mnemonic {
         Ok(Mnemonic { inner: mnemonic })
     }
 
+    /// Rebuild from raw BIP-39 entropy (16 or 32 bytes) with the English
+    /// wordlist, recomputing the checksum. Mirrors [`Mnemonic::generate`] for
+    /// callers that already hold deterministic entropy (golden vectors, HSM/KMS
+    /// flows, tests).
+    pub fn from_entropy(entropy: &[u8]) -> Result<Self, KeysError> {
+        let mnemonic = Bip39Mnemonic::from_entropy_in(Language::English, entropy)
+            .map_err(|_| KeysError::MnemonicGeneration)?;
+        Ok(Mnemonic { inner: mnemonic })
+    }
+
     /// Human-readable phrase.
     pub fn phrase(&self) -> String {
         self.inner.to_string()
@@ -88,6 +98,20 @@ impl std::fmt::Debug for Mnemonic {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Mnemonic([REDACTED])")
     }
+}
+
+/// Words in `phrase` that are not in the BIP-39 English wordlist, lowercased
+/// and order-preserving. Empty when every word is known.
+///
+/// Callers use this to distinguish a typo from a checksum failure without
+/// re-implementing the wordlist.
+pub fn unknown_words(phrase: &str) -> Vec<String> {
+    let list = Language::English.word_list();
+    phrase
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .filter(|word| !word.is_empty() && !list.contains(&word.as_str()))
+        .collect()
 }
 
 /// 64-byte BIP-39 seed. Zeroized on drop.
@@ -119,14 +143,101 @@ pub const DERIVATION_ACCOUNT: u32 = 0;
 
 /// SLIP-0010 (ed25519, hardened-only) primitives.
 ///
-/// Port of the reference implementation; known-answer vectors live in
-/// `tests/slip10_vectors.rs` and match the TypeScript mirror in
-/// `web/site/src/lib/wallet/keys.ts` (WebCrypto).
+/// This module is the **canonical Rust implementation** of the derivation
+/// used by every Kovanica client (see `docs/unify/DECISIONS.md`): the protocol
+/// tree re-exports it through `kovanica-wallet`, so there is one algorithm,
+/// not one per tree.
+///
+/// ed25519 defines no normal children, so every path segment is hardened.
+/// [`derive_path`] is the generic walk used to check the algorithm against the
+/// official SLIP-0010 specification vectors; production code calls
+/// [`derive_ed25519`], which applies the frozen Kovanica path
+/// `m/44'/3007'/0'/0'/i'`.
+///
+/// Known-answer vectors live in `tests/slip10_vectors.rs` and match the
+/// TypeScript mirror in `apps/web/src/lib/wallet/keys.ts`.
 pub mod slip10 {
     use hmac::{Hmac, Mac};
     use sha2::Sha512;
 
     type HmacSha512 = Hmac<Sha512>;
+
+    /// SLIP-0010 domain-separation key for ed25519 master nodes.
+    const ED25519_SEED_KEY: &[u8] = b"ed25519 seed";
+
+    /// Hardened-child marker. SLIP-0010 defines a hardened child as
+    /// `i >= 2^31`; ed25519 supports no normal children, so every segment is
+    /// hardened unconditionally.
+    const HARDENED: u32 = 0x8000_0000;
+
+    /// Derive the 32-byte Ed25519 key material at
+    /// `m/44'/3007'/0'/0'/index'` from a 64-byte BIP-39 seed.
+    ///
+    /// This is the frozen Kovanica path and what production code should call.
+    /// The general form is [`derive_path`].
+    pub fn derive_ed25519(input: &[u8; 64], index: u32) -> [u8; 32] {
+        derive_path(
+            input,
+            &[
+                44,
+                crate::SLIP44_COIN_TYPE,
+                crate::DERIVATION_ACCOUNT,
+                0,
+                index,
+            ],
+        )
+    }
+
+    /// SLIP-0010 ed25519 over an arbitrary hardened path, from arbitrary key
+    /// material.
+    ///
+    /// Every segment is hardened: ed25519 defines no normal children, and
+    /// SLIP-0010 spells a hardened child as an index `>= 2^31`, which this
+    /// applies unconditionally. An empty `path` yields the master key.
+    ///
+    /// This is the general form, exposed so the algorithm can be checked
+    /// against the official specification vectors (which use their own path).
+    /// Production code should call [`derive_ed25519`].
+    pub fn derive_path(material: &[u8], path: &[u32]) -> [u8; 32] {
+        let (mut key, mut chain) = split_master(material);
+        for &segment in path {
+            let (child_key, child_chain) = derive_child(&key, &chain, segment | HARDENED);
+            key = child_key;
+            chain = child_chain;
+        }
+        key
+    }
+
+    /// Master node: `I = HMAC-SHA512(key = "ed25519 seed", data = material)`.
+    ///
+    /// The spec allows 128 to 512 bits of input, so the length is not
+    /// constrained here. ed25519 has no invalid-key case, so SLIP-0010's retry
+    /// rule never applies: every 32-byte string is a usable Ed25519 secret.
+    fn split_master(material: &[u8]) -> ([u8; 32], [u8; 32]) {
+        let i = hmac_sha512(ED25519_SEED_KEY, material);
+        (
+            i[..32].try_into().expect("HMAC-SHA512 yields 64 bytes"),
+            i[32..].try_into().expect("HMAC-SHA512 yields 64 bytes"),
+        )
+    }
+
+    /// One hardened CKDpriv step:
+    /// `I = HMAC-SHA512(key = chain, data = 0x00 ‖ ser256(sk) ‖ ser32(index))`.
+    ///
+    /// For ed25519 the child key is `I[..32]` verbatim — there is no
+    /// `+ k_par (mod n)` step, because an ed25519 secret is a byte string and
+    /// not a scalar multiple. `index` is expected to be already hardened.
+    fn derive_child(sk: &[u8; 32], chain: &[u8; 32], index: u32) -> ([u8; 32], [u8; 32]) {
+        // The leading 0x00 pads the key to 33 bytes so the layout is unambiguous.
+        let mut data = [0u8; 1 + 32 + 4];
+        data[1..33].copy_from_slice(sk);
+        data[33..].copy_from_slice(&index.to_be_bytes());
+        let i = hmac_sha512(chain, &data);
+        (
+            i[..32].try_into().expect("HMAC-SHA512 yields 64 bytes"),
+            i[32..].try_into().expect("HMAC-SHA512 yields 64 bytes"),
+        )
+    }
 
     /// HMAC-SHA512 (RFC 2104).
     fn hmac_sha512(key: &[u8], data: &[u8]) -> [u8; 64] {
@@ -136,39 +247,6 @@ pub mod slip10 {
         let mut arr = [0u8; 64];
         arr.copy_from_slice(&out);
         arr
-    }
-
-    /// Master node: `I = HMAC-SHA512(key = "ed25519 seed", data = input)`.
-    fn master(input: &[u8; 64]) -> ([u8; 32], [u8; 32]) {
-        let i = hmac_sha512(b"ed25519 seed", input);
-        (i[..32].try_into().unwrap(), i[32..].try_into().unwrap())
-    }
-
-    /// Hardened child (the only kind ed25519 supports in SLIP-0010):
-    /// `I = HMAC-SHA512(key = chain, data = 0x00 ‖ ser256(sk) ‖ ser32(index))`.
-    fn ckd_hardened(sk: &[u8; 32], chain: &[u8; 32], index: u32) -> ([u8; 32], [u8; 32]) {
-        let mut data = [0u8; 1 + 32 + 4];
-        data[1..33].copy_from_slice(sk);
-        data[33..].copy_from_slice(&(index | 0x8000_0000).to_be_bytes());
-        let i = hmac_sha512(chain, &data);
-        (i[..32].try_into().unwrap(), i[32..].try_into().unwrap())
-    }
-
-    /// Derive at `m/44'/3007'/0'/0'/index'` (all hardened) from a 64-byte input.
-    pub fn derive_ed25519(input: &[u8; 64], index: u32) -> [u8; 32] {
-        let (mut sk, mut chain) = master(input);
-        for step in [
-            44u32,
-            crate::SLIP44_COIN_TYPE,
-            crate::DERIVATION_ACCOUNT,
-            0,
-            index,
-        ] {
-            let (nsk, nchain) = ckd_hardened(&sk, &chain, step);
-            sk = nsk;
-            chain = nchain;
-        }
-        sk
     }
 }
 
@@ -330,6 +408,22 @@ impl Keypair {
     }
 }
 
+/// Strict Ed25519 verification of a signature against a raw 32-byte public key.
+///
+/// Uses the same `verify_strict` rules as [`Keypair::verify`], so a signature
+/// accepted here is accepted by the node. Surfaces that only hold a public key
+/// (watch-only wallets, explorers) use this instead of building a [`Keypair`].
+pub fn verify_signature(
+    pubkey: &[u8; 32],
+    message: &[u8],
+    signature: &Signature,
+) -> Result<(), KeysError> {
+    let key = VerifyingKey::from_bytes(pubkey).map_err(|_| KeysError::InvalidPublicKey)?;
+    let sig = ed25519_dalek::Signature::from_bytes(&signature.0);
+    key.verify_strict(message, &sig)
+        .map_err(|_| KeysError::InvalidSignature)
+}
+
 impl std::fmt::Debug for Keypair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Keypair")
@@ -350,6 +444,9 @@ pub enum KeysError {
     /// Signature verification failed.
     #[error("invalid signature")]
     InvalidSignature,
+    /// Public key bytes are not a valid Ed25519 point.
+    #[error("invalid public key")]
+    InvalidPublicKey,
     /// Unsupported address version byte.
     #[error("unsupported address version 0x{0:02x}")]
     UnsupportedVersion(u8),
