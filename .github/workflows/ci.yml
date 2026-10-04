@@ -50,6 +50,7 @@ jobs:
       android: ${{ steps.f.outputs.android }}
       ios: ${{ steps.f.outputs.ios }}
       desktop: ${{ steps.f.outputs.desktop }}
+      workflows: ${{ steps.f.outputs.workflows }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -62,6 +63,30 @@ jobs:
             android: ['apps/android/**', 'protocol/crates/kovanica-ffi/**']
             ios: ['apps/ios/**', 'protocol/crates/kovanica-ffi/**']
             desktop: ['apps/desktop-node/**', 'apps/console-*/**', 'protocol/crates/**', 'ops/ci/**']
+            workflows: ['.github/workflows/**', 'ops/ci/**']
+
+  # ───────────────────────────────────────────────────────────────────
+  # workflows: validate the workflow files themselves.
+  #
+  # A change that touched only `.github/workflows/**` matched no filter, so this
+  # workflow ran nothing but `Detect changed areas` and the two gitleaks jobs —
+  # the workflows were effectively unvalidated. This job parses every workflow
+  # and checks the things that break silently: a job with neither `runs-on` nor
+  # `uses`, a `needs:` naming a job that does not exist, a
+  # `needs.<job>.outputs.<name>` that no job declares, an unpinned
+  # `steps[].uses`, and a `${{ env.X }}` that no env block defines.
+  # ───────────────────────────────────────────────────────────────────
+  workflows:
+    name: workflows (validate YAML)
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate every workflow
+        run: python3 ops/ci/validate-workflows.py
 
   # ───────────────────────────────────────────────────────────────────
   # protocol: ported from rust-gate.yml + bindings-drift.yml
@@ -561,14 +586,10 @@ jobs:
           cache-dependency-path: package-lock.json
 
       # The schema this validates against is the one the pinned CLI ships, so
-      # the gate cannot drift from the toolchain. v1's `schema.json` comes from
-      # the root workspace install; v2's `config.schema.json` comes from the
-      # desktop-node UI install.
-      - name: Install root workspace (Tauri CLI schema)
-        run: npm ci
-
-      - name: Install desktop-node UI (Tauri v2 CLI schema)
-        working-directory: ./apps/desktop-node/ui
+      # the gate cannot drift from the toolchain. Every Tauri config in the repo
+      # is v2, and `config.schema.json` now comes from the root workspace
+      # install: `apps/desktop-node/ui` is a workspace member (DECISIONS #26).
+      - name: Install workspace (Tauri CLI schema)
         run: npm ci
 
       # Checks schema validity, `http.scope` URL parseability (a Rust-side
