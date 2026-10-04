@@ -21,7 +21,8 @@ second thing that can drift.
 brew install xcodegen
 
 # 1. Build the Rust light node and the Swift bindings it exposes.
-#    Produces protocol/crates/kovanica-ffi/target/kovanica.xcframework.
+#    Produces protocol/target/kovanica.xcframework (the workspace target dir —
+#    build-apple.sh asks `cargo metadata` where it is rather than assuming).
 ./protocol/crates/kovanica-ffi/build-apple.sh
 
 # 2. Generate the Xcode project.

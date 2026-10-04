@@ -13,8 +13,9 @@
 # Output:
 #   protocol/target/kovanica.xcframework   # drag into Xcode / add via SPM local path
 #   (Swift sources + modulemap come from the committed bindings/swift/ —
-#    kovanica.swift is compiled into your app target; kovanicaFFI.h +
-#    kovanicaFFI.modulemap are embedded in the framework headers.)
+#    kovanica.swift is compiled into your app target; kovanicaFFI.h is embedded
+#    in the framework headers, and the modulemap is embedded renamed to
+#    module.modulemap, the name Xcode/Clang actually discover.)
 #
 # The three default slices collapse into two libraries: iOS device, and a
 # universal macOS (aarch64 + x86_64). That is what xcodebuild requires — see the
@@ -97,7 +98,15 @@ for slice_dir in "$STAGE"/*/; do
   while IFS= read -r lib; do set -- "$@" "$lib"; done < "$slice_dir/libs"
   lipo -create "$@" -output "$merged"
 
-  cp bindings/swift/kovanicaFFI.h bindings/swift/kovanicaFFI.modulemap "$slice_dir/"
+  # Xcode only discovers an implicit module map named `module.modulemap` in the
+  # headers directory — the uniffi-emitted name (`kovanicaFFI.modulemap`) is
+  # ignored, and the generated Swift's `#if canImport(kovanicaFFI)` then fails
+  # with "no such module". The module name *inside* the file stays kovanicaFFI,
+  # which is what the Swift bindings import. UniFFI's own guide is explicit:
+  # "If you are creating an XCFramework ... rename the modulemap file to
+  # module.modulemap, the default value expected by Clang and XCFrameworks".
+  cp bindings/swift/kovanicaFFI.h "$slice_dir/"
+  cp bindings/swift/kovanicaFFI.modulemap "$slice_dir/module.modulemap"
 
   XCFRAMEWORK_ARGS+=( -library "$merged" -headers "$slice_dir" )
 done
@@ -109,4 +118,5 @@ echo
 echo "Built $OUT:"
 ls "$OUT"
 echo "Next: add the framework to your app; compile bindings/swift/kovanica.swift"
-echo "into the same target (module name kovanicaFFI via the bundled modulemap)."
+echo "into the same target (module name kovanicaFFI via the bundled"
+echo "module.modulemap)."

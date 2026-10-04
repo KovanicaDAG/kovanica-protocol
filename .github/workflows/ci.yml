@@ -489,11 +489,17 @@ jobs:
         run: ./protocol/crates/kovanica-ffi/build-apple.sh
 
       - name: Verify committed Swift bindings match the Rust surface
+        working-directory: protocol
         run: |
           set -euo pipefail
-          cd protocol
+          # Build the host library the generator reads its metadata from. The
+          # staticlib is used rather than the cdylib because its filename does
+          # not change with the platform: the cdylib is `libkovanica_ffi.so` on
+          # Linux (what the `protocol` job points at) and `.dylib` on macOS,
+          # where this job runs. `uniffi-bindgen --library` accepts either.
+          cargo build --release -p kovanica-ffi
           cargo run -p kovanica-ffi --bin uniffi-bindgen -- generate \
-            --library target/release/libkovanica_ffi.so \
+            --library target/release/libkovanica_ffi.a \
             --language swift --out-dir /tmp/bindgen-swift
           diff -r -x README.md /tmp/bindgen-swift crates/kovanica-ffi/bindings/swift
 

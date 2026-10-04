@@ -51,7 +51,10 @@ targets:
       - path: ../../protocol/crates/kovanica-ffi/bindings/swift/kovanica.swift
     dependencies:
       - package: KeychainSwift
-      - framework: ../../protocol/crates/kovanica-ffi/target/kovanica.xcframework
+      # Cargo writes to the workspace target dir (protocol/target), never to a
+      # crate-local crates/kovanica-ffi/target — build-apple.sh resolves the
+      # same directory via `cargo metadata`. Keep these two in step.
+      - framework: ../../protocol/target/kovanica.xcframework
         embed: false
     settings:
       base:
