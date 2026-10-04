@@ -47,21 +47,31 @@
   - B: Document as unverified, proceed with Phase 1 (moves only, no logic changes)
 - **Decision:** —
 
-### 4. Package Manager Unification (Phase 4)
+### 4. Package Manager Unification (Phase 4) — RESOLVED
 - **Current State:** `build-all.yml` uses pnpm for consoles; apps have `package-lock.json` (npm)
 - **Decision Point:** Phase 4 — choose pnpm workspaces vs npm workspaces
-- **Decision:** —
+- **Decision (owner, 2026-10-04): npm workspaces.** Every tracked lockfile in the repo was
+  already a `package-lock.json` (no `pnpm-lock.yaml` existed), CI already ran `npm ci`, and
+  the desktop jobs were converted pnpm→npm in `c57656d` after `ERR_PNPM_NO_LOCKFILE`. pnpm
+  would have meant rewriting eight lockfiles and every install step to buy nothing the
+  existing npm 11 toolchain does not already provide. See #18 for the workspace itself.
 
 ### 5. Windows Tauri Support (Phase 2/5)
 - **Current State:** `build-all.yml` has Linux Tauri job only
 - **Decision Point:** Add `windows-latest` matrix in Phase 2 CI skeleton
 - **Decision:** —
 
-### 6. Console Shared Import Mechanism
+### 6. Console Shared Import Mechanism — RESOLVED
 - **Current State:** `mobile/console/shared` described as symlink into enterprise workspace
 - **Impact:** Moving to `packages/console-shared` requires understanding import method (alias, relative, symlink)
 - **Action Required:** Verify before Phase 1 move
-- **Decision:** —
+- **Decision (owner, 2026-10-04):** the Phase 1 move to `packages/console-shared` was a pure
+  `git mv`, and the mechanism turned out to be **neither a symlink nor a relative import** —
+  it is a TypeScript path alias. Both `apps/console-kovanica/tsconfig.json` and
+  `apps/console-enterprise/tsconfig.json` map `"@console-shared/*"` to
+  `../../packages/console-shared/src/*` (plus `"include": [..., "../../packages/console-shared/src"]`),
+  and each Vite config repeats it as a `resolve.alias`. Phase 4 keeps the alias and adds a real
+  `package.json` (see #20), so the two consoles need no source change.
 
 ### 7. `node/` Wrapper Fate
 - **Options:**
@@ -417,6 +427,122 @@
   existing `web` CI matrix (`packages/**` was already in that job's path filter),
   so no new top-level job was needed.
 
+### 18. Phase 4 — one npm workspace for the TypeScript surfaces
+- **Finding:** the repo had **six independent npm trees** (`apps/web`,
+  `apps/dashboard/frontend`, `apps/extension`, `apps/console-kovanica`,
+  `apps/console-enterprise`, `packages/api-client`), each with its own
+  `package-lock.json`, and no root manifest at all. Nothing was shared, so
+  `react`, `vite` and `typescript` were installed up to six times per checkout.
+- **Decision:** add a root `package.json` with an explicit `workspaces` list and a
+  single root `package-lock.json`; delete the six per-app lockfiles. Members:
+  `apps/web`, `apps/dashboard/frontend`, `apps/extension`, `apps/console-kovanica`,
+  `apps/console-enterprise`, `packages/api-client`, `packages/console-shared`.
+  The `nf3@0.3.17` override that lived in `apps/web` moved to the root manifest,
+  because npm only applies `overrides` from the workspace root.
+- **Deliberately excluded from the workspace:** `apps/dashboard` (stale, see #22),
+  `apps/desktop-node/ui` (a Tauri v2 app with its own toolchain, not part of the
+  browser/console surfaces) and `sdk/bindings/kovanica-wasm` (a publishable
+  package, see #21).
+- **Console tsconfig/Vite cleanup:** both consoles previously pinned `react`/
+  `react-dom`/`react-router-dom` to **app-local** `./node_modules/...` paths in
+  `paths` and `resolve.alias`. Those directories no longer exist once the tree is
+  hoisted, so the entries were removed and Vite resolves react from the workspace
+  root. `apps/web` gained the opposite entry: `react`/`react-dom` type paths
+  pointing at **its own** `./node_modules/@types/react` (v19), because hoisted
+  radix/tanstack packages would otherwise pull in the root `@types/react` (v18)
+  and break the React-19 build.
+- **CI:** the `web` job now installs once at the root (`npm ci`, cache keyed on
+  the root lockfile) instead of per app; the per-app build/test/lint/typecheck
+  steps are unchanged and still run with `working-directory: ${{ matrix.app }}`.
+  The wasm build is no longer conditional, because a root install resolves the
+  whole workspace tree and `@kovanica/sdk-wasm` is a `file:` dependency of three
+  members. Both desktop jobs likewise install at the root. `package.json` and
+  `package-lock.json` were added to the `web` path filter.
+- **Consensus impact: none.** JavaScript tooling only; no Rust, ledger, node or
+  wire format changed.
+- **Verified:** root `npm ci` exit 0 (1098 lockfile entries); `apps/web`
+  typecheck 0 / lint 0 errors / 21 tests / build OK; `apps/extension` 12 tests +
+  build; `apps/dashboard/frontend` 22 tests + build; both consoles build;
+  `packages/api-client` `check:drift` clean + 13 tests.
+
+### 19. Phase 4 — version drift accepted when collapsing six lockfiles into one
+- **What happened:** a workspace resolves to **one** version per range, so the six
+  old lockfiles (which pinned different versions of the same package) had to
+  collapse. A clean-room `npm install` (all `node_modules` and per-app lockfiles
+  removed first) resolved **115 packages to a different version** than the union
+  of the old lockfiles. The large majority are patch bumps within declared caret
+  ranges; the notable ones are `react`/`react-dom` 19.2.8→19.3.0 (dedupe of the
+  extension up to `apps/web`), `@tanstack/react-router` 1.170.31→1.170.41,
+  `vite` 8.2.2→8.3.2, `better-auth` 1.6.30→1.6.33 and `zod` 4.4.3→4.6.5.
+  Consoles and the dashboard are unaffected (they resolve to the same
+  `react@18.3.1` / `vite@5.4.21` as before).
+- **Why a fresh resolve and not a hand-merge:** the only way to keep the exact old
+  versions is to merge six lockfiles by hand, which means reimplementing npm's
+  hoisting decision. It is also not what npm is designed for. The alternative —
+  seeding from per-app `node_modules` — **preserved versions but produced a
+  lockfile that records only the current platform's optional binaries**
+  (`@esbuild/linux-x64` present, `@esbuild/win32-x64` absent, `@tauri-apps/cli`
+  linux-only). `npm ci` is strictly lockfile-driven, so that tree would break the
+  Windows desktop job. A clean-room install records all platforms
+  (49 `@esbuild/*` keys incl. `win32-x64`; 12 `@tauri-apps/cli` keys incl.
+  `win32-x64-msvc`) and is the only version that is correct everywhere.
+- **Mitigation:** the one real breakage the drift caused — `@tanstack/react-router`
+  1.170.41 now types `ErrorComponentProps.error` as `unknown`, so
+  `apps/web/src/lib/error-component.tsx` no longer compiled — was fixed in source
+  by narrowing (`error instanceof Error && error.message ? … : …`), not by
+  pinning the package back. Every suite was then re-run green (see #18).
+- **Consensus impact: none.** Dependency versions only.
+- **Follow-up:** if any of the bumped packages proves problematic, pin it with a
+  root `overrides` entry rather than restoring per-app lockfiles.
+
+### 20. Phase 4 — `packages/ui` scope is `console-shared` only
+- **Finding:** three disjoint UI trees: `apps/dashboard/frontend/src/components/ui`
+  (28 shadcn/radix files, React 18, Tailwind 3), `apps/web/src/components/ui`
+  (2 files — `button.tsx`, `separator.tsx` — React 19, Tailwind 4) and
+  `packages/console-shared/src/components` (6 files). The only basenames in common
+  are `button.tsx` and `separator.tsx`, and they are **not the same components**:
+  different React majors, different Tailwind majors, different radix ranges.
+- **Decision:** Phase 4 formalizes **only** `console-shared` — it gains a real
+  `package.json` (`@kovanica/console-shared`, private, `type: module`, an `exports`
+  map for `./components`, `./hooks/useKovanica`, `./utils/format`, `./types`,
+  `./api/client`) and declares `react`, `react-dom` and `react-router-dom` as
+  **peerDependencies** (`^18 || ^19`, `^6 || ^7`) so it never pins a major. The
+  `@console-shared/*` alias stays (see #6), so the consoles do not change.
+  The dashboard and web `components/ui` trees stay where they are; merging them is
+  a real refactor, not a move, and would force a React/Tailwind major decision that
+  is out of scope for a structural phase.
+- **Consensus impact: none.** Client-only.
+
+### 21. Phase 4 — deferred: `sdk/bindings/kovanica-wasm` → `packages/wallet-wasm`
+- **Why deferred (owner, 2026-10-04):** the Phase 4 plan lists this move, but the
+  package is the input to `publish-sdk.yml`, which publishes `@kovanica/sdk-wasm`
+  to npm and the Rust crates to crates.io. It is also a `file:` dependency of
+  `apps/web`, `apps/extension` and `apps/dashboard/frontend`. `PROMPT.md` is
+  explicit: do not move or rename `publish-sdk.yml` or anything feeding it without
+  telling the owner first. Doing it here would also mix a publish-surface change
+  into a structural commit.
+- **Decision:** keep the path `sdk/bindings/kovanica-wasm` for now, and do the
+  move later as its own change that updates the workflow, the three `file:` deps
+  and the CI wasm-build steps together.
+- **Consensus impact: none.**
+
+### 22. Phase 4 — stale `apps/dashboard/package.json` + lockfile (report-only)
+- **Finding:** `apps/dashboard/package.json` and `apps/dashboard/package-lock.json`
+  are leftovers from the Phase 1 move (`git log` shows only
+  `7eb47b0 chore(unify): Phase 1 - pure moves per move-map`). `apps/dashboard/`
+  holds `backend/server.py`, `frontend/`, a gitignored `node_modules/`, the
+  manifest and the lockfile — there is **no `src/`, no `index.html` and no Vite
+  config**, so its `build` script cannot run. It is also named `kovanica-dashboard`,
+  the same name as the real `apps/dashboard/frontend`, which npm workspaces rejects
+  as a duplicate. Nothing in `.github/`, `ops/`, `tools/` or `scripts/` references
+  it; the only `apps/dashboard` CI references are the path glob and the
+  `apps/dashboard/frontend` matrix entry.
+- **Decision:** exclude it from the workspace via the explicit member list. It was
+  **not deleted** — the repo rule is "never delete, archive under `archive/` only
+  after a DECIDE flip". Recommended follow-up: flip a DECIDE row and archive
+  `apps/dashboard/package.json` + `apps/dashboard/package-lock.json`.
+- **Consensus impact: none.**
+
 ---
 
 ## Approved Decisions (to be filled during review)
@@ -433,6 +559,11 @@
 | #15 Phase 3b — web + extension use the shared wasm keys | owner (Phase 3 direction) | 2026-10-03 | `7c2ff8c`, `af1ada5` |
 | #16 Phase 3b — dashboard uses the shared WASM core | owner (Phase 3 direction) | 2026-10-04 | `fde6a46`, `914cc49` |
 | #17 Phase 3e — one OpenAPI spec + generated client for the node HTTP API | owner (Phase 3 direction) | 2026-10-04 | `dc8a5fe` |
+| #4/#18 Phase 4 — npm workspaces, one root manifest + lockfile | owner | 2026-10-04 | pending |
+| #19 Phase 4 — version drift accepted when collapsing six lockfiles | owner (Phase 4 direction) | 2026-10-04 | pending |
+| #6/#20 Phase 4 — `packages/ui` = console-shared only, peerDeps, alias kept | owner (Phase 4 direction) | 2026-10-04 | pending |
+| #21 Phase 4 — defer `packages/wallet-wasm` move (publish-sdk gate) | owner | 2026-10-04 | pending |
+| #22 Phase 4 — stale `apps/dashboard` manifest excluded, archive recommended | owner (Phase 4 direction) | 2026-10-04 | pending |
 
 ---
 
@@ -456,6 +587,16 @@ Tag each phase end. Revert via:
 ```bash
 git revert <phase-tag>..HEAD
 ```
+
+### Phase 4 (one TypeScript workspace)
+Self-contained in one commit series. Revert the whole phase with:
+```bash
+git revert --no-commit <phase4-first>^..<phase4-last> && git commit
+```
+That restores the six per-app `package-lock.json` files and the per-app install
+steps. Note the lockfile revert also restores the pre-Phase-4 dependency versions;
+the 115-package drift in #19 is reverted with it. If only the dependency drift must
+be undone, pin the affected packages in the root `overrides` instead of reverting.
 
 ---
 

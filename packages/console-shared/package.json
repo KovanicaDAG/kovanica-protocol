@@ -1,0 +1,23 @@
+{
+  "name": "@kovanica/console-shared",
+  "version": "0.1.0-alpha.1",
+  "private": true,
+  "description": "Shared React components, hooks and helpers for the Kovanica operator consoles.",
+  "type": "module",
+  "//": "Ships TypeScript source. The consoles resolve it through the @console-shared/* tsconfig/vite alias, so no build step is required; declaring it as a workspace package gives it a home for its own dependency declarations.",
+  "exports": {
+    "./components": "./src/components/index.ts",
+    "./hooks/useKovanica": "./src/hooks/useKovanica.ts",
+    "./utils/format": "./src/utils/format.ts",
+    "./types": "./src/types/index.ts",
+    "./api/client": "./src/api/client.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "peerDependencies": {
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0",
+    "react-router-dom": "^6.0.0 || ^7.0.0"
+  }
+}
