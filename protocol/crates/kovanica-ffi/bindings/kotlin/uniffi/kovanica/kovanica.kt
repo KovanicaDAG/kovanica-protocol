@@ -751,6 +751,10 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_load_snapshot(
     ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_prepare_create_asset(
+    ): Int
+    external fun uniffi_kovanica_ffi_checksum_method_lightnode_prepare_mint_asset(
+    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_produce_block(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_produce_empty_block(
@@ -889,6 +893,10 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_load_snapshot(`ptr`: Long,`path`: RustBuffer.ByValue,`config`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Unit
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_prepare_create_asset(`ptr`: Long,`signingSecretHex`: RustBuffer.ByValue,`maxSupply`: Long,`kind`: Byte,`mintPricePerUnit`: Long,`logoUri`: RustBuffer.ByValue,`metadataUri`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
+    external fun uniffi_kovanica_ffi_fn_method_lightnode_prepare_mint_asset(`ptr`: Long,`signingSecretHex`: RustBuffer.ByValue,`assetIdHex`: RustBuffer.ByValue,`amount`: Long,`toAddress`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
+    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_produce_block(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_produce_empty_block(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -1189,6 +1197,12 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_load_snapshot() != 1056) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_prepare_create_asset() != 11118) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_prepare_mint_asset() != 58074) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_produce_block() != 12284) {
@@ -1945,6 +1959,29 @@ public interface LightNodeInterface {
      * the serving peer's word alone.
      */
     fun `loadSnapshot`(`path`: kotlin.String, `config`: LightConfig)
+    
+    /**
+     * Prepare an unsigned asset creation transaction (KVP-107).
+     *
+     * The caller must fund the creation fee (1000 KVNC) + protocol fee from the
+     * signing key's native KVNC UTXOs. The transaction creates an output with the
+     * new asset_id (value = 0 for fungible, 1 for NFT) to the signer, registering
+     * the asset in the ledger's asset registry with the specified parameters.
+     *
+     * Returns the unsigned transaction, sighash, derived asset_id, and other details.
+     */
+    fun `prepareCreateAsset`(`signingSecretHex`: kotlin.String, `maxSupply`: kotlin.ULong, `kind`: kotlin.UByte, `mintPricePerUnit`: kotlin.ULong, `logoUri`: LogoUriRecord?, `metadataUri`: MetadataUriRecord?): PrepareCreateAssetResult
+    
+    /**
+     * Prepare an unsigned mint transaction for an existing asset (KVP-107).
+     *
+     * The caller must pay the mint fee = `mint_price_per_unit * amount` in native KVNC
+     * (enforced by the ledger). The fee is paid from the signing key's native KVNC UTXOs.
+     * The newly minted `amount` of `asset_id` is sent to `to`.
+     *
+     * Returns the unsigned transaction, sighash, and other details.
+     */
+    fun `prepareMintAsset`(`signingSecretHex`: kotlin.String, `assetIdHex`: kotlin.String, `amount`: kotlin.ULong, `toAddress`: kotlin.String): PrepareMintAssetResult
     
     /**
      * Pack pending mempool transactions into the next block, signing with this
@@ -2882,6 +2919,63 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 }
     }
     
+    
+
+    
+    /**
+     * Prepare an unsigned asset creation transaction (KVP-107).
+     *
+     * The caller must fund the creation fee (1000 KVNC) + protocol fee from the
+     * signing key's native KVNC UTXOs. The transaction creates an output with the
+     * new asset_id (value = 0 for fungible, 1 for NFT) to the signer, registering
+     * the asset in the ledger's asset registry with the specified parameters.
+     *
+     * Returns the unsigned transaction, sighash, derived asset_id, and other details.
+     */
+    @Throws(LightNodeException::class)override fun `prepareCreateAsset`(`signingSecretHex`: kotlin.String, `maxSupply`: kotlin.ULong, `kind`: kotlin.UByte, `mintPricePerUnit`: kotlin.ULong, `logoUri`: LogoUriRecord?, `metadataUri`: MetadataUriRecord?): PrepareCreateAssetResult {
+            return FfiConverterTypePrepareCreateAssetResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_prepare_create_asset(
+        it,
+        
+        FfiConverterString.lower(`signingSecretHex`),
+        FfiConverterULong.lower(`maxSupply`),
+        FfiConverterUByte.lower(`kind`),
+        FfiConverterULong.lower(`mintPricePerUnit`),
+        FfiConverterOptionalTypeLogoUriRecord.lower(`logoUri`),
+        FfiConverterOptionalTypeMetadataUriRecord.lower(`metadataUri`),_status)
+}
+    }
+    )
+    }
+    
+
+    
+    /**
+     * Prepare an unsigned mint transaction for an existing asset (KVP-107).
+     *
+     * The caller must pay the mint fee = `mint_price_per_unit * amount` in native KVNC
+     * (enforced by the ledger). The fee is paid from the signing key's native KVNC UTXOs.
+     * The newly minted `amount` of `asset_id` is sent to `to`.
+     *
+     * Returns the unsigned transaction, sighash, and other details.
+     */
+    @Throws(LightNodeException::class)override fun `prepareMintAsset`(`signingSecretHex`: kotlin.String, `assetIdHex`: kotlin.String, `amount`: kotlin.ULong, `toAddress`: kotlin.String): PrepareMintAssetResult {
+            return FfiConverterTypePrepareMintAssetResult.lift(
+    callWithHandle {
+    uniffiRustCallWithError(LightNodeException) { _status ->
+    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_prepare_mint_asset(
+        it,
+        
+        FfiConverterString.lower(`signingSecretHex`),
+        FfiConverterString.lower(`assetIdHex`),
+        FfiConverterULong.lower(`amount`),
+        FfiConverterString.lower(`toAddress`),_status)
+}
+    }
+    )
+    }
     
 
     
@@ -4033,6 +4127,116 @@ public object FfiConverterTypeLightConfig: FfiConverterRustBuffer<LightConfig> {
 
 
 /**
+ * Logo URI for asset branding (KVP-107) — FFI representation.
+ */
+data class LogoUriRecord (
+    /**
+     * URI scheme: 0 = IPFS, 1 = Arweave, 2 = HTTPS, 3 = Data.
+     */
+    var `scheme`: kotlin.UByte
+    , 
+    /**
+     * BLAKE3 content hash of the logo image (32 bytes, hex).
+     */
+    var `contentHash`: kotlin.String
+    , 
+    /**
+     * The URI string (max 256 bytes).
+     */
+    var `uri`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeLogoUriRecord: FfiConverterRustBuffer<LogoUriRecord> {
+    override fun read(buf: ByteBuffer): LogoUriRecord {
+        return LogoUriRecord(
+            FfiConverterUByte.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: LogoUriRecord) = (
+            FfiConverterUByte.allocationSize(value.`scheme`) +
+            FfiConverterString.allocationSize(value.`contentHash`) +
+            FfiConverterString.allocationSize(value.`uri`)
+    )
+
+    override fun write(value: LogoUriRecord, buf: ByteBuffer) {
+            FfiConverterUByte.write(value.`scheme`, buf)
+            FfiConverterString.write(value.`contentHash`, buf)
+            FfiConverterString.write(value.`uri`, buf)
+    }
+}
+
+
+
+/**
+ * Extended metadata URI for asset (KVP-107) — FFI representation.
+ */
+data class MetadataUriRecord (
+    /**
+     * URI scheme: 0 = IPFS, 1 = Arweave, 2 = HTTPS.
+     */
+    var `scheme`: kotlin.UByte
+    , 
+    /**
+     * BLAKE3 content hash of the JSON metadata (32 bytes, hex).
+     */
+    var `contentHash`: kotlin.String
+    , 
+    /**
+     * The URI string (max 256 bytes).
+     */
+    var `uri`: kotlin.String
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeMetadataUriRecord: FfiConverterRustBuffer<MetadataUriRecord> {
+    override fun read(buf: ByteBuffer): MetadataUriRecord {
+        return MetadataUriRecord(
+            FfiConverterUByte.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: MetadataUriRecord) = (
+            FfiConverterUByte.allocationSize(value.`scheme`) +
+            FfiConverterString.allocationSize(value.`contentHash`) +
+            FfiConverterString.allocationSize(value.`uri`)
+    )
+
+    override fun write(value: MetadataUriRecord, buf: ByteBuffer) {
+            FfiConverterUByte.write(value.`scheme`, buf)
+            FfiConverterString.write(value.`contentHash`, buf)
+            FfiConverterString.write(value.`uri`, buf)
+    }
+}
+
+
+
+/**
  * A newly created multisig P2SH address plus its redeem script.
  */
 data class MultisigAddress (
@@ -4129,6 +4333,206 @@ public object FfiConverterTypeMultisigSpendOutput: FfiConverterRustBuffer<Multis
             FfiConverterULong.write(value.`value`, buf)
             FfiConverterString.write(value.`address`, buf)
             FfiConverterOptionalString.write(value.`assetIdHex`, buf)
+    }
+}
+
+
+
+/**
+ * Result of preparing an asset creation transaction (KVP-107).
+ */
+data class PrepareCreateAssetResult (
+    /**
+     * The unsigned transaction, hex-encoded.
+     */
+    var `txHex`: kotlin.String
+    , 
+    /**
+     * The sighash to sign (32 bytes, hex).
+     */
+    var `sighashHex`: kotlin.String
+    , 
+    /**
+     * The derived asset ID (32 bytes, lowercase hex).
+     */
+    var `assetIdHex`: kotlin.String
+    , 
+    /**
+     * Total input value in atoms (decimal string).
+     */
+    var `value`: kotlin.String
+    , 
+    /**
+     * Protocol fee in atoms (decimal string).
+     */
+    var `fee`: kotlin.String
+    , 
+    /**
+     * Change amount in atoms (decimal string).
+     */
+    var `change`: kotlin.String
+    , 
+    /**
+     * The funding outpoint (tx_id:hex, index:u32).
+     */
+    var `outpointTx`: kotlin.String
+    , 
+    var `outpointIndex`: kotlin.UInt
+    , 
+    /**
+     * The logo URI (if provided).
+     */
+    var `logoUri`: LogoUriRecord?
+    , 
+    /**
+     * The metadata URI (if provided).
+     */
+    var `metadataUri`: MetadataUriRecord?
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePrepareCreateAssetResult: FfiConverterRustBuffer<PrepareCreateAssetResult> {
+    override fun read(buf: ByteBuffer): PrepareCreateAssetResult {
+        return PrepareCreateAssetResult(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+            FfiConverterOptionalTypeLogoUriRecord.read(buf),
+            FfiConverterOptionalTypeMetadataUriRecord.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PrepareCreateAssetResult) = (
+            FfiConverterString.allocationSize(value.`txHex`) +
+            FfiConverterString.allocationSize(value.`sighashHex`) +
+            FfiConverterString.allocationSize(value.`assetIdHex`) +
+            FfiConverterString.allocationSize(value.`value`) +
+            FfiConverterString.allocationSize(value.`fee`) +
+            FfiConverterString.allocationSize(value.`change`) +
+            FfiConverterString.allocationSize(value.`outpointTx`) +
+            FfiConverterUInt.allocationSize(value.`outpointIndex`) +
+            FfiConverterOptionalTypeLogoUriRecord.allocationSize(value.`logoUri`) +
+            FfiConverterOptionalTypeMetadataUriRecord.allocationSize(value.`metadataUri`)
+    )
+
+    override fun write(value: PrepareCreateAssetResult, buf: ByteBuffer) {
+            FfiConverterString.write(value.`txHex`, buf)
+            FfiConverterString.write(value.`sighashHex`, buf)
+            FfiConverterString.write(value.`assetIdHex`, buf)
+            FfiConverterString.write(value.`value`, buf)
+            FfiConverterString.write(value.`fee`, buf)
+            FfiConverterString.write(value.`change`, buf)
+            FfiConverterString.write(value.`outpointTx`, buf)
+            FfiConverterUInt.write(value.`outpointIndex`, buf)
+            FfiConverterOptionalTypeLogoUriRecord.write(value.`logoUri`, buf)
+            FfiConverterOptionalTypeMetadataUriRecord.write(value.`metadataUri`, buf)
+    }
+}
+
+
+
+/**
+ * Result of preparing a mint transaction (KVP-107).
+ */
+data class PrepareMintAssetResult (
+    /**
+     * The unsigned transaction, hex-encoded.
+     */
+    var `txHex`: kotlin.String
+    , 
+    /**
+     * The sighash to sign (32 bytes, hex).
+     */
+    var `sighashHex`: kotlin.String
+    , 
+    /**
+     * The asset ID being minted (32 bytes, lowercase hex).
+     */
+    var `assetIdHex`: kotlin.String
+    , 
+    /**
+     * Total input value in atoms (decimal string).
+     */
+    var `value`: kotlin.String
+    , 
+    /**
+     * Protocol fee in atoms (decimal string).
+     */
+    var `fee`: kotlin.String
+    , 
+    /**
+     * Change amount in atoms (decimal string).
+     */
+    var `change`: kotlin.String
+    , 
+    /**
+     * The funding outpoint (tx_id:hex, index:u32).
+     */
+    var `outpointTx`: kotlin.String
+    , 
+    var `outpointIndex`: kotlin.UInt
+    
+){
+    
+
+    
+
+    
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePrepareMintAssetResult: FfiConverterRustBuffer<PrepareMintAssetResult> {
+    override fun read(buf: ByteBuffer): PrepareMintAssetResult {
+        return PrepareMintAssetResult(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterUInt.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PrepareMintAssetResult) = (
+            FfiConverterString.allocationSize(value.`txHex`) +
+            FfiConverterString.allocationSize(value.`sighashHex`) +
+            FfiConverterString.allocationSize(value.`assetIdHex`) +
+            FfiConverterString.allocationSize(value.`value`) +
+            FfiConverterString.allocationSize(value.`fee`) +
+            FfiConverterString.allocationSize(value.`change`) +
+            FfiConverterString.allocationSize(value.`outpointTx`) +
+            FfiConverterUInt.allocationSize(value.`outpointIndex`)
+    )
+
+    override fun write(value: PrepareMintAssetResult, buf: ByteBuffer) {
+            FfiConverterString.write(value.`txHex`, buf)
+            FfiConverterString.write(value.`sighashHex`, buf)
+            FfiConverterString.write(value.`assetIdHex`, buf)
+            FfiConverterString.write(value.`value`, buf)
+            FfiConverterString.write(value.`fee`, buf)
+            FfiConverterString.write(value.`change`, buf)
+            FfiConverterString.write(value.`outpointTx`, buf)
+            FfiConverterUInt.write(value.`outpointIndex`, buf)
     }
 }
 
@@ -4746,6 +5150,70 @@ public object FfiConverterOptionalTypeBlockInfo: FfiConverterRustBuffer<BlockInf
         } else {
             buf.put(1)
             FfiConverterTypeBlockInfo.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeLogoUriRecord: FfiConverterRustBuffer<LogoUriRecord?> {
+    override fun read(buf: ByteBuffer): LogoUriRecord? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeLogoUriRecord.read(buf)
+    }
+
+    override fun allocationSize(value: LogoUriRecord?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeLogoUriRecord.allocationSize(value)
+        }
+    }
+
+    override fun write(value: LogoUriRecord?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeLogoUriRecord.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterOptionalTypeMetadataUriRecord: FfiConverterRustBuffer<MetadataUriRecord?> {
+    override fun read(buf: ByteBuffer): MetadataUriRecord? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypeMetadataUriRecord.read(buf)
+    }
+
+    override fun allocationSize(value: MetadataUriRecord?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypeMetadataUriRecord.allocationSize(value)
+        }
+    }
+
+    override fun write(value: MetadataUriRecord?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypeMetadataUriRecord.write(value, buf)
         }
     }
 }
