@@ -16,7 +16,7 @@
 //!
 //! **PoA is the only admission regime** (RFC-POA-Migration §0, ratified
 //! 2026-09-25). Since the mandatory PoA reset the live chain is
-//! `08fa538f…`, built by `Node::genesis_with_poa`. Under PoA the genesis
+//! `1a635915…`, built by `Node::genesis_with_poa`. Under PoA the genesis
 //! coinbase tag is `KVA1 || authority_set_hash`
 //! ([`kovanica_state::poa_genesis_tag`]), so **the genesis id commits to the
 //! authority set** — a node configured with a different set derives a
