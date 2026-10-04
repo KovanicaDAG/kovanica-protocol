@@ -564,7 +564,7 @@ jobs:
       # the gate cannot drift from the toolchain. v1's `schema.json` comes from
       # the root workspace install; v2's `config.schema.json` comes from the
       # desktop-node UI install.
-      - name: Install root workspace (Tauri v1 CLI schema)
+      - name: Install root workspace (Tauri CLI schema)
         run: npm ci
 
       - name: Install desktop-node UI (Tauri v2 CLI schema)
@@ -576,6 +576,11 @@ jobs:
       # path-like field actually exists on disk.
       - name: Validate every Tauri config
         run: python3 ops/ci/validate-tauri-config.py
+
+      # A gate that never fails is not a gate: prove it still rejects each
+      # defect class before trusting a green run.
+      - name: Self-test the config gate
+        run: python3 ops/ci/test-validate-tauri-config.py
 
   desktop-node:
     name: desktop-node (fmt / clippy / test)
@@ -630,23 +635,24 @@ jobs:
   # ───────────────────────────────────────────────────────────────────
   # desktop: ported from build-all.yml "linux-tauri" + "windows-tauri"
   #
-  # Non-blocking by design (`continue-on-error: true` on both jobs). They are
-  # release-shaped jobs: producing signed desktop artifacts is a maintainer
-  # decision, not a merge gate.
+  # Blocking. Both jobs used to be `continue-on-error: true`, and desktop-linux
+  # could not have passed at all: the consoles were on Tauri v1 (tauri 1.8.3 ->
+  # wry 0.24 -> webkit2gtk-sys 0.18), which hard-requires pkg-config
+  # `webkit2gtk-4.0` / `javascriptcoregtk-4.0`, while ubuntu-latest is Ubuntu
+  # 24.04 (noble) and ships only `libwebkit2gtk-4.1-dev`. Upstream
+  # tauri-apps/tauri#9662 is closed `not_planned`; the only supported fix was
+  # Tauri v2, which uses 4.1. That migration landed (DECISIONS #25), Linux
+  # bundles build here, and so the `continue-on-error` escape hatch is gone.
+  # Producing *signed* installers is still a maintainer/release concern, but
+  # building and bundling needs no certificate, so these are merge gates now.
   #
-  # desktop-linux is additionally blocked by something no config change can
-  # fix: this app is on Tauri v1 (tauri 1.8.3 -> wry 0.24 -> webkit2gtk-sys
-  # 0.18), which hard-requires pkg-config `webkit2gtk-4.0` /
-  # `javascriptcoregtk-4.0`. ubuntu-latest is Ubuntu 24.04 (noble), which ships
-  # only `libwebkit2gtk-4.1-dev`; `libwebkit2gtk-4.0-dev` does not exist there.
-  # Upstream tauri-apps/tauri#9662 is closed `not_planned` — the only supported
-  # fix is Tauri v2. Do not "repair" this by pinning a deprecated runner image
-  # or by adding another Ubuntu release's apt sources into noble. Migrating the
-  # console app to Tauri v2 is the real follow-up; until then Linux bundling is
-  # exercised locally / on release only.
+  # desktop-linux bundles Kovanica Console only. The two consoles differ in
+  # their config identity and pages, not in how they build; the config gate
+  # above validates both configs and desktop-windows compiles both crates, so a
+  # second multi-minute Linux release build would add cost without signal.
   #
-  # desktop-windows does build: WebView2 is preinstalled on windows-latest and
-  # mingw comes from choco, so no webkit version is involved.
+  # desktop-windows builds both consoles: WebView2 is preinstalled on
+  # windows-latest and mingw comes from choco, so no webkit version is involved.
   # ───────────────────────────────────────────────────────────────────
   desktop-linux:
     name: desktop (Linux Tauri)
@@ -654,7 +660,6 @@ jobs:
     if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
@@ -708,17 +713,15 @@ jobs:
     if: needs.changes.outputs.desktop == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
-    continue-on-error: true
     strategy:
       fail-fast: false
       # Both consoles build here. `apps/console-enterprise` had no gate of any
       # kind before this matrix: its tauri.conf.json was broken in four ways
-      # (the config gate above now covers that) and nothing ever compiled its
-      # Cargo crate or bundled its frontend. WebView2 is preinstalled on
-      # windows-latest and mingw comes from choco, so no webkit version is
-      # involved — this is the one platform where a console actually bundles.
-      # desktop-linux stays kovanica-only: neither console can build on
-      # ubuntu-latest at all (webkit2gtk-4.0 blocker, see above).
+      # (the config gate above now covers that), nothing compiled its Cargo
+      # crate, and its main.rs named a lib target that did not exist. WebView2
+      # is preinstalled on windows-latest and mingw comes from choco, so no
+      # webkit version is involved.
+      # desktop-linux bundles Kovanica Console only — see the note above.
       matrix:
         include:
           - app: apps/console-kovanica
