@@ -12,6 +12,8 @@ name: ci
 #   android   <- build-android.yml (FFI AAR) + ci-cd.yml "android" (APK)
 #   ios       <- ci-cd.yml "ios"
 #   desktop   <- build-all.yml "linux-tauri" + "windows-tauri"
+#                (+ desktop-config / desktop-node: new blocking gates that cover
+#                   apps/console-enterprise and apps/desktop-node)
 #
 # Kept as separate workflows on purpose (do NOT fold in here):
 #   - config-gate.yml, secret-scan.yml   (always-on, no path filter)
@@ -59,7 +61,7 @@ jobs:
             web: ['apps/web/**', 'apps/dashboard/**', 'apps/extension/**', 'packages/**', 'sdk/bindings/**', 'package.json', 'package-lock.json']
             android: ['apps/android/**', 'protocol/crates/kovanica-ffi/**']
             ios: ['apps/ios/**', 'protocol/crates/kovanica-ffi/**']
-            desktop: ['apps/desktop-node/**', 'apps/console-*/**', 'protocol/crates/**']
+            desktop: ['apps/desktop-node/**', 'apps/console-*/**', 'protocol/crates/**', 'ops/ci/**']
 
   # ───────────────────────────────────────────────────────────────────
   # protocol: ported from rust-gate.yml + bindings-drift.yml
@@ -527,6 +529,105 @@ jobs:
           retention-days: 30
 
   # ───────────────────────────────────────────────────────────────────
+  # desktop-config + desktop-node: blocking.
+  #
+  # These two jobs close a real coverage gap: `desktop-linux` and
+  # `desktop-windows` only ever built `apps/console-kovanica`, so
+  # `apps/console-enterprise` (config + 8-line Rust shell) and
+  # `apps/desktop-node` (its own standalone cargo workspace) were compiled by
+  # no gate at all. A change under `apps/desktop-node/**` even triggered the
+  # desktop jobs, which then ignored it.
+  #
+  # They are cheap and hermetic — no bundle, no signing, no webkit — so unlike
+  # the release-shaped jobs below they are safe to make merge gates.
+  # ───────────────────────────────────────────────────────────────────
+  desktop-config:
+    name: desktop (Tauri config gate)
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # The schema this validates against is the one the pinned CLI ships, so
+      # the gate cannot drift from the toolchain. v1's `schema.json` comes from
+      # the root workspace install; v2's `config.schema.json` comes from the
+      # desktop-node UI install.
+      - name: Install root workspace (Tauri v1 CLI schema)
+        run: npm ci
+
+      - name: Install desktop-node UI (Tauri v2 CLI schema)
+        working-directory: ./apps/desktop-node/ui
+        run: npm ci
+
+      # Checks schema validity, `http.scope` URL parseability (a Rust-side
+      # `url::Url` check the JSON Schema cannot express), and that every
+      # path-like field actually exists on disk.
+      - name: Validate every Tauri config
+        run: python3 ops/ci/validate-tauri-config.py
+
+  desktop-node:
+    name: desktop-node (fmt / clippy / test)
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            apps/desktop-node/target
+          key: ${{ runner.os }}-desktop-node-${{ hashFiles('apps/desktop-node/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-desktop-node-
+
+      # `apps/desktop-node` is its own cargo workspace (not a member of
+      # `protocol/`), and `tauri` is an optional dependency behind a feature, so
+      # the default build is a headless node binary. That is why this can run on
+      # ubuntu-latest with no webkit/GTK installed.
+      - name: Verify the committed lockfile is consistent (--locked)
+        working-directory: ./apps/desktop-node
+        run: cargo metadata --locked --format-version 1 > /dev/null
+
+      - name: cargo fmt
+        working-directory: ./apps/desktop-node
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        working-directory: ./apps/desktop-node
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: cargo test
+        working-directory: ./apps/desktop-node
+        run: cargo test --locked
+
+  # ───────────────────────────────────────────────────────────────────
   # desktop: ported from build-all.yml "linux-tauri" + "windows-tauri"
   #
   # Non-blocking by design (`continue-on-error: true` on both jobs). They are
@@ -602,12 +703,28 @@ jobs:
           retention-days: 30
 
   desktop-windows:
-    name: desktop (Windows Tauri)
+    name: desktop (Windows Tauri — ${{ matrix.name }})
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
     runs-on: windows-latest
     timeout-minutes: 60
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      # Both consoles build here. `apps/console-enterprise` had no gate of any
+      # kind before this matrix: its tauri.conf.json was broken in four ways
+      # (the config gate above now covers that) and nothing ever compiled its
+      # Cargo crate or bundled its frontend. WebView2 is preinstalled on
+      # windows-latest and mingw comes from choco, so no webkit version is
+      # involved — this is the one platform where a console actually bundles.
+      # desktop-linux stays kovanica-only: neither console can build on
+      # ubuntu-latest at all (webkit2gtk-4.0 blocker, see above).
+      matrix:
+        include:
+          - app: apps/console-kovanica
+            name: console
+          - app: apps/console-enterprise
+            name: enterprise
     steps:
       - uses: actions/checkout@v4
         with:
@@ -635,13 +752,13 @@ jobs:
       - name: Install frontend dependencies (root workspace)
         run: npm ci
 
-      - name: Build Tauri (Kovanica Console)
-        working-directory: ./apps/console-kovanica
+      - name: Build Tauri (${{ matrix.name }})
+        working-directory: ./${{ matrix.app }}
         run: npm run tauri build
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
-          name: windows-tauri-installer
-          path: apps/console-kovanica/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
+          name: windows-tauri-installer-${{ matrix.name }}
+          path: ${{ matrix.app }}/src-tauri/target/x86_64-pc-windows-gnu/release/bundle/nsis/*.exe
           retention-days: 30
