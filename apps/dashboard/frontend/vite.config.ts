@@ -27,6 +27,11 @@ export default defineConfig({
       },
     },
   },
+  test: {
+    environment: "node",
+    // Instantiates @kovanica/sdk-wasm before each test file imports lib/kvnc.ts.
+    setupFiles: ["./vitest.setup.ts"],
+  },
   build: {
     outDir: "dist",
     sourcemap: true,
@@ -36,7 +41,11 @@ export default defineConfig({
           vendor: ["react", "react-dom", "zustand"],
           ui: ["@radix-ui/react-dialog", "@radix-ui/react-dropdown-menu", "@radix-ui/react-select", "@radix-ui/react-tooltip"],
           charts: ["recharts"],
-          crypto: ["@noble/curves", "@noble/hashes", "@scure/bip39"],
+          // Key handling is the Rust core in WASM, so it gets its own chunk.
+          // The remaining @noble/hashes use is the non-secret asset-id hash in
+          // AssetsPanel; it arrives via a subpath import, so a bare-specifier
+          // manual chunk would come out empty and Rollup would drop it.
+          wasm: ["@kovanica/sdk-wasm"],
           query: ["@tanstack/react-query"],
         },
       },

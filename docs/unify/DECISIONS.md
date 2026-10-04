@@ -308,30 +308,47 @@
 - **Status:** the web app and the extension are done. The dashboard is split
   out to #16.
 
-### 16. Phase 3b — dashboard crypto migration deferred, scoped
-- **Finding:** `apps/dashboard/frontend/src/lib/kvnc.ts` is a full and careful
-  implementation. It covers derivation, phrase handling, `kvnc…dag` encoding,
+### 16. Phase 3b — dashboard crypto now runs on the shared WASM core (RESOLVED)
+- **Finding:** `apps/dashboard/frontend/src/lib/kvnc.ts` was a full and careful
+  implementation. It covered derivation, phrase handling, `kvnc…dag` encoding,
   signing, and an optional AES-GCM at-rest store. Its public API is
   **synchronous**. Its `KeyVault` holds 64-byte material so that later indices
   can be derived. Two consumers rely on that shape: `src/hooks/useKeyVault.ts`
-  and `src/components/WalletPanel.tsx`. The app has no tests at all (`vitest` is
-  configured; no spec files exist), so a key-handling rewrite has no net.
-- **Blocker:** the wasm module initialises asynchronously, but every `kvnc.ts`
-  entry point is sync and is called during render. A faithful swap needs a
-  bootstrap that awaits `init()` first, extra wasm exports that take a raw
-  secret or public key rather than a phrase, and a ready-guarded API across
-  `useKeyVault` and `WalletPanel`.
-- **Decision:** do not fold this into the web and extension swap. Give the
-  dashboard its own sub-PR. It must begin by adding a vector test over the
-  current `kvnc.ts`, so the shared vectors gate the swap before any code moves.
+  and `src/components/WalletPanel.tsx`. The app had no tests at all.
+- **Two steps, deliberately separate.** Step 1 (`fde6a46`) added
+  `src/lib/kvnc.test.ts` (22 tests) pinning the *old* implementation against the
+  shared derivation vectors and wired `npm run test` (`vitest run`) into the
+  `web` CI job, so the swap had a net before any code moved. Step 2 (this
+  decision) replaced the crypto.
+- **Blockers that had to be cleared first:**
+  - the wasm module initialises asynchronously while every `kvnc.ts` entry point
+    is sync and runs during render → `src/main.tsx` now awaits `ready()` before
+    the first `createRoot` (via `.then`, because top-level await needs es2022 and
+    this app ships es2020), and `src/lib/wasm.ts` exposes a ready guard that
+    fails loudly instead of returning undefined;
+  - the core had no "secret → public key", "public key → address", or strict
+    "verify signature" export → added `public_key_from_secret_bytes`,
+    `address_from_public_key`, `address_to_hex`, `verify_signature`, and
+    `signing_key_from_seed_hex` to `sdk/bindings/kovanica-wasm`, plus
+    `kovanica_keys::verify_signature` (a `verify_strict` free function, same
+    rules as `Keypair::verify`) and a `KeysError::InvalidPublicKey` variant.
+- **What stayed in the browser:** only the AES-GCM at-rest envelope, which is
+  WebCrypto, not key derivation. `src/lib/hex.ts` replaces
+  `@noble/hashes/utils.js` and is explicitly documented as non-cryptographic.
+  `@noble/hashes` **stays** for one non-secret use: the domain-separated asset-id
+  hash in `AssetsPanel.tsx`. `@noble/curves` and `@scure/bip39` are gone from the
+  dashboard manifest.
+- **Behaviour change, deliberate:** `parseAddress` now reports one message
+  (`unrecognised address format …`) for every rejected form instead of
+  distinguishing a bad prefix from a bad base58 body. The vector test was
+  updated to match; the rejection itself is unchanged.
 - **Consensus impact:** none (client-only). Private-key handling is
-  security-sensitive, so the conservative split is deliberate.
-- **Status:** open, scoped follow-up. Step 1 landed: `src/lib/kvnc.test.ts`
-  (22 tests) pins the current implementation against the shared derivation
-  vectors and is wired into the `web` CI job (`npm run test` is now
-  `vitest run`). The crypto swap itself is still pending.
-  `@noble/curves`, `@noble/hashes`, and `@scure/bip39` stay in the dashboard
-  manifest until then.
+  security-sensitive, so the conservative split was deliberate.
+- **Evidence:** dashboard `vitest run` 22/22, `tsc --noEmit` exit 0,
+  `vite build` emits `dist/assets/kovanica_wasm_bg-*.wasm` (517 kB); web 21/21,
+  extension 12/12; `sdk` fmt/clippy/tests green (`kovanica-wasm` 13, new Rust
+  helpers covered by host tests); `protocol` `cargo check --workspace --locked`
+  green. The `web` CI job now builds the wasm package for the dashboard too.
 
 ---
 
@@ -347,7 +364,7 @@
 | #13 Phase 3c — Android uses the FFI for all key work | owner (Phase 3 direction) | 2026-10-04 | `88c4047` |
 | #14 iOS golden vectors verified on Linux (no Xcode) | owner (Phase 3 direction) | 2026-10-03 | `efd21b1` |
 | #15 Phase 3b — web + extension use the shared wasm keys | owner (Phase 3 direction) | 2026-10-03 | `7c2ff8c`, `af1ada5` |
-| #16 Phase 3b — dashboard crypto migration deferred, scoped | owner (Phase 3 direction) | 2026-10-03 | — |
+| #16 Phase 3b — dashboard uses the shared WASM core | owner (Phase 3 direction) | 2026-10-04 | — |
 
 ---
 

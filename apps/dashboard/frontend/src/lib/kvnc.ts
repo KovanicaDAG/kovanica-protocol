@@ -15,19 +15,20 @@
  * 4. Keys are never logged, never placed in error messages, and never included
  *    in a fetch body other than the signed transaction hex itself.
  *
- * Key derivation matches the frozen protocol path `m/44'/3007'/0'/0'/i'` with
- * every segment hardened (see protocol AGENTS.md). Do not change this: the
- * SLIP-0010 test vectors pin it, and a second derivation implementation is a
- * standing instruction violation.
+ * Key derivation is NOT implemented here. Every operation below is a thin
+ * adapter over `@kovanica/sdk-wasm`, the WASM build of the Rust client core, so
+ * the frozen protocol path `m/44'/3007'/0'/0'/i'` (every segment hardened, see
+ * protocol AGENTS.md) has exactly one implementation. The SLIP-0010 test
+ * vectors in `protocol/testvectors/vectors.json` pin it, and `kvnc.test.ts`
+ * replays them against this module on every run.
+ *
+ * The only primitives still computed in the browser are the AES-GCM envelope
+ * for the opt-in encrypted store, which is WebCrypto, not key handling.
  */
-import { ed25519 } from '@noble/curves/ed25519.js';
-import { sha512 } from '@noble/hashes/sha2.js';
-import { hmac } from '@noble/hashes/hmac.js';
-import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { wordlist as english } from '@scure/bip39/wordlists/english';
-import { mnemonicToSeedSync, generateMnemonic, validateMnemonic } from '@scure/bip39';
+import { bytesToHex, hexToBytes, utf8ToBytes } from './hex';
+import { requireWasm } from './wasm';
 
-// WebCrypto subtle is async and the noble sync API is not; a cached promise
+// WebCrypto subtle is async and the WASM key calls are sync; a cached promise
 // keeps the sync-looking call sites honest about that without forcing every
 // caller to await twice.
 const subtle = globalThis.crypto?.subtle;
@@ -35,11 +36,9 @@ if (!subtle) {
   throw new Error('WebCrypto unavailable — this surface requires a secure context (HTTPS or localhost).');
 }
 
-/** Hardened-only path, matching protocol crates/kovanica-wallet. */
+/** Hardened-only path, matching the Rust core. */
 export const KVNC_DERIVATION_PATH = "m/44'/3007'/0'/0'/i'";
 export const KVNC_COIN_TYPE = 3007;
-
-const HARDENED = 0x80000000;
 
 const PBKDF2_ITERATIONS = 210_000;
 
@@ -58,117 +57,45 @@ export interface KeyVault {
 }
 
 /* ------------------------------------------------------------------ *
- * SLIP-0010 ed25519 derivation (frozen path)
- *
- * Mirrors crates/kovanica-wallet/src/slip10.rs exactly:
- *   master:  I = HMAC-SHA512(key = "ed25519 seed", data = material)
- *   child:   I = HMAC-SHA512(key = chain_code, data = 0x00 || key || ser32(i))
- * where key = I[..32] and chain_code = I[32..]. The chain code — NOT the key —
- * is the child's HMAC key, and the child key is I[..32] verbatim (no "+ k mod n",
- * because an ed25519 secret is a byte string, not a scalar multiple).
+ * Derivation and address encoding — delegated to the Rust core
  * ------------------------------------------------------------------ */
 
-function hmacSha512(key: Uint8Array, data: Uint8Array): Uint8Array {
-  return hmac(sha512, key, data);
-}
-
-/** Generic hardened-only SLIP-0010 walk. */
-function slip10Path(material: Uint8Array, path: number[]): Uint8Array {
-  let I = hmacSha512(utf8ToBytes('ed25519 seed'), material);
-  let key = I.slice(0, 32);
-  let chain = I.slice(32, 64);
-  for (const segment of path) {
-    const index = (segment | HARDENED) >>> 0;
-    const data = new Uint8Array(1 + 32 + 4);
-    data[0] = 0x00;
-    data.set(key, 1);
-    new DataView(data.buffer).setUint32(33, index, false);
-    I = hmacSha512(chain, data);
-    key = I.slice(0, 32);
-    chain = I.slice(32, 64);
-  }
-  return key;
-}
-
-/** The frozen Kovanica path. Requires 64-byte BIP-39 material. */
+/**
+ * The 32-byte signing key for this vault's index.
+ *
+ * `raw` keeps `KeyPair::from_seed` semantics: a 32-byte seed IS the signing key
+ * and no derivation path applies, so indices are not meaningful. `mnemonic`
+ * walks the frozen hardened path inside the core.
+ */
 function deriveKey(vault: KeyVault, index: number): Uint8Array {
+  const { signing_key_from_seed_hex } = requireWasm();
   if (vault.kind === 'raw') {
-    // `KeyPair::from_seed` semantics: a 32-byte seed IS the signing key, and no
-    // derivation path applies. Indices are therefore not meaningful here.
     if (index !== 0) throw new Error('raw-seed wallets only support index 0');
     return vault.seed;
   }
-  return slip10Path(vault.seed, [44, KVNC_COIN_TYPE, 0, 0, index]);
-}
-
-/* ------------------------------------------------------------------ *
- * Address encoding — 0x00 || ed25519_pk, base58-wrapped as kvnc…dag
- * ------------------------------------------------------------------ */
-
-const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
-
-function base58Encode(bytes: Uint8Array): string {
-  let zeros = 0;
-  while (zeros < bytes.length && bytes[zeros] === 0) zeros++;
-  const digits: number[] = [];
-  for (let i = zeros; i < bytes.length; i++) {
-    let carry = bytes[i];
-    for (let j = 0; j < digits.length; j++) {
-      carry += digits[j] << 8;
-      digits[j] = carry % 58;
-      carry = (carry / 58) | 0;
-    }
-    while (carry > 0) {
-      digits.push(carry % 58);
-      carry = (carry / 58) | 0;
-    }
-  }
-  let out = '1'.repeat(zeros);
-  for (let i = digits.length - 1; i >= 0; i--) out += B58_ALPHABET[digits[i]];
-  return out;
-}
-
-function base58Decode(str: string): Uint8Array {
-  let zeros = 0;
-  while (zeros < str.length && str[zeros] === '1') zeros++;
-  const bytes: number[] = [];
-  for (let i = zeros; i < str.length; i++) {
-    const val = B58_ALPHABET.indexOf(str[i]);
-    if (val < 0) throw new Error('invalid base58 character');
-    let carry = val;
-    for (let j = 0; j < bytes.length; j++) {
-      carry += bytes[j] * 58;
-      bytes[j] = carry & 0xff;
-      carry >>= 8;
-    }
-    while (carry > 0) {
-      bytes.push(carry & 0xff);
-      carry >>= 8;
-    }
-  }
-  const out = new Uint8Array(zeros + bytes.length);
-  for (let i = 0; i < bytes.length; i++) out[zeros + i] = bytes[bytes.length - 1 - i];
-  return out;
+  const keyHex = signing_key_from_seed_hex(bytesToHex(vault.seed), index);
+  return hexToBytes(keyHex);
 }
 
 /** `0x00 || pubkey` rendered as a kvnc…dag address. */
 export function addressFromPublicKey(pub: Uint8Array): string {
-  const payload = new Uint8Array(33);
-  payload[0] = 0x00; // P2PK
-  payload.set(pub, 1);
-  return `kvnc${base58Encode(payload)}dag`;
+  return requireWasm().address_from_public_key(bytesToHex(pub));
 }
 
-/** Accepts a kvnc…dag address or a 64-hex public key. */
+/**
+ * Accepts a kvnc…dag address or a 64-hex public key; returns the 32-byte
+ * public key.
+ */
 export function parseAddress(addr: string): Uint8Array {
-  const a = addr.trim();
-  if (/^[0-9a-fA-F]{64}$/.test(a)) return hexToBytes(a);
-  if (a.startsWith('kvnc') && a.endsWith('dag')) {
-    const raw = base58Decode(a.slice(4, -3));
-    if (raw.length !== 33) throw new Error('malformed kvnc address');
-    return raw.slice(1);
+  const { address_to_hex } = requireWasm();
+  let versioned: string;
+  try {
+    versioned = address_to_hex(addr);
+  } catch {
+    throw new Error('unrecognised address format — expected kvnc…dag or 64-hex public key');
   }
-  throw new Error('unrecognised address format — expected kvnc…dag or 64-hex public key');
+  // `address_to_hex` always yields the 33-byte versioned form (`00 || pubkey`).
+  return hexToBytes(versioned.slice(2));
 }
 
 /* ------------------------------------------------------------------ *
@@ -177,22 +104,22 @@ export function parseAddress(addr: string): Uint8Array {
 
 function vaultFromSeed(seed: Uint8Array, kind: 'mnemonic' | 'raw', index: number): KeyVault {
   const vault: KeyVault = { seed, publicKey: new Uint8Array(32), address: '', kind };
-  const sk = deriveKey(vault, index);
-  const pub = ed25519.getPublicKey(sk);
+  const pub = hexToBytes(requireWasm().public_key_from_secret_bytes(bytesToHex(deriveKey(vault, index))));
   vault.publicKey = pub;
   vault.address = addressFromPublicKey(pub);
   return vault;
 }
 
 export function createWalletFromMnemonic(mnemonic: string, index = 0): KeyVault {
-  if (!validateMnemonic(mnemonic, english)) {
+  const { mnemonic_is_valid, mnemonic_to_seed } = requireWasm();
+  if (!mnemonic_is_valid(mnemonic)) {
     throw new Error('invalid BIP-39 mnemonic (checksum or wordlist mismatch)');
   }
-  return vaultFromSeed(mnemonicToSeedSync(mnemonic), 'mnemonic', index);
+  return vaultFromSeed(new Uint8Array(mnemonic_to_seed(mnemonic, '')), 'mnemonic', index);
 }
 
 export function createNewMnemonic(strengthBits: 128 | 256 = 128): string {
-  return generateMnemonic(english, strengthBits);
+  return requireWasm().generate_mnemonic(strengthBits === 256 ? 24 : 12);
 }
 
 export function walletFromRawSeed(hex: string): KeyVault {
@@ -208,14 +135,17 @@ export function signingKey(vault: KeyVault, index = 0): Uint8Array {
 
 /** 64-byte Ed25519 signature, hex encoded. This is the only thing that leaves the browser. */
 export function signHex(vault: KeyVault, sighashHex: string, index = 0): string {
-  return bytesToHex(ed25519.sign(hexToBytes(sighashHex.trim()), signingKey(vault, index)));
+  const key = deriveKey(vault, index);
+  return requireWasm().sign_sighash_with_seed_hex(bytesToHex(key), sighashHex.trim());
 }
 
 /** Public keys for a range of derivation indices, for watch-only / multisig views. */
 export function deriveAddresses(vault: KeyVault, count: number, from = 0): string[] {
   const out: string[] = [];
   for (let i = from; i < from + count; i++) {
-    out.push(addressFromPublicKey(ed25519.getPublicKey(deriveKey(vault, i))));
+    out.push(addressFromPublicKey(hexToBytes(
+      requireWasm().public_key_from_secret_bytes(bytesToHex(deriveKey(vault, i))),
+    )));
   }
   return out;
 }

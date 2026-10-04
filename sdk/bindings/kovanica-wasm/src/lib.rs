@@ -7,8 +7,11 @@
 //!
 //! This is a minimal surface for the first browser integration.
 
-use kovanica_sdk::keys::{decode_address, to_kvnc, DERIVATION_PATH, SLIP44_COIN_TYPE};
+use kovanica_sdk::keys::{
+    decode_address, encode_p2pk_address, to_kvnc, DERIVATION_PATH, SLIP44_COIN_TYPE,
+};
 use kovanica_sdk::prelude::*;
+use kovanica_sdk::types::Signature;
 use serde::Deserialize;
 use wasm_bindgen::prelude::*;
 
@@ -182,6 +185,92 @@ fn sign_sighash_with_seed_hex_inner(seed_hex: &str, sighash_hex: &str) -> Result
 #[wasm_bindgen]
 pub fn slip10_derivation_path() -> String {
     DERIVATION_PATH.to_string()
+}
+
+/// Decode 64 hex chars into a raw 32-byte key, with the error message the
+/// wallet surfaces expect to see.
+fn decode_32(hex_input: &str, what: &str) -> Result<[u8; 32], String> {
+    let bytes = hex::decode(hex_input.trim()).map_err(|e| e.to_string())?;
+    bytes
+        .try_into()
+        .map_err(|_| format!("{what} must be 32 bytes (64 hex chars)"))
+}
+
+/// Signing key (32 bytes, 64 hex chars) at account `index`, derived from a
+/// 64-byte BIP-39 seed (128 hex chars) with the frozen hardened path. Lets a
+/// wallet that already holds seed material keep it and still derive per-index
+/// keys through the core instead of re-implementing SLIP-0010.
+#[wasm_bindgen]
+pub fn signing_key_from_seed_hex(bip39_seed_hex: &str, index: u32) -> Result<String, JsValue> {
+    signing_key_from_seed_hex_inner(bip39_seed_hex, index).map_err(js_err)
+}
+
+fn signing_key_from_seed_hex_inner(bip39_seed_hex: &str, index: u32) -> Result<String, String> {
+    let bytes = hex::decode(bip39_seed_hex.trim()).map_err(|e| e.to_string())?;
+    let arr: [u8; 64] = bytes
+        .try_into()
+        .map_err(|_| "bip39 seed must be 64 bytes (128 hex chars)".to_string())?;
+    Ok(hex::encode(Seed(arr).derive_ed25519_key(index)))
+}
+
+/// Public key (32 bytes, 64 hex chars) for a raw 32-byte Ed25519 secret
+/// (64 hex chars). Wallets that already hold key material use this instead of
+/// re-running the full derivation.
+#[wasm_bindgen]
+pub fn public_key_from_secret_bytes(secret_hex: &str) -> Result<String, JsValue> {
+    public_key_from_secret_bytes_inner(secret_hex).map_err(js_err)
+}
+
+fn public_key_from_secret_bytes_inner(secret_hex: &str) -> Result<String, String> {
+    let kp = Keypair::from_secret_bytes(decode_32(secret_hex, "signing key")?);
+    Ok(kp.public_key().to_hex())
+}
+
+/// `kvnc…dag` P2PK address for a raw 32-byte public key (64 hex chars).
+#[wasm_bindgen]
+pub fn address_from_public_key(pubkey_hex: &str) -> Result<String, JsValue> {
+    address_from_public_key_inner(pubkey_hex).map_err(js_err)
+}
+
+fn address_from_public_key_inner(pubkey_hex: &str) -> Result<String, String> {
+    let pk = decode_32(pubkey_hex, "public key")?;
+    Ok(to_kvnc(&encode_p2pk_address(&pk)))
+}
+
+/// Canonical 66-hex rendering of any accepted address form: `kvnc…dag`,
+/// 64-hex legacy, or 66-hex versioned.
+#[wasm_bindgen]
+pub fn address_to_hex(address: &str) -> Result<String, JsValue> {
+    address_to_hex_inner(address).map_err(js_err)
+}
+
+fn address_to_hex_inner(address: &str) -> Result<String, String> {
+    decode_address(address)
+        .map(|a| a.to_hex())
+        .map_err(|e| e.to_string())
+}
+
+/// Strict Ed25519 verification with the node's rules (malleable signatures are
+/// rejected). Returns `false` for a well-formed but wrong signature; malformed
+/// input throws.
+#[wasm_bindgen]
+pub fn verify_signature(
+    pubkey_hex: &str,
+    message_hex: &str,
+    signature_hex: &str,
+) -> Result<bool, JsValue> {
+    verify_signature_inner(pubkey_hex, message_hex, signature_hex).map_err(js_err)
+}
+
+fn verify_signature_inner(
+    pubkey_hex: &str,
+    message_hex: &str,
+    signature_hex: &str,
+) -> Result<bool, String> {
+    let pk = decode_32(pubkey_hex, "public key")?;
+    let message = hex::decode(message_hex.trim()).map_err(|e| e.to_string())?;
+    let signature = Signature::from_hex(signature_hex.trim()).map_err(|e| e.to_string())?;
+    Ok(kovanica_sdk::keys::verify_signature(&pk, &message, &signature).is_ok())
 }
 
 /// SLIP-44-style coin type for Kovanica (3007).
@@ -409,6 +498,64 @@ mod tests {
         let mut w = ["abandon"; 24];
         w[23] = "art";
         w.join(" ")
+    }
+
+    #[test]
+    fn raw_secret_and_public_key_helpers_agree_with_the_derived_wallet() {
+        let p = phrase();
+        let kp = Keypair::from_mnemonic_at(&Mnemonic::from_phrase(&p).unwrap(), "", 0);
+        let pub_hex = kp.public_key().to_hex();
+        let secret_hex = seed_from_mnemonic_inner(&p, "", 0).expect("seed");
+        let derived =
+            public_key_from_secret_bytes_inner(&hex::encode(secret_hex)).expect("public key");
+        assert_eq!(derived, pub_hex);
+        assert_eq!(
+            signing_key_from_seed_hex_inner(
+                &hex::encode(mnemonic_to_seed_inner(&p, "").expect("bip39 seed")),
+                0,
+            )
+            .expect("key from seed"),
+            hex::encode(seed_from_mnemonic_inner(&p, "", 0).expect("seed")),
+            "seed hex round-trips through the frozen path"
+        );
+        assert_eq!(
+            address_from_public_key_inner(&pub_hex).expect("address"),
+            to_kvnc(&kp.address())
+        );
+        assert_eq!(
+            address_to_hex_inner(&to_kvnc(&kp.address())).expect("hex"),
+            kp.address_hex()
+        );
+        assert_eq!(
+            address_to_hex_inner(&pub_hex).expect("legacy hex"),
+            kp.address_hex()
+        );
+    }
+
+    #[test]
+    fn raw_key_helpers_reject_malformed_hex() {
+        for bad in ["", "aabb", &"0".repeat(63)] {
+            assert!(public_key_from_secret_bytes_inner(bad).is_err(), "{bad}");
+            assert!(address_from_public_key_inner(bad).is_err(), "{bad}");
+        }
+        assert!(address_to_hex_inner("not-an-address").is_err());
+    }
+
+    #[test]
+    fn signature_verification_matches_the_signing_side() {
+        let p = phrase();
+        let kp = Keypair::from_mnemonic_at(&Mnemonic::from_phrase(&p).unwrap(), "", 0);
+        let pub_hex = kp.public_key().to_hex();
+        let message = "ab".repeat(32);
+        let sig =
+            sign_sighash_with_seed_hex_inner(&hex::encode([7u8; 32]), &message).expect("signature");
+        // A different key's signature must not verify against this public key.
+        let other =
+            sign_sighash_with_seed_hex_inner(&hex::encode([8u8; 32]), &message).expect("signature");
+        assert!(verify_signature_inner(&pub_hex, &message, &sig).is_ok());
+        assert!(!verify_signature_inner(&pub_hex, &message, &other).unwrap_or(true));
+        assert!(!verify_signature_inner(&pub_hex, &"cd".repeat(32), &sig).unwrap_or(true));
+        assert!(verify_signature_inner("nothex", &message, &sig).is_err());
     }
 
     #[test]

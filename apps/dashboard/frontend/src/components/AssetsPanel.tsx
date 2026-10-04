@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Input, Button, Badge, Table } from './ui';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, concatBytes, utf8ToBytes } from '../lib/hex';
 import { Coins, Info, RefreshCw, ArrowRightLeft, Flame } from 'lucide-react';
 import { useDexTokens } from '../hooks/useApi';
 import { useKeyVault } from '../hooks/useKeyVault';
@@ -41,7 +41,7 @@ export function AssetsPanel() {
     if (!s) return null;
     const domain = utf8ToBytes('kovanica-dashboard/asset-id');
     const body = utf8ToBytes(s.toLowerCase());
-    return bytesToHex(sha256(concat(domain, body)));
+    return bytesToHex(sha256(concatBytes(domain, body)));
   }, [symbol]);
 
   const idValid = /^[0-9a-fA-F]{64}$/.test(assetId.trim());

@@ -1,14 +1,18 @@
 /**
- * Baseline coverage for the dashboard key handling before its crypto is
- * migrated onto @kovanica/sdk-wasm (see docs/unify/DECISIONS.md #16).
+ * Coverage for the dashboard key handling, which is a thin adapter over
+ * @kovanica/sdk-wasm (see docs/unify/DECISIONS.md #16).
  *
  * These are the shared golden vectors in protocol/testvectors/vectors.json,
  * generated from the Rust implementation. They pin the frozen derivation path
  * and the kvnc…dag address encoding, so any drift in kvnc.ts fails here first.
+ *
+ * Verification of signatures also goes through the core
+ * (`wasm.verify_signature`), which uses the node's strict rules, so the test no
+ * longer needs a second Ed25519 implementation to check itself.
  */
 import { describe, expect, test } from "vitest";
-import { ed25519 } from "@noble/curves/ed25519.js";
-import { bytesToHex } from "@noble/hashes/utils.js";
+import { bytesToHex } from "./hex";
+import { wasm } from "./wasm";
 
 import vectorsFile from "../../../../../protocol/testvectors/vectors.json";
 import {
@@ -78,7 +82,7 @@ test("signing a sighash verifies against the derived public key", () => {
   const sighash = "ab".repeat(32);
   const signature = signHex(vault, sighash);
   expect(signature).toMatch(/^[0-9a-f]{128}$/);
-  expect(ed25519.verify(signature, sighash, vault.publicKey)).toBe(true);
+  expect(wasm.verify_signature(bytesToHex(vault.publicKey), sighash, signature)).toBe(true);
 });
 
 test("account indices are independent and stable", () => {
@@ -105,13 +109,14 @@ test("deriveAddresses returns the sequential account addresses", () => {
 test("raw-seed vaults use the seed directly and only at index 0", () => {
   const materialHex = "00".repeat(32);
   const vault = walletFromRawSeed(materialHex);
-  const material = new Uint8Array(32);
-  expect(bytesToHex(vault.publicKey)).toBe(bytesToHex(ed25519.getPublicKey(material)));
+  expect(bytesToHex(vault.publicKey)).toBe(wasm.public_key_from_secret_bytes(materialHex));
   expect(bytesToHex(signingKey(vault, 0))).toBe(materialHex);
   expect(() => signingKey(vault, 1)).toThrow(/index 0/);
 });
 
 test("malformed addresses are rejected", () => {
+  // One message for every rejected form now that parsing is the core's job:
+  // a bad prefix and a bad base58 body are the same failure.
   expect(() => parseAddress("not-an-address")).toThrow(/unrecognised|malformed/);
-  expect(() => parseAddress("kvnc1111dag")).toThrow(/malformed/);
+  expect(() => parseAddress("kvnc1111dag")).toThrow(/unrecognised|malformed/);
 });

@@ -4,9 +4,9 @@ import { Wallet, Lock, Unlock, Copy, Check, Eye, EyeOff, KeyRound, Trash2, Shiel
 import { useKeyVault } from '../hooks/useKeyVault';
 import { useUtxos, useHistory, fmtKvnc, fmtNumber } from '../hooks/useApi';
 import type { KeyVault } from '../lib/kvnc';
-import { bytesToHex } from '@noble/hashes/utils.js';
-import { ed25519 } from '@noble/curves/ed25519.js';
+import { bytesToHex } from '../lib/hex';
 import { signingKey } from '../lib/kvnc';
+import { wasm } from '../lib/wasm';
 
 type Mode = 'locked' | 'create' | 'import';
 
@@ -74,7 +74,10 @@ export function WalletPanel() {
 
   const idx = Number.isFinite(Number(index)) && Number(index) >= 0 ? Number(index) : 0;
   const pubHex = vault ? bytesToHex(vault.publicKey) : '';
-  const signPub = vault ? bytesToHex(ed25519.getPublicKey(signingKey(vault, idx))) : '';
+  // Public key for the *selected* index, straight from the Rust core.
+  const signPub = vault
+    ? wasm.public_key_from_secret_bytes(bytesToHex(signingKey(vault, idx)))
+    : '';
 
   function reset() {
     setPhrase('');

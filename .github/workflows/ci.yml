@@ -275,30 +275,31 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # apps/web and apps/extension consume @kovanica/sdk-wasm as a file:
-      # dependency on its pkg/ build output (build output is not committed), so
-      # the wasm package must exist before npm ci / typecheck / test / build.
+      # apps/web, apps/extension and apps/dashboard/frontend consume
+      # @kovanica/sdk-wasm as a file: dependency on its pkg/ build output (build
+      # output is not committed), so the wasm package must exist before npm ci /
+      # typecheck / test / build.
       - name: Setup Rust (wasm32 target for sdk-wasm)
-        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension'
+        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Cache wasm-pack ${{ env.WASM_PACK_VERSION }}
-        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension'
+        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/wasm-pack
           key: wasm-pack-${{ runner.os }}-${{ env.WASM_PACK_VERSION }}
 
       - name: Install wasm-pack ${{ env.WASM_PACK_VERSION }}
-        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension'
+        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
         run: |
           if command -v wasm-pack >/dev/null 2>&1; then wasm-pack --version
           else cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked; fi
 
       - name: Build @kovanica/sdk-wasm
-        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension'
+        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
         run: wasm-pack build sdk/bindings/kovanica-wasm --target web --out-dir pkg
 
       - name: Setup Node.js

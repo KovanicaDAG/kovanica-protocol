@@ -408,6 +408,22 @@ impl Keypair {
     }
 }
 
+/// Strict Ed25519 verification of a signature against a raw 32-byte public key.
+///
+/// Uses the same `verify_strict` rules as [`Keypair::verify`], so a signature
+/// accepted here is accepted by the node. Surfaces that only hold a public key
+/// (watch-only wallets, explorers) use this instead of building a [`Keypair`].
+pub fn verify_signature(
+    pubkey: &[u8; 32],
+    message: &[u8],
+    signature: &Signature,
+) -> Result<(), KeysError> {
+    let key = VerifyingKey::from_bytes(pubkey).map_err(|_| KeysError::InvalidPublicKey)?;
+    let sig = ed25519_dalek::Signature::from_bytes(&signature.0);
+    key.verify_strict(message, &sig)
+        .map_err(|_| KeysError::InvalidSignature)
+}
+
 impl std::fmt::Debug for Keypair {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Keypair")
@@ -428,6 +444,9 @@ pub enum KeysError {
     /// Signature verification failed.
     #[error("invalid signature")]
     InvalidSignature,
+    /// Public key bytes are not a valid Ed25519 point.
+    #[error("invalid public key")]
+    InvalidPublicKey,
     /// Unsupported address version byte.
     #[error("unsupported address version 0x{0:02x}")]
     UnsupportedVersion(u8),
