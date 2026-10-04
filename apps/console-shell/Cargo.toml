@@ -1,0 +1,12 @@
+[package]
+name = "kovanica-console-shell"
+version = "0.1.0"
+description = "Shared Tauri shell for the Kovanica consoles (Console and Enterprise Console)"
+authors = ["Kovanica Protocol"]
+license = "MIT"
+repository = "https://github.com/KovanicaDAG/kovanica-protocol"
+edition = "2021"
+publish = false
+
+[dependencies]
+tauri = { version = "2", features = [] }

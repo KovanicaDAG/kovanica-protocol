@@ -1,82 +1,18 @@
 {
-  "$schema": "https://schema.tauri.app/config/1.0.0",
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kovanica Enterprise Console",
+  "version": "0.1.0",
+  "identifier": "com.kovanica.enterprise-console",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
-    "devPath": "http://localhost:5173",
-    "distDir": "../dist"
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
   },
-  "package": {
-    "productName": "Kovanica Enterprise Console",
-    "version": "0.1.0"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": false,
-      "shell": {
-        "open": true
-      },
-      "fs": {
-        "all": false,
-        "readFile": true,
-        "writeFile": true,
-        "readDir": true,
-        "copyFile": true,
-        "createDir": true,
-        "removeFile": true,
-        "removeDir": true,
-        "exists": true,
-        "scope": ["$APPDATA/kovanica-enterprise/**", "$DOWNLOAD/**"]
-      },
-      "http": {
-        "all": true,
-        "request": true,
-        "scope": ["https://explorer.kovanica.online/**", "https://api.kovanica.online/**"]
-      },
-      "notification": {
-        "all": true
-      },
-      "dialog": {
-        "all": true,
-        "open": true,
-        "save": true
-      }
-    },
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.kovanica.enterprise-console",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ],
-      "resources": [],
-      "externalBin": [],
-      "copyright": "Kovanica Protocol",
-      "category": "Business",
-      "shortDescription": "Enterprise wallet and asset management",
-      "longDescription": "Kovanica Enterprise Console provides multi-user wallets, API keys, transaction monitoring, asset management, RWA/NFT, reporting, and webhooks for the Kovanica Protocol.",
-      "windows": {
-        "nsis": {
-          "installerIcon": "icons/icon.ico"
-        }
-      },
-      "deb": {
-        "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1", "librsvg2-common"]
-      },
-      "macOS": {
-        "exceptionDomain": "explorer.kovanica.online",
-        "signingIdentity": "-"
-      }
-    },
-    "security": {
-      "csp": "default-src 'self' data: https://explorer.kovanica.online https://api.kovanica.online; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://explorer.kovanica.online https://api.kovanica.online ws://localhost:* ws://127.0.0.1:*; font-src 'self' data:;"
-    },
+  "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Kovanica Enterprise Console",
         "width": 1400,
         "height": 900,
@@ -86,11 +22,20 @@
         "transparent": false
       }
     ],
-    "updater": {
-      "active": false,
-      "endpoints": ["https://github.com/KovanicaDAG/kovanica/releases"],
-      "dialog": true,
-      "pubkey": ""
+    "security": {
+      "csp": "default-src 'self' data: https://explorer.kovanica.online https://api.kovanica.online; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https://explorer.kovanica.online https://api.kovanica.online ws://localhost:* ws://127.0.0.1:*; font-src 'self' data:;"
     }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "copyright": "Kovanica Protocol",
+    "category": "Business",
+    "shortDescription": "Enterprise wallet and asset management",
+    "longDescription": "Kovanica Enterprise Console provides multi-user wallets, API keys, transaction monitoring, asset management, RWA/NFT, reporting, and webhooks for the Kovanica Protocol.",
+    "windows": { "nsis": { "installerIcon": "icons/icon.ico" } },
+    "linux": { "deb": { "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1", "librsvg2-common"] } },
+    "macOS": { "exceptionDomain": "explorer.kovanica.online", "signingIdentity": "-" }
   }
 }
