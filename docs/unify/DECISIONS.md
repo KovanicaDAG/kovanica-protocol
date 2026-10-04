@@ -632,6 +632,48 @@
 
 ---
 
+### 25. Option B — both consoles migrated to Tauri v2 behind one shared shell
+
+**Context.** Phase 5 (see #23) recommended Option B: the two consoles stay two products but ship
+from one shell codebase. The owner approved it, and the desktop hygiene work (#24) had already
+added the gates that make a migration like this reviewable. The forcing function is that Tauri v1
+cannot be built on Ubuntu 24.04 at all: `webkit2gtk-sys 0.18` requires pkg-config
+`webkit2gtk-4.0`, which that release no longer ships (`tauri-apps/tauri#9662`, closed
+`not_planned`). Tauri v2 uses `webkit2gtk-4.1`, which Ubuntu 24.04 does ship.
+
+**What changed.**
+- New crate `apps/console-shell` (`kovanica-console-shell`): the shared Tauri entry point. Both
+  consoles depend on it by path and their `src/lib.rs` is now a two-line delegation.
+- Both `src-tauri/Cargo.toml`: `tauri` and `tauri-build` `1.x` → `2`; the v1 `custom-protocol`
+  feature block removed (v2 has no such feature); the `shell-open` feature dropped; `[lib] name`
+  stated explicitly so `main.rs` and the shell agree on the target name — the class of bug that
+  `15d56a3` had to fix.
+- Both `tauri.conf.json` rewritten to the v2 schema: top-level `productName`/`version`/
+  `identifier`, `build.frontendDist`/`devUrl`, `app.windows`/`app.security.csp`, top-level
+  `bundle` with `bundle.linux.deb`, and a `capabilities/default.json` for permissions.
+- `@tauri-apps/cli` `^1.5.0` → `^2` in both `package.json`.
+- `gen/schemas/` committed for both consoles, matching the existing `apps/desktop-node/gen/`
+  precedent. `apps/console-enterprise/src-tauri/Cargo.lock` added (it had none before).
+- `ops/ci/test-validate-tauri-config.py` added — a self-test for the #24 gate, on the principle
+  that a gate which never fails is not a gate.
+
+**The v1 `allowlist` was dropped, not ported.** It granted `shell.open`, `fs`, `http`,
+`notification` and `dialog`, but no Rust code and no frontend code ever called any of it: there
+are no `@tauri-apps/api` imports and no `invoke()` calls in either console, and `withGlobalTauri`
+was never enabled. v2 therefore declares only `core:default`. That is a smaller attack surface
+than v1 shipped with, and it is deliberate rather than incidental — if a console ever needs a
+plugin capability it must be added explicitly, which puts it in review.
+
+**Verification.** Both consoles: `npm run build` (frontend) and `cargo check --all-targets`
+(Tauri v2, `tauri v2.12.1`) pass locally on Linux. `ops/ci/validate-tauri-config.py` passes on
+all three configs; `ops/ci/test-validate-tauri-config.py` passes all five cases. The Windows
+`desktop (Windows Tauri — console|enterprise)` matrix from #24 covers the Windows build.
+
+**Classification:** client-only. **Consensus impact: none** — no `kovanica-dag` or
+`kovanica-state` code, no wire format, no genesis, no ports.
+
+---
+
 ## Approved Decisions (to be filled during review)
 
 | Decision | Approved By | Date | Commit |
@@ -652,6 +694,7 @@
 | #21 Phase 4 — defer `packages/wallet-wasm` move (publish-sdk gate) | owner | 2026-10-04 | `46afb92` |
 | #22 Phase 4 — stale `apps/dashboard` manifest excluded, archive recommended | owner (Phase 4 direction) | 2026-10-04 | `46afb92` |
 | #24 Desktop hygiene — testnet re-pin, Tauri config fixes, blocking desktop gates | owner | 2026-10-04 | `244c731`, `e976008`, `cb0e1cd`, `fdcf66b` |
+| #25 Option B — both consoles migrated to Tauri v2 behind one shared shell | owner (Phase 5 direction) | 2026-10-04 | pending |
 
 ---
 
@@ -698,6 +741,19 @@ Reverting `e976008` alone puts `apps/desktop-node` back to expecting the old tes
 identity; the live network would then fail the genesis-parity check, which is the
 intended signal, not a bug. Reverting `fdcf66b` only removes the new gates — it does
 not restore any coverage the repo had before, because there was none.
+
+### Option B — Tauri v2 migration (DECISIONS #25)
+
+Reverting the migration restores Tauri v1 and the v1 configs. Note that v1 cannot be
+built on Ubuntu 24.04 at all, so a revert puts the consoles back to being unbuildable
+in Linux CI; do it only if the whole approach is being abandoned.
+
+```sh
+git revert <migration sha>   # consoles back to Tauri v1 + v1 configs
+git revert <shell sha>       # removes apps/console-shell
+```
+Deleting `apps/console-shell` without reverting the consoles breaks their builds: both
+depend on it by path.
 
 ---
 
