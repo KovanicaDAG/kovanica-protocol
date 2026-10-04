@@ -11,7 +11,7 @@
 #   SLICES="aarch64-apple-ios" ./build-apple.sh   # subset, space-separated
 #
 # Output:
-#   target/kovanica.xcframework      # drag into Xcode / add via SPM local path
+#   protocol/target/kovanica.xcframework   # drag into Xcode / add via SPM local path
 #   (Swift sources + modulemap come from the committed bindings/swift/ —
 #    kovanica.swift is compiled into your app target; kovanicaFFI.h +
 #    kovanicaFFI.modulemap are embedded in the framework headers.)
@@ -23,17 +23,30 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SLICES="${SLICES:-aarch64-apple-ios aarch64-apple-darwin x86_64-apple-darwin}"
-OUT="target/kovanica.xcframework"
+
+# Cargo writes build artifacts to the WORKSPACE target directory, not to a
+# crate-local one. This script cd's into crates/kovanica-ffi, so a relative
+# `target/...` path points at crates/kovanica-ffi/target/ — a directory Cargo
+# never creates. Asking Cargo where the target directory actually is removes
+# the whole class of bug (it also picks up a CARGO_TARGET_DIR override).
+#
+# Parsed with sed rather than jq: jq is not installed on a stock macOS runner,
+# and `cargo metadata` emits its JSON on a single line, so this is safe.
+TARGET_DIR="$(cargo metadata --format-version 1 --no-deps \
+  | sed -n 's/.*"target_directory":"\([^"]*\)".*/\1/p')"
+[ -n "$TARGET_DIR" ] || { echo "could not resolve the cargo target_directory" >&2; exit 1; }
+
+OUT="$TARGET_DIR/kovanica.xcframework"
 
 XCFRAMEWORK_ARGS=()
 for triple in $SLICES; do
   rustup target add "$triple"
   cargo build --release --target "$triple" -p kovanica-ffi
 
-  lib="target/$triple/release/libkovanica_ffi.a"
+  lib="$TARGET_DIR/$triple/release/libkovanica_ffi.a"
   [ -f "$lib" ] || { echo "missing $lib" >&2; exit 1; }
 
-  slice_dir="target/xcframework/$triple"
+  slice_dir="$TARGET_DIR/xcframework/$triple"
   mkdir -p "$slice_dir"
   cp bindings/swift/kovanicaFFI.h bindings/swift/kovanicaFFI.modulemap "$slice_dir/"
 

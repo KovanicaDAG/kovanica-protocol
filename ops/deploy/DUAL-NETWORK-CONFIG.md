@@ -71,7 +71,6 @@ Shared across all three seeds:
 
 ```
 KOVANICA_NETWORK=kovanica-testnet
-KOVANICA_CONSENSUS=poa
 KOVANICA_LISTEN=0.0.0.0:8000
 KOVANICA_PEERS=<the other two seeds>
 KOVANICA_OPERATOR=0
@@ -87,6 +86,13 @@ There is deliberately no `KOVANICA_FINALITY_DEPTH`, no
 `KOVANICA_PAYLOAD_PRUNING_DEPTH` and no `KOVANICA_BLOCK_PRUNING_DEPTH` here.
 The node reads none of them — they are compiled-in `NetworkProfile` constants,
 and setting them looks authoritative while doing nothing.
+
+There is likewise no `KOVANICA_CONSENSUS`. Earlier revisions of these files set
+it to `poa`, which was inert: no code path reads the variable, and PoA is the
+node's behaviour when it is unset. An earlier revision of this document listed
+it as a shared value; that line is gone for the same reason. The deploy linter
+(`ops/deploy/validate-configs.sh`) now rejects any `KOVANICA_*` variable the
+binary does not read, so an inert assignment cannot come back silently.
 
 | Profile | finality | payload prune | block prune |
 |---|---|---|---|

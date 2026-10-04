@@ -558,16 +558,13 @@ jobs:
           cache: 'npm'
           cache-dependency-path: apps/console-kovanica/package-lock.json
 
-      - name: Install pnpm
-        run: npm install -g pnpm
-
       - name: Install frontend dependencies (Kovanica Console)
         working-directory: ./apps/console-kovanica
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Build Tauri (Kovanica Console)
         working-directory: ./apps/console-kovanica
-        run: pnpm run tauri build
+        run: npm run tauri build
 
       - name: Upload Linux bundles
         uses: actions/upload-artifact@v4
@@ -602,9 +599,6 @@ jobs:
           cache: 'npm'
           cache-dependency-path: apps/console-kovanica/package-lock.json
 
-      - name: Install pnpm
-        run: npm install -g pnpm
-
       - name: Install mingw-w64
         run: choco install mingw -y
 
@@ -613,11 +607,11 @@ jobs:
 
       - name: Install frontend dependencies (Kovanica Console)
         working-directory: ./apps/console-kovanica
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Build Tauri (Kovanica Console)
         working-directory: ./apps/console-kovanica
-        run: pnpm run tauri build
+        run: npm run tauri build
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
