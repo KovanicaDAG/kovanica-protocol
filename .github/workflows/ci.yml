@@ -511,8 +511,17 @@ jobs:
       - name: Build iOS App
         run: |
           cd apps/ios
+          # BUILD.md: "It needs no secrets; code signing for device builds is a
+          # local/App Store step." A generic/platform=iOS build is a device
+          # build, so without these the CodeSign phase fails with "Signing for
+          # KovanicaWallet requires a development team" — the project sets
+          # CODE_SIGN_STYLE: Automatic with an empty DEVELOPMENT_TEAM, and CI
+          # has no certificate. The uploaded .app is a build artifact, not a
+          # distributable one.
           xcodebuild -scheme KovanicaWallet -configuration Release \
-            -destination generic/platform=iOS -derivedDataPath build -quiet
+            -destination generic/platform=iOS -derivedDataPath build -quiet \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
 
       - name: Upload iOS Artifacts
         uses: actions/upload-artifact@v4

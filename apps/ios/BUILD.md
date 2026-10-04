@@ -176,7 +176,8 @@ adding a second rule is the bug this app had.
 latest stable Xcode, runs `build-apple.sh`, verifies the committed Swift
 bindings, runs `xcodegen generate`, then `xcodebuild -configuration Release`,
 and uploads the `.app`. It needs no secrets; code signing for device builds is a
-local/App Store step.
+local/App Store step, so CI passes `CODE_SIGNING_ALLOWED=NO` and the artifact is
+an unsigned build (a link/compile check, not something to distribute).
 
 ## Troubleshooting
 
