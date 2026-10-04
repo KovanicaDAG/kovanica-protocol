@@ -1,0 +1,18 @@
+Kovanica Protocol
+Copyright (c) 2025–2026 KovanicaDAG contributors
+
+This project is dual-licensed under either of
+
+    * Apache License, Version 2.0 (see LICENSE-APACHE)
+    * MIT license (see LICENSE-MIT)
+
+at your option.
+
+The manifests in this repository declare the same terms, as either `MIT`
+(e.g. the desktop consoles) or `MIT OR Apache-2.0` (e.g. `node/`, the desktop
+node, and the published SDK packages).
+
+Unless you explicitly state otherwise, any contribution intentionally
+submitted for inclusion in this project by you, as defined in the Apache-2.0
+license, shall be dual-licensed as above, without any additional terms or
+conditions.
