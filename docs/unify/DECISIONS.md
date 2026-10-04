@@ -56,10 +56,16 @@
   would have meant rewriting eight lockfiles and every install step to buy nothing the
   existing npm 11 toolchain does not already provide. See #18 for the workspace itself.
 
-### 5. Windows Tauri Support (Phase 2/5)
-- **Current State:** `build-all.yml` has Linux Tauri job only
-- **Decision Point:** Add `windows-latest` matrix in Phase 2 CI skeleton
-- **Decision:** —
+### 5. Windows Tauri Support (Phase 2/5) — RESOLVED
+- **Current State:** `build-all.yml` had a Linux Tauri job only
+- **Decision Point:** Add a `windows-latest` matrix in the Phase 2 CI skeleton
+- **Decision (resolved by Phase 4, 2026-10-04):** `ci.yml` has both `desktop-linux` and
+  `desktop-windows`. Windows **passes** — `desktop (Windows Tauri)` was green in
+  `37206481413` (9m3s) and again on `main` (`37207565224`), which also proved the Phase 4
+  clean-room root lockfile records the Windows optional binaries (`@esbuild/win32-x64`,
+  `@tauri-apps/cli-win32-x64-msvc`). `desktop-linux` still fails on the unrelated webkit
+  blocker (see #23 / `PHASE5-DESKTOP-EVALUATION.md` §4.1) and is `continue-on-error: true`.
+  `build-all.yml`'s `windows-tauri` release job remains tag/manual.
 
 ### 6. Console Shared Import Mechanism — RESOLVED
 - **Current State:** `mobile/console/shared` described as symlink into enterprise workspace
@@ -542,6 +548,36 @@
   after a DECIDE flip". Recommended follow-up: flip a DECIDE row and archive
   `apps/dashboard/package.json` + `apps/dashboard/package-lock.json`.
 - **Consensus impact: none.**
+
+### 23. Phase 5 — one desktop shell (evaluate only; a recommendation, not a migration)
+- **Deliverable:** `docs/unify/PHASE5-DESKTOP-EVALUATION.md` — the written comparison Phase 5
+  requires before anyone touches the native mobile apps.
+- **Finding:** the two consoles (`apps/console-kovanica`, `apps/console-enterprise`) are the
+  *same product shell with different pages*: same Tauri major (v1), same Rust dependencies (an
+  8-line `tauri::Builder::default().run(...)` each), same React 18 / Vite 5 / Tailwind 3 stack,
+  same `@kovanica/console-shared`, same CSP and window geometry. `apps/desktop-node` is a
+  different category of application: Tauri **v2**, a hand-written vanilla-JS UI, and an embedded
+  `kovanica-node::Node` with a genesis-parity gate (2,481 lines of Rust).
+- **CI coverage:** only `apps/console-kovanica` is built (Linux fails on the webkit blocker,
+  Windows passes). `apps/console-enterprise` and `apps/desktop-node` are **never compiled by
+  any gate**.
+- **Recommendation (Option B):** one shared Tauri shell *codebase*, two products each keeping
+  their own bundle identity, built per platform by one CI matrix — and migrate both consoles
+  v1→v2, which is mandatory regardless (`webkit2gtk-4.0` no longer exists on Ubuntu 24.04;
+  `tauri-apps/tauri#9662` closed `not_planned`). Do **not** merge all three into one binary
+  (it is a product/packaging decision and the UI stacks do not compose), and do **not** replace
+  `apps/android` / `apps/ios` with a Tauri 2 mobile shell — that would move key handling from
+  the UniFFI boundary into a WebView, which is a security regression for a wallet.
+- **Needs owner approval:** Option B changes what gets installed (two bundles, a shared shell
+  crate) and requires a Windows Authenticode / macOS notarization story before installers are
+  shippable. Phase 5 is evaluate-only by the plan, so this is a recommendation, not a change.
+- **Report-only findings:** `apps/console-enterprise/src-tauri/tauri.conf.json` carries the same
+  four v1 schema defects that were fixed in `console-kovanica`; `apps/desktop-node/Cargo.lock`
+  is stale (`cargo check --locked` refuses to run; without `--locked` it resolves and the crate
+  compiles, RC=0); `entitlements.plist` is referenced but does not exist; the repo still has no
+  `LICENSE` file; `build-all.yml` still uses pnpm.
+- **Decision:** deferred to the owner — Phase 5 is evaluate-only by the plan.
+- **Consensus impact: none** (no application code changed).
 
 ---
 
