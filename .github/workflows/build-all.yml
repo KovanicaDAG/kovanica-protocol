@@ -201,18 +201,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: apps/console-kovanica/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install pnpm
-        run: npm install -g pnpm
-
-      - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./apps/console-kovanica
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies (root workspace)
+        run: npm ci
 
       - name: Build Tauri (Kovanica Console)
         working-directory: ./apps/console-kovanica
-        run: pnpm run tauri build
+        run: npm run tauri build
 
       - name: Upload Linux bundles
         uses: actions/upload-artifact@v4
@@ -246,10 +242,7 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: apps/console-kovanica/package-lock.json
-
-      - name: Install pnpm
-        run: npm install -g pnpm
+          cache-dependency-path: package-lock.json
 
       - name: Install mingw-w64
         run: choco install mingw -y
@@ -257,13 +250,12 @@ jobs:
       - name: Add mingw to PATH
         run: echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./apps/console-kovanica
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies (root workspace)
+        run: npm ci
 
       - name: Build Tauri (Kovanica Console)
         working-directory: ./apps/console-kovanica
-        run: pnpm run tauri build
+        run: npm run tauri build
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
@@ -295,21 +287,14 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
-          cache-dependency-path: apps/console-kovanica/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install pnpm
-        run: npm install -g pnpm
-
-      - name: Install Tauri CLI
-        run: cargo install tauri-cli
-
-      - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./apps/console-kovanica
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies (root workspace)
+        run: npm ci
 
       - name: Build Tauri (macOS DMG)
         working-directory: ./apps/console-kovanica
-        run: pnpm run tauri build
+        run: npm run tauri build
 
       - name: Upload macOS DMG
         uses: actions/upload-artifact@v4
