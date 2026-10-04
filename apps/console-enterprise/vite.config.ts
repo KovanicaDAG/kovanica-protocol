@@ -4,17 +4,17 @@ import { fileURLToPath } from 'node:url'
 /**
  * `@console-shared` lives in `packages/console-shared/` outside this app's root.
  * Alias it so Vite resolves imports correctly.
+ *
+ * react / react-dom / react-router-dom are deliberately NOT aliased to this
+ * app's own node_modules: the repo is a single npm workspace, so those packages
+ * are hoisted to the workspace root and Vite's normal resolution finds the one
+ * instance.
  */
-const dep = (name: string) => fileURLToPath(new URL(`./node_modules/${name}`, import.meta.url))
 const consoleShared = fileURLToPath(new URL(`../../packages/console-shared/src`, import.meta.url))
 
 export default defineConfig({
   resolve: {
     alias: [
-      { find: /^react$/, replacement: dep('react') },
-      { find: /^react\/jsx-runtime$/, replacement: dep('react/jsx-runtime') },
-      { find: /^react\/jsx-dev-runtime$/, replacement: dep('react/jsx-dev-runtime') },
-      { find: /^react-router-dom$/, replacement: dep('react-router-dom') },
       { find: /^@console-shared\/(.*)$/, replacement: `${consoleShared}/$1` },
     ],
   },

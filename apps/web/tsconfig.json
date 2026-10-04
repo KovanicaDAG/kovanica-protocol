@@ -15,8 +15,17 @@
     "noEmit": true,
     "types": ["vite/client", "node"],
     "baseUrl": ".",
+    // The repo is one npm workspace, so most packages (radix, tanstack, …) are
+    // hoisted to the root node_modules and their `import … from "react"` would
+    // otherwise resolve to the root's @types/react (v18, used by the React 18
+    // apps). This app is React 19, so pin every react/react-dom reference in
+    // this program to the app-local @types copies.
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"]
     }
   },
   "include": ["src", "server", "tests"]

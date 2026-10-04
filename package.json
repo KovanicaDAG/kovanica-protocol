@@ -1,0 +1,23 @@
+{
+  "name": "kovanica-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kovanica Protocol monorepo root — one npm workspace for the TypeScript surfaces.",
+  "workspaces": [
+    "apps/web",
+    "apps/dashboard/frontend",
+    "apps/extension",
+    "apps/console-kovanica",
+    "apps/console-enterprise",
+    "packages/api-client",
+    "packages/console-shared"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "overrides": {
+    "nf3": "0.3.17"
+  }
+}

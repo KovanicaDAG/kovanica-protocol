@@ -56,7 +56,7 @@ jobs:
           filters: |
             protocol: ['protocol/**', 'node/**']
             sdk: ['sdk/**', 'protocol/crates/kovanica-types/**']
-            web: ['apps/web/**', 'apps/dashboard/**', 'apps/extension/**', 'packages/**', 'sdk/bindings/**']
+            web: ['apps/web/**', 'apps/dashboard/**', 'apps/extension/**', 'packages/**', 'sdk/bindings/**', 'package.json', 'package-lock.json']
             android: ['apps/android/**', 'protocol/crates/kovanica-ffi/**']
             ios: ['apps/ios/**', 'protocol/crates/kovanica-ffi/**']
             desktop: ['apps/desktop-node/**', 'apps/console-*/**', 'protocol/crates/**']
@@ -279,46 +279,42 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # apps/web, apps/extension and apps/dashboard/frontend consume
-      # @kovanica/sdk-wasm as a file: dependency on its pkg/ build output (build
-      # output is not committed), so the wasm package must exist before npm ci /
-      # typecheck / test / build.
+      # The whole TypeScript tree is one npm workspace, so every matrix entry
+      # installs once from the single root package-lock.json. @kovanica/sdk-wasm
+      # is a file: dependency of apps/web, apps/extension and
+      # apps/dashboard/frontend on its pkg/ build output (not committed), and the
+      # root install resolves the entire workspace tree, so pkg/ must exist first.
       - name: Setup Rust (wasm32 target for sdk-wasm)
-        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
       - name: Cache wasm-pack ${{ env.WASM_PACK_VERSION }}
-        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
         uses: actions/cache@v4
         with:
           path: ~/.cargo/bin/wasm-pack
           key: wasm-pack-${{ runner.os }}-${{ env.WASM_PACK_VERSION }}
 
       - name: Install wasm-pack ${{ env.WASM_PACK_VERSION }}
-        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
         run: |
           if command -v wasm-pack >/dev/null 2>&1; then wasm-pack --version
           else cargo install wasm-pack --version "$WASM_PACK_VERSION" --locked; fi
 
       - name: Build @kovanica/sdk-wasm
-        if: matrix.app == 'apps/web' || matrix.app == 'apps/extension' || matrix.app == 'apps/dashboard/frontend'
         run: wasm-pack build sdk/bindings/kovanica-wasm --target web --out-dir pkg
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # 24, not 20: these lockfiles were written by npm 11, and npm 10
+          # 24, not 20: the workspace lockfile was written by npm 11, and npm 10
           # resolves some transitive peer dependencies differently. npm ci then
           # refuses the tree it is handed (EUSAGE, "Missing: lru-cache@…").
           # The desktop jobs already pin 24; this keeps one JS runtime in CI.
           node-version: '24'
           cache: 'npm'
-          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install dependencies
-        working-directory: ${{ matrix.app }}
+      - name: Install dependencies (root workspace)
         run: npm ci
 
       - name: Typecheck (apps/web)
@@ -588,10 +584,9 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-          cache-dependency-path: apps/console-kovanica/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./apps/console-kovanica
+      - name: Install frontend dependencies (root workspace)
         run: npm ci
 
       - name: Build Tauri (Kovanica Console)
@@ -629,7 +624,7 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-          cache-dependency-path: apps/console-kovanica/package-lock.json
+          cache-dependency-path: package-lock.json
 
       - name: Install mingw-w64
         run: choco install mingw -y
@@ -637,8 +632,7 @@ jobs:
       - name: Add mingw to PATH
         run: echo "C:\ProgramData\chocolatey\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Install frontend dependencies (Kovanica Console)
-        working-directory: ./apps/console-kovanica
+      - name: Install frontend dependencies (root workspace)
         run: npm ci
 
       - name: Build Tauri (Kovanica Console)
