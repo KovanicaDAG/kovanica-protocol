@@ -104,7 +104,7 @@ impl NodeService {
     /// the RFC-006 treasury tranches (10×1M KVNC vaults with placeholder
     /// keys), so we pass `Some(TreasuryGenesis::placeholder())` — the same
     /// construction the explorer's `genesis_node()` uses to reproduce the
-    /// live genesis `08fa538f…`.
+    /// live genesis `1a635915…`.
     ///
     /// **PoA is the only admission regime** (RFC-POA-Migration §0), so this
     /// boots through `genesis_with_poa`, not the legacy

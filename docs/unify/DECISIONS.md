@@ -581,6 +581,57 @@
 
 ---
 
+### 24. Desktop hygiene — testnet re-pin, Tauri config fixes, and two new blocking gates
+- **Classification: client-only.** No `kovanica-dag` / `kovanica-state` consensus or ledger code
+  is touched. One item changes a **network identity** inside a client app, so it is called out
+  separately below and kept as its own revertable commit.
+- **Network re-pin (`apps/desktop-node`).** The live testnet was reset after the embedded node's
+  authority set and genesis fixture were captured (2026-09-27), leaving `apps/desktop-node` as the
+  only stale component in the repo. The repo already carried the post-reset values elsewhere:
+  `apps/dashboard/backend/server.py` (`TESTNET_GENESIS_PREFIX`, since `7eb47b0`) and the tracked
+  `protocol/authority-keys/authorities.conf` (`KOVANICA_AUTHORITIES`, threshold 2,
+  slot duration 3000). `src/authority_keys.rs` now pins that same three-key set in canonical
+  ascending order, and `LIVE_GENESIS` in `tests/genesis_parity.rs` / `examples/probe_genesis.rs`
+  is `1a6359157df2d1cdb09e04bd420c9d01800840a4415e27cdafff8bb041e6e602`.
+  **Verified, not assumed:** a temporary probe cloned `NetworkProfile::testnet()` and overrode only
+  the authority set — with the live set the embedded node reproduces the live genesis id exactly;
+  with the old set it produces a different id. The probe was deleted. `cargo test --locked` is now
+  **8/8** on `tests/genesis_parity.rs` (was 6/8). This is a pure re-pin: no consensus, ledger, or
+  node logic changed. Re-pinning is what `authority_keys.rs` and `genesis_parity.rs` both document
+  as the required action after a deliberate network reset.
+- **Tauri config fixes.** `apps/console-enterprise/src-tauri/tauri.conf.json` carried the same four
+  Tauri v1 schema defects fixed in `console-kovanica` earlier (`http.scope` wildcard ports,
+  `nsis` referencing three files that do not exist, `deb` and `appimage` nested under
+  `bundle.windows`). All four are fixed to mirror `console-kovanica`. Additionally,
+  `apps/console-enterprise/src-tauri/icons/` **did not exist at all** while `bundle.icon` listed
+  five files — enterprise could not have bundled; the five icons are copied from
+  `console-kovanica`. The dangling `bundle.macOS.entitlements: "entitlements.plist"` reference is
+  **removed from both consoles** rather than inventing a code-signing entitlements policy; there is
+  no signing story yet and macOS is never built in CI. That entitlements policy remains an open
+  owner item.
+- **New gate: `ops/ci/validate-tauri-config.py`** (new `ops/ci/` directory). Validates every Tauri
+  config against the schema the pinned CLI actually ships (v1 `schema.json`, v2
+  `config.schema.json`), checks every `http.scope` entry parses as a real URL (the wildcard-port
+  class the JSON Schema cannot express, because v1 parses the field with `url::Url`), and checks
+  every path-like field resolves relative to the config directory. A config whose kind has no local
+  schema is reported **SKIP**, never silently passed. A negative-test harness (five defect classes
+  plus a control) proves each check fires; it also caught a real bug in the first draft — v1 nests
+  the bundle section under `tauri`, so the initial `config.get("bundle")` skipped every path check.
+- **New blocking CI gates.** `desktop-config` (ubuntu, runs the validator) and `desktop-node`
+  (`cargo metadata --locked`, `cargo fmt --check`, `cargo clippy -D warnings`, `cargo test --locked`)
+  are merge gates, not release jobs — they need no webkit, no signing and no bundle, which is why
+  they can be blocking while the existing desktop build jobs stay `continue-on-error`. This closes
+  the coverage gap recorded in #23: `apps/desktop-node` and `apps/console-enterprise` were
+  previously compiled by nothing. `desktop-windows` is now a matrix over both consoles;
+  `desktop-linux` stays kovanica-only because both consoles fail identically on the webkit blocker,
+  so a matrix there would add no signal.
+- **Decision:** approved by the owner (2026-10-04) as part of the Phase 5 follow-ups — "refresh"
+  the lockfile, "fix" the enterprise config, "add" the compile gates.
+- **Consensus impact: none.** The re-pin changes only which network the desktop *client* expects to
+  join; it does not alter block production, validation, or the ledger.
+
+---
+
 ## Approved Decisions (to be filled during review)
 
 | Decision | Approved By | Date | Commit |
@@ -600,6 +651,7 @@
 | #6/#20 Phase 4 — `packages/ui` = console-shared only, peerDeps, alias kept | owner (Phase 4 direction) | 2026-10-04 | `46afb92` |
 | #21 Phase 4 — defer `packages/wallet-wasm` move (publish-sdk gate) | owner | 2026-10-04 | `46afb92` |
 | #22 Phase 4 — stale `apps/dashboard` manifest excluded, archive recommended | owner (Phase 4 direction) | 2026-10-04 | `46afb92` |
+| #24 Desktop hygiene — testnet re-pin, Tauri config fixes, blocking desktop gates | owner | 2026-10-04 | `244c731`, `e976008`, `cb0e1cd`, `fdcf66b` |
 
 ---
 
@@ -633,6 +685,19 @@ That restores the six per-app `package-lock.json` files and the per-app install
 steps. Note the lockfile revert also restores the pre-Phase-4 dependency versions;
 the 115-package drift in #19 is reverted with it. If only the dependency drift must
 be undone, pin the affected packages in the root `overrides` instead of reverting.
+
+### Desktop hygiene (post-Phase-5 follow-ups, DECISIONS #24)
+Four independent commits, each revertable alone:
+```bash
+git revert 244c731   # lockfile refresh + rustfmt — no behavior change
+git revert e976008   # testnet re-pin — restores the pre-reset authority set and genesis fixture
+git revert cb0e1cd   # console-enterprise config + icons; restores the dangling entitlements reference
+git revert fdcf66b   # the config gate and the desktop-node CI jobs
+```
+Reverting `e976008` alone puts `apps/desktop-node` back to expecting the old testnet
+identity; the live network would then fail the genesis-parity check, which is the
+intended signal, not a bug. Reverting `fdcf66b` only removes the new gates — it does
+not restore any coverage the repo had before, because there was none.
 
 ---
 

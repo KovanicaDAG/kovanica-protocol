@@ -40,12 +40,12 @@ use kovanica_desktop::profile::{
 use kovanica_desktop::service::NodeService;
 
 /// Live testnet genesis id, reported by `/api/bootstrap` + `/api/head`
-/// (captured 2026-09-27, post-PoA reset). The embedded node must reproduce
-/// this exactly. Under PoA the genesis id commits to the authority set, so
-/// this constant pins that set as well.
-const LIVE_GENESIS: &str = "08fa538f2e5963bebcf202bee37075bb6b7cf3d0934598888127a20c0a952b4b";
+/// (re-captured 2026-10-04, after the testnet reset). The embedded node must
+/// reproduce this exactly. Under PoA the genesis id commits to the authority
+/// set, so this constant pins that set as well.
+const LIVE_GENESIS: &str = "1a6359157df2d1cdb09e04bd420c9d01800840a4415e27cdafff8bb041e6e602";
 
-/// Live chain facts used by the gate (captured 2026-09-27, post-PoA reset).
+/// Live chain facts used by the gate (re-captured 2026-10-04, after the reset).
 const LIVE_NETWORK: &str = NETWORK_TESTNET;
 const LIVE_K: u16 = 3;
 const LIVE_SUBSIDY_ATOMS: u64 = 10 * ATOM; // 10 KVNC/block — live /api/head (RFC-006)
@@ -116,9 +116,16 @@ fn authority_set_satisfies_the_rfcp01_invariants() {
     let encoded: Vec<[u8; 32]> = set.authorities().iter().map(|pk| pk.to_bytes()).collect();
     let mut sorted = encoded.clone();
     sorted.sort();
-    assert_eq!(encoded, sorted, "authority keys must be canonically ordered");
+    assert_eq!(
+        encoded, sorted,
+        "authority keys must be canonically ordered"
+    );
     sorted.dedup();
-    assert_eq!(sorted.len(), encoded.len(), "authority keys must be distinct");
+    assert_eq!(
+        sorted.len(),
+        encoded.len(),
+        "authority keys must be distinct"
+    );
 }
 
 #[test]

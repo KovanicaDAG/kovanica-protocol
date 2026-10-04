@@ -11,7 +11,7 @@ use std::net::TcpListener;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kovanica_dag::{BlockId, Block};
+use kovanica_dag::{Block, BlockId};
 use kovanica_node::net;
 use kovanica_node::spv::{BlockFilter, BlockHeader, MerkleProof, SpvClient};
 use kovanica_node::{Node, NodeError};
@@ -792,25 +792,23 @@ impl NodeHandle {
             WorkerCmd::EnableHybrid { .. } => {
                 WorkerResp::HybridStatus("hybrid: disabled under PoA-only".into())
             }
-            WorkerCmd::GetStaking => {
-                WorkerResp::Staking(StakingInfo {
-                    validator_pk: None,
-                    hybrid_enabled: false,
-                    rate_num: 0,
-                    rate_den: 0,
-                    retarget: false,
-                    total_stake: 0,
-                    my_stake: 0,
-                    pending_unbond_height: None,
-                    chain_height: node.chain_height().unwrap_or(0),
-                    issuance_at_height: Node::issuance_at(
-                        datadir.profile.genesis_subsidy,
-                        node.chain_height().unwrap_or(0),
-                    ),
-                    mining: false,
-                    mining_interval_secs: None,
-                })
-            }
+            WorkerCmd::GetStaking => WorkerResp::Staking(StakingInfo {
+                validator_pk: None,
+                hybrid_enabled: false,
+                rate_num: 0,
+                rate_den: 0,
+                retarget: false,
+                total_stake: 0,
+                my_stake: 0,
+                pending_unbond_height: None,
+                chain_height: node.chain_height().unwrap_or(0),
+                issuance_at_height: Node::issuance_at(
+                    datadir.profile.genesis_subsidy,
+                    node.chain_height().unwrap_or(0),
+                ),
+                mining: false,
+                mining_interval_secs: None,
+            }),
             WorkerCmd::BondStake { amount: _ } => {
                 WorkerResp::StakingTx(Err("bond stake: disabled under PoA-only".into()))
             }
@@ -1311,17 +1309,21 @@ mod tests {
 
     #[test]
     #[ignore = "dead under PoA-only (validator/mining/staking APIs removed)"]
-    fn parses_validator_seed_hex_and_rejects_bad_length() { /* dead under PoA */ }
+    fn parses_validator_seed_hex_and_rejects_bad_length() { /* dead under PoA */
+    }
 
     #[test]
     #[ignore = "dead under PoA-only"]
-    fn hybrid_config_matches_ffi_field_values() { /* dead under PoA */ }
+    fn hybrid_config_matches_ffi_field_values() { /* dead under PoA */
+    }
 
     #[test]
     #[ignore = "dead under PoA-only"]
-    fn selects_source_coin_exact_then_split_then_shortfall() { /* dead under PoA */ }
+    fn selects_source_coin_exact_then_split_then_shortfall() { /* dead under PoA */
+    }
 
     #[test]
     #[ignore = "dead under PoA-only (staking/mining lifecycle removed)"]
-    fn bond_then_unbond_lifecycle_on_an_embedded_node() { /* dead under PoA */ }
+    fn bond_then_unbond_lifecycle_on_an_embedded_node() { /* dead under PoA */
+    }
 }

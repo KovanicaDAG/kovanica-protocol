@@ -20,7 +20,8 @@
 use kovanica_desktop::profile::NetworkProfile;
 use kovanica_desktop::service::NodeService;
 
-const LIVE_GENESIS: &str = "08fa538f2e5963bebcf202bee37075bb6b7cf3d0934598888127a20c0a952b4b";
+/// Re-pinned 2026-10-04 against `GET /api/head` (testnet reset).
+const LIVE_GENESIS: &str = "1a6359157df2d1cdb09e04bd420c9d01800840a4415e27cdafff8bb041e6e602";
 const ATOM: u64 = 100_000_000;
 
 /// Legacy pre-PoA construction (obsolete): no authority set, coinbase tag

@@ -31,7 +31,7 @@
       "http": {
         "all": true,
         "request": true,
-        "scope": ["https://explorer.kovanica.online/**", "https://api.kovanica.online/**", "http://localhost:**", "http://127.0.0.1:**"]
+        "scope": ["https://explorer.kovanica.online/**", "https://api.kovanica.online/**"]
       },
       "notification": {
         "all": true
@@ -61,20 +61,13 @@
       "longDescription": "Kovanica Enterprise Console provides multi-user wallets, API keys, transaction monitoring, asset management, RWA/NFT, reporting, and webhooks for the Kovanica Protocol.",
       "windows": {
         "nsis": {
-          "installerIcon": "icons/icon.ico",
-          "headerImage": "icons/nsis-header.bmp",
-          "licenseFile": "../../../../LICENSE",
-          "welcomeImage": "icons/nsis-welcome.bmp"
-        },
-        "deb": {
-          "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1", "librsvg2-common"]
-        },
-        "appimage": {
-          "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1", "librsvg2-common"]
+          "installerIcon": "icons/icon.ico"
         }
       },
+      "deb": {
+        "depends": ["libwebkit2gtk-4.1-0", "libayatana-appindicator3-1", "librsvg2-common"]
+      },
       "macOS": {
-        "entitlements": "entitlements.plist",
         "exceptionDomain": "explorer.kovanica.online",
         "signingIdentity": "-"
       }

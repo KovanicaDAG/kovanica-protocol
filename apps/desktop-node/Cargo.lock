@@ -1173,6 +1173,7 @@ checksum = "70e796c081cee67dc755e1a36a0a172b897fab85fc3f6bc48307991f64e4eca9"
 dependencies = [
  "curve25519-dalek",
  "ed25519",
+ "rand_core 0.6.4",
  "serde",
  "sha2 0.10.9",
  "subtle",
@@ -2454,6 +2455,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kovanica-keys"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "bip39",
+ "blake3",
+ "bs58",
+ "ed25519-dalek",
+ "hex",
+ "hmac 0.12.1",
+ "kovanica-types",
+ "pbkdf2",
+ "rand 0.8.8",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "zeroize",
+]
+
+[[package]]
 name = "kovanica-node"
 version = "1.0.0"
 dependencies = [
@@ -2511,9 +2530,8 @@ dependencies = [
  "bip39",
  "getrandom 0.2.17",
  "hex",
- "hmac 0.12.1",
+ "kovanica-keys",
  "kovanica-state",
- "sha2 0.10.9",
 ]
 
 [[package]]
@@ -3250,6 +3268,16 @@ dependencies = [
  "redox_syscall",
  "smallvec",
  "windows-link 0.2.1",
+]
+
+[[package]]
+name = "pbkdf2"
+version = "0.12.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
+dependencies = [
+ "digest 0.10.7",
+ "hmac 0.12.1",
 ]
 
 [[package]]
@@ -6600,6 +6628,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "zerotrie"
