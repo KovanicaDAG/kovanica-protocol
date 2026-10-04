@@ -559,11 +559,11 @@
 | #15 Phase 3b — web + extension use the shared wasm keys | owner (Phase 3 direction) | 2026-10-03 | `7c2ff8c`, `af1ada5` |
 | #16 Phase 3b — dashboard uses the shared WASM core | owner (Phase 3 direction) | 2026-10-04 | `fde6a46`, `914cc49` |
 | #17 Phase 3e — one OpenAPI spec + generated client for the node HTTP API | owner (Phase 3 direction) | 2026-10-04 | `dc8a5fe` |
-| #4/#18 Phase 4 — npm workspaces, one root manifest + lockfile | owner | 2026-10-04 | pending |
-| #19 Phase 4 — version drift accepted when collapsing six lockfiles | owner (Phase 4 direction) | 2026-10-04 | pending |
-| #6/#20 Phase 4 — `packages/ui` = console-shared only, peerDeps, alias kept | owner (Phase 4 direction) | 2026-10-04 | pending |
-| #21 Phase 4 — defer `packages/wallet-wasm` move (publish-sdk gate) | owner | 2026-10-04 | pending |
-| #22 Phase 4 — stale `apps/dashboard` manifest excluded, archive recommended | owner (Phase 4 direction) | 2026-10-04 | pending |
+| #4/#18 Phase 4 — npm workspaces, one root manifest + lockfile | owner | 2026-10-04 | `46afb92` |
+| #19 Phase 4 — version drift accepted when collapsing six lockfiles | owner (Phase 4 direction) | 2026-10-04 | `46afb92` |
+| #6/#20 Phase 4 — `packages/ui` = console-shared only, peerDeps, alias kept | owner (Phase 4 direction) | 2026-10-04 | `46afb92` |
+| #21 Phase 4 — defer `packages/wallet-wasm` move (publish-sdk gate) | owner | 2026-10-04 | `46afb92` |
+| #22 Phase 4 — stale `apps/dashboard` manifest excluded, archive recommended | owner (Phase 4 direction) | 2026-10-04 | `46afb92` |
 
 ---
 
