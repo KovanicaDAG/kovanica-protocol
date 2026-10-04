@@ -123,7 +123,7 @@ class WalletViewModel: ObservableObject {
             throw URLError(.badURL)
         }
         let (data, _) = try await URLSession.shared.data(from: url)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? []
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
 
         return HeadData(
             genesis: json["genesis"] as? String ?? "",
@@ -145,7 +145,7 @@ class WalletViewModel: ObservableObject {
             throw URLError(.badURL)
         }
         let (data, _) = try await URLSession.shared.data(from: url)
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? []
+        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
         return json["balance"] as? String ?? "0"
     }
 }
