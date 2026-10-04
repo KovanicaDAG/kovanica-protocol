@@ -432,7 +432,7 @@
 | #14 iOS golden vectors verified on Linux (no Xcode) | owner (Phase 3 direction) | 2026-10-03 | `efd21b1` |
 | #15 Phase 3b — web + extension use the shared wasm keys | owner (Phase 3 direction) | 2026-10-03 | `7c2ff8c`, `af1ada5` |
 | #16 Phase 3b — dashboard uses the shared WASM core | owner (Phase 3 direction) | 2026-10-04 | `fde6a46`, `914cc49` |
-| #17 Phase 3e — one OpenAPI spec + generated client for the node HTTP API | owner (Phase 3 direction) | 2026-10-04 | — |
+| #17 Phase 3e — one OpenAPI spec + generated client for the node HTTP API | owner (Phase 3 direction) | 2026-10-04 | `dc8a5fe` |
 
 ---
 
