@@ -674,6 +674,162 @@ all three configs; `ops/ci/test-validate-tauri-config.py` passes all five cases.
 
 ---
 
+### 26. KVP-107 — enforce `asset_logo_activation_score` (RESOLVED)
+
+**Date:** 2026-10-04
+**Status:** RESOLVED
+**Classification:** consensus-safe (ledger rule activation)
+**Consensus impact:** none at activation score 0 (default); activates a validation gate when `set_asset_logo_activation_score` is called with a future blue score.
+
+**Context.** KVP-107 (mint price & asset logos) was implemented in `8f4cb30` but the
+`asset_logo_activation_score` parameter was threaded through `apply_block_inner` →
+`apply_regular` as `_asset_logo_activation_score` (prefixed, unused). The mint-price
+enforcement had the same plumbing and was already functional. This change makes the
+logo enforcement symmetric with the mint-price enforcement.
+
+**Decision.** Copy the mint-price enforcement shape exactly:
+
+1. Drop the `_` prefix on `asset_logo_activation_score` in `apply_regular`.
+2. Add a validation block after the mint-price enforcement that gates on
+   `blue_score > asset_logo_activation_score` and validates `logo_uri` / `metadata_uri`
+   on any registry entry involved in the transaction:
+   - `logo_uri.uri.len() <= LogoUri::MAX_URI_LEN` (256 bytes)
+   - If `logo_uri.scheme == Data`: `logo_uri.uri.len() <= LogoUri::MAX_DATA_LEN * 4/3 + 32`
+   - `metadata_uri.uri.len() <= MetadataUri::MAX_URI_LEN` (256 bytes)
+3. Add `LedgerError::InvalidAssetLogo { tx, asset_id, field }` variant.
+4. Add unit tests in `kovanica-state` covering: oversized logo rejected, oversized
+   metadata rejected, valid URIs accepted, enforcement inactive before activation score.
+
+**Rule (explicit).** When `blue_score > asset_logo_activation_score`, any `logo_uri` or
+`metadata_uri` on a registry entry involved in the transaction must satisfy the size
+constraints from `LogoUri::new` / `MetadataUri::new`. Before the activation score,
+logos are not validated (optional, stored if provided).
+
+**Files changed:**
+- `protocol/crates/kovanica-state/src/ledger.rs` — enforcement block, error variant, tests
+
+**Verification:** `cargo check --workspace --locked` + `cargo test --workspace --locked` +
+`cargo clippy --workspace --all-targets -- -D warnings` all pass.
+
+---
+
+### 27. KVP-107 — populate asset registry with creation params (RESOLVED)
+
+**Date:** 2026-10-05
+**Status:** RESOLVED
+**Classification:** consensus-safe (ledger rule)
+**Consensus impact:** The registry now populates `mint_price_per_unit`, `logo_uri`,
+`metadata_uri`, and `creator` from the coinbase tag at asset creation. This activates the
+mint-price enforcement (item 2) and logo enforcement (item 3).
+
+**Context.** `update_asset_registry` was inserting registry entries via `new_fungible` /
+`new_nft` with defaults (`mint_price=0`, no logo/metadata). The `AssetCreationParams`
+struct existed in `tx.rs` but was never used. `new_fungible_with_mint_price` and
+`new_nft_with_mint_price` had zero callers.
+
+**Decision.**
+
+1. `AssetCreationParams` in `tx.rs` now encodes to the coinbase `tag` field with magic
+   prefix `b"KVP107"`. Fields: `mint_price_per_unit`, `logo_uri`, `metadata_uri`,
+   `creator`. Kind (`Fungible`/`NonFungible`) is inferred from the coinbase output
+   value (1 = NFT, >1 = Fungible). Max supply is implicit (1 for NFT, `u64::MAX`
+   for fungible).
+2. `update_asset_registry` decodes the tag; if magic prefix is present, uses
+   `new_fungible_with_mint_price` / `new_nft_with_mint_price` to populate all fields.
+   Legacy tags (no magic prefix) fall back to defaults.
+3. Export `AssetCreationParams` from `lib.rs` for client-side tx construction.
+4. Unit tests: encode/decode roundtrip, fungible/NFT population, legacy tag fallback.
+
+**Rule (explicit).** When a coinbase creates a new asset (asset_id not in registry),
+its `tag` field may carry an `AssetCreationParams` payload (magic `b"KVP107"`).
+The registry entry is initialized with the decoded `mint_price_per_unit`,
+`logo_uri`, `metadata_uri`, and `creator`. If the tag lacks the magic prefix,
+defaults are used (`mint_price=0`, no logo/metadata/creator).
+
+**Files changed:**
+- `protocol/crates/kovanica-state/src/tx.rs` — `AssetCreationParams`, encode/decode, tests
+- `protocol/crates/kovanica-state/src/ledger.rs` — `update_asset_registry` decode + population, tests
+- `protocol/crates/kovanica-state/src/lib.rs` — export `AssetCreationParams`
+
+**Verification:** `cargo check --workspace --locked` + `cargo test --workspace --locked` +
+`cargo clippy --workspace --all-targets -- -D warnings` all pass.
+
+---
+
+### 28. KVP-107 — fix asset creation fee inflation bug (RESOLVED)
+
+**Date:** 2026-10-05
+**Status:** RESOLVED
+**Classification:** consensus-safe (critical bug fix)
+**Consensus impact:** Fixes a supply inflation bug where miners could claim extra native KVNC
+equal to the asset creation fee (1000 KVNC per new asset).
+
+**Context.** In `apply_coinbase`, the creation fee was **added** to the miner's allowed
+native claim (`allowed_with_creation = allowed + required_creation_fee`). This let a
+miner mint extra native KVNC out of thin air — a supply inflation bug.
+
+**Decision.**
+
+1. Change `apply_coinbase` to **deduct** the creation fee from the miner's allowed
+   claim: `allowed_after_fee = allowed.saturating_sub(creation_fee)`.
+2. Return both `minted` native KVNC and `creation_fee` paid from `apply_coinbase`.
+3. In `apply_block_inner`, add the creation fee to the block's total fees, then apply
+   the standard 75% burn / 25% to producer split (same as regular fees).
+4. Update `apply_coinbase` return type from `Result<u64, LedgerError>` to
+   `Result<(u64, u64), LedgerError>`.
+5. Fix test `test_native_token_coinbase_mixed_allowed` to provide sufficient subsidy
+   to cover the creation fee.
+
+**Rule (explicit).** Asset creation fee is paid by the miner from their allowed claim
+(subsidy + fee share). The fee is then burned 75% and paid to producer 25%, same as
+regular transaction fees. This prevents supply inflation.
+
+**Files changed:**
+- `protocol/crates/kovanica-state/src/ledger.rs` — `apply_coinbase`, `apply_block_inner`, test fix
+
+**Verification:** `cargo check --workspace --locked` + `cargo test --workspace --locked` +
+`cargo clippy --workspace --all-targets -- -D warnings` all pass.
+
+---
+
+### 29. KVP-107 — fix `prepare_create_asset` to create valid tx (RESOLVED)
+
+**Date:** 2026-10-05
+**Status:** RESOLVED
+**Classification:** consensus-safe (fixes broken user-facing flow)
+**Consensus impact:** Makes asset creation functional end-to-end. Regular transactions
+can now create assets when they carry creation params in their tag.
+
+**Context.** `prepare_create_asset` built a regular transaction with `initial_value = 0`
+for Fungible (rejected by `ZeroValueOutput`) and `1` for NFT (rejected by
+`AssetNotConserved` because asset appears only in outputs). The create-asset flow was
+non-functional.
+
+**Decision.**
+
+1. Change fungible `initial_value` from `0` to `1` (must be > 0 to pass non-zero output
+   check; creator mints initial supply).
+2. Include `AssetCreationParams` in the transaction `tag` field (magic `b"KVP107"`)
+   with `mint_price_per_unit`, `logo_uri`, `metadata_uri`, `creator`.
+3. Update `update_asset_registry` to also process regular transactions that carry
+   creation params (not just coinbase).
+4. The ledger now registers assets from any transaction with creation params in tag.
+
+**Rule (explicit).** A regular transaction can create a new asset if:
+- It carries an `AssetCreationParams` payload in its tag (magic `b"KVP107"`).
+- The asset output value > 0 (fungible: any positive amount; NFT: exactly 1).
+- The payer covers the `ASSET_CREATION_FEE` (1000 KVNC) + protocol fee.
+The registry is updated with the decoded creation params.
+
+**Files changed:**
+- `protocol/crates/kovanica-state/src/ledger.rs` — `update_asset_registry` handles regular txs
+- `protocol/crates/kovanica-node/src/node.rs` — `prepare_create_asset` includes creation params in tag
+
+**Verification:** `cargo check --workspace --locked` + `cargo test --workspace --locked` +
+`cargo clippy --workspace --all-targets -- -D warnings` all pass.
+
+---
+
 ## Approved Decisions (to be filled during review)
 
 | Decision | Approved By | Date | Commit |
@@ -695,6 +851,10 @@ all three configs; `ops/ci/test-validate-tauri-config.py` passes all five cases.
 | #22 Phase 4 — stale `apps/dashboard` manifest excluded, archive recommended | owner (Phase 4 direction) | 2026-10-04 | `46afb92` |
 | #24 Desktop hygiene — testnet re-pin, Tauri config fixes, blocking desktop gates | owner | 2026-10-04 | `244c731`, `e976008`, `cb0e1cd`, `fdcf66b` |
 | #25 Option B — both consoles migrated to Tauri v2 behind one shared shell | owner (Phase 5 direction) | 2026-10-04 | `5d69ca8` |
+| #26 KVP-107 — enforce `asset_logo_activation_score` | owner | 2026-10-04 | (this commit) |
+| #27 KVP-107 — populate asset registry with creation params | owner | 2026-10-05 | (this commit) |
+| #28 KVP-107 — fix asset creation fee inflation bug | owner | 2026-10-05 | (this commit) |
+| #29 KVP-107 — fix `prepare_create_asset` to create valid tx | owner | 2026-10-05 | (this commit) |
 
 ---
 
@@ -754,6 +914,60 @@ git revert <shell sha>       # removes apps/console-shell
 ```
 Deleting `apps/console-shell` without reverting the consoles breaks their builds: both
 depend on it by path.
+
+### KVP-107 logo enforcement (DECISIONS #26)
+
+Revert by removing the enforcement block and restoring the `_` prefix:
+```sh
+git revert <enforcement sha>
+# In apply_regular: rename asset_logo_activation_score → _asset_logo_activation_score
+# Remove the logo validation block (the `if blue_score > asset_logo_activation_score` block)
+# Remove LedgerError::InvalidAssetLogo variant
+```
+The revert is safe: at the default activation score of 0, the enforcement is inactive
+(`blue_score > 0` is always true for any real block, but the registry never contains
+logo_uri/metadata_uri because `update_asset_registry` does not populate them — so the
+validation is vacuous until the registry population is fixed in a separate change).
+
+### KVP-107 registry population (DECISIONS #27)
+
+Revert by removing the decode/populate logic in `update_asset_registry` and restoring
+the default-only insertion:
+```sh
+git revert <population sha>
+# In update_asset_registry: remove the AssetCreationParams::decode call
+# Remove the branch that uses new_fungible_with_mint_price / new_nft_with_mint_price
+# Remove AssetCreationParams export from lib.rs
+# Remove unit tests for encode/decode and registry population
+```
+The revert is safe: without the creation params, the registry falls back to defaults
+(`mint_price=0`, no logo/metadata/creator), which is the pre-KVP-107 behavior. The
+mint-price and logo enforcement gates remain but are vacuous (mint_price is always 0,
+logo_uri/metadata_uri always None).
+
+### KVP-107 asset creation fee fix (DECISIONS #28)
+
+Revert by restoring the buggy fee addition logic:
+```sh
+git revert <fix sha>
+# In apply_coinbase: change allowed.saturating_sub(creation_fee) back to allowed.checked_add(creation_fee)
+# Restore the single-u64 return type for apply_coinbase
+# Remove creation_fee from BlockSummary fees accounting
+```
+The revert is safe but re-introduces the inflation bug (miner can claim extra native KVNC
+equal to the creation fee). Only revert if the fix causes unexpected issues.
+
+### KVP-107 prepare_create_asset fix (DECISIONS #29)
+
+Revert by restoring the broken create-asset flow:
+```sh
+git revert <fix sha>
+# In prepare_create_asset: change initial_value back to 0 for fungible
+# Remove creation_params from Transaction tag (pass Vec::new() instead)
+# Remove AssetCreationParams import from node.rs
+```
+The revert is safe but makes asset creation non-functional end-to-end (fungible
+creation rejected by `ZeroValueOutput`, NFT creation rejected by `AssetNotConserved`).
 
 ---
 

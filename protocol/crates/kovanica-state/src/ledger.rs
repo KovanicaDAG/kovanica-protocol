@@ -267,7 +267,7 @@ pub struct SupplyMetrics {
 }
 
 use crate::tx::{
-    decode_block_payload, encode_block_payload, AssetId, AssetKind, AssetRegistryEntry,
+    decode_block_payload, encode_block_payload, AssetCreationParams, AssetId, AssetKind, AssetRegistryEntry,
     DecodeError, LogoScheme, LogoUri, MetadataScheme, MetadataUri, OutPoint, Transaction, TxId,
     TxOutput,
 };
@@ -442,6 +442,13 @@ pub enum LedgerError {
         asset_id: AssetId,
         required: u64,
         paid: u64,
+    },
+    /// An asset's logo or metadata URI failed validation (size, scheme, or
+    /// content-hash constraints) after the logo activation score was reached.
+    InvalidAssetLogo {
+        tx: TxId,
+        asset_id: AssetId,
+        field: &'static str,
     },
 }
 
@@ -640,6 +647,14 @@ impl core::fmt::Display for LedgerError {
                 f,
                 "insufficient mint fee for asset {asset_id} in {tx}: required {required} atoms KVNC, paid {paid}"
             ),
+            LedgerError::InvalidAssetLogo {
+                tx,
+                asset_id,
+                field,
+            } => write!(
+                f,
+                "invalid {field} for asset {asset_id} in {tx}"
+            ),
         }
     }
 }
@@ -666,10 +681,10 @@ pub fn apply_block(
     txs: &[Transaction],
     subsidy: u64,
 ) -> Result<BlockSummary, LedgerError> {
-    let asset_registry = HashMap::new();
+    let mut asset_registry = HashMap::new();
     apply_block_inner(
         utxo,
-        &asset_registry,
+        &mut asset_registry,
         txs,
         subsidy,
         0,        // cumulative_minted: not tracked in simple apply_block
@@ -702,10 +717,10 @@ pub fn apply_block_at_height(
     subsidy: u64,
     height: u64,
 ) -> Result<BlockSummary, LedgerError> {
-    let asset_registry = HashMap::new();
+    let mut asset_registry = HashMap::new();
     apply_block_inner(
         utxo,
-        &asset_registry,
+        &mut asset_registry,
         txs,
         subsidy,
         0, // cumulative_minted: not tracked in this simple entry point
@@ -729,7 +744,7 @@ pub fn apply_block_at_height(
 #[allow(clippy::too_many_arguments)]
 fn apply_block_inner(
     utxo: &mut UtxoSet,
-    asset_registry: &HashMap<AssetId, AssetRegistryEntry>,
+    asset_registry: &mut HashMap<AssetId, AssetRegistryEntry>,
     txs: &[Transaction],
     subsidy: u64,
     cumulative_minted: u64,
@@ -784,7 +799,7 @@ fn apply_block_inner(
     let allowed = subsidy
         .checked_add(fee_share)
         .ok_or(LedgerError::ValueOverflow)?;
-    let minted = match coinbase {
+    let (minted, creation_fee) = match coinbase {
         Some(cb) => apply_coinbase(
             &mut staging,
             asset_registry,
@@ -799,12 +814,16 @@ fn apply_block_inner(
             script_v2_activation_score,
             htlc_activation_score,
         )?,
-        None => 0,
+        None => (0, 0),
     };
+    // KVP-107: creation fee is handled like regular fees — 75% burned, 25% to producer
+    let total_fees_with_creation = total_fees
+        .checked_add(creation_fee)
+        .ok_or(LedgerError::ValueOverflow)?;
 
     *utxo = staging;
     Ok(BlockSummary {
-        fees: total_fees,
+        fees: total_fees_with_creation,
         minted,
     })
 }
@@ -824,9 +843,11 @@ fn apply_regular(
     htlc_activation_score: u64,
     vault_activation_score: u64,
     mint_price_activation_score: u64,
-    // KVP-107: logo_uri/metadata_uri validation is not yet enforced; the
-    // activation score is threaded through for forward compatibility.
-    _asset_logo_activation_score: u64,
+    // KVP-107: logo_uri/metadata_uri validation is enforced when the activation
+    // score is reached. The rule: when `blue_score > asset_logo_activation_score`,
+    // any logo_uri or metadata_uri on a registry entry must satisfy the size and
+    // scheme constraints defined by `LogoUri::new` / `MetadataUri::new`.
+    asset_logo_activation_score: u64,
 ) -> Result<u64, LedgerError> {
     if tx.inputs().is_empty() || tx.outputs().is_empty() {
         return Err(LedgerError::EmptyTransaction(tx.id()));
@@ -1515,6 +1536,48 @@ fn apply_regular(
         }
     }
 
+    // KVP-107: Asset logo/metadata enforcement
+    // When the activation score is reached, validate logo_uri and metadata_uri
+    // on any registry entry involved in this transaction. The rule mirrors the
+    // mint-price enforcement shape: gate on blue_score, iterate asset outputs,
+    // look up the registry entry, and validate the URI fields.
+    if blue_score > asset_logo_activation_score {
+        for asset_id_opt in asset_outputs.keys() {
+            let Some(asset_id) = *asset_id_opt else {
+                continue;
+            };
+            if let Some(entry) = asset_registry.get(&asset_id) {
+                if let Some(logo_uri) = &entry.logo_uri {
+                    if logo_uri.uri.len() > LogoUri::MAX_URI_LEN {
+                        return Err(LedgerError::InvalidAssetLogo {
+                            tx: tx.id(),
+                            asset_id,
+                            field: "logo_uri",
+                        });
+                    }
+                    if logo_uri.scheme == LogoScheme::Data
+                        && logo_uri.uri.len() > LogoUri::MAX_DATA_LEN * 4 / 3 + 32
+                    {
+                        return Err(LedgerError::InvalidAssetLogo {
+                            tx: tx.id(),
+                            asset_id,
+                            field: "logo_uri",
+                        });
+                    }
+                }
+                if let Some(metadata_uri) = &entry.metadata_uri {
+                    if metadata_uri.uri.len() > MetadataUri::MAX_URI_LEN {
+                        return Err(LedgerError::InvalidAssetLogo {
+                            tx: tx.id(),
+                            asset_id,
+                            field: "metadata_uri",
+                        });
+                    }
+                }
+            }
+        }
+    }
+
     // Validation passed; mutate the staging set. (Any error above returned
     // before this point, so partial mutation cannot leak — and `apply_block`
     // discards `staging` unless the whole block succeeds.)
@@ -1529,7 +1592,7 @@ fn apply_regular(
     Ok(fee)
 }
 
-/// Validate and apply a coinbase transaction, returning the value minted.
+/// Validate and apply a coinbase transaction, returning the value minted and the creation fee paid.
 #[allow(clippy::too_many_arguments)] // consensus-critical; argument count is intentional
 fn apply_coinbase(
     staging: &mut UtxoSet,
@@ -1544,7 +1607,7 @@ fn apply_coinbase(
     _stealth_activation_score: u64,
     _script_v2_activation_score: u64,
     _htlc_activation_score: u64,
-) -> Result<u64, LedgerError> {
+) -> Result<(u64, u64), LedgerError> {
     if blue_score <= activation_score {
         for output in cb.outputs() {
             if output.owner.is_p2sh() {
@@ -1650,7 +1713,7 @@ fn apply_coinbase(
 
     // KVP-107: Asset creation fee
     // Check for new assets being created (not in registry) and require creation fee
-    if blue_score > MINT_PRICE_ACTIVATION_SCORE {
+    let creation_fee = if blue_score > MINT_PRICE_ACTIVATION_SCORE {
         let mut new_asset_count: u64 = 0;
         for output in cb.outputs() {
             if let Some(asset_id) = output.asset_id {
@@ -1659,24 +1722,24 @@ fn apply_coinbase(
                 }
             }
         }
-        // KVP-107: Asset creation fee - additional native KVNC required in coinbase
-        let required_creation_fee = new_asset_count
+        // KVP-107: Asset creation fee - miner must pay fee from their allowed claim
+        new_asset_count
             .checked_mul(ASSET_CREATION_FEE)
-            .ok_or(LedgerError::ValueOverflow)?;
-        // The coinbase can claim up to allowed + creation_fee native KVNC
-        let allowed_with_creation = allowed
-            .checked_add(required_creation_fee)
-            .ok_or(LedgerError::ValueOverflow)?;
-        if claimed_native > allowed_with_creation {
-            return Err(LedgerError::CoinbaseOverspend {
-                claimed: claimed_native,
-                allowed: allowed_with_creation,
-            });
-        }
+            .ok_or(LedgerError::ValueOverflow)?
+    } else {
+        0
+    };
+    // The creation fee is deducted from what the miner can claim
+    let allowed_after_fee = allowed.saturating_sub(creation_fee);
+    if claimed_native > allowed_after_fee {
+        return Err(LedgerError::CoinbaseOverspend {
+            claimed: claimed_native,
+            allowed: allowed_after_fee,
+        });
     }
 
     add_outputs(staging, cb.id(), cb, height, true)?;
-    Ok(claimed_native)
+    Ok((claimed_native, creation_fee))
 }
 
 /// Insert every output of `tx` into `staging`. Coinbase outputs are flagged
@@ -1748,29 +1811,32 @@ pub fn apply_dag(dag: &Dag, subsidy: u64) -> LedgerRun {
             .map_or(0, |h| h + 1);
         heights.insert(id, height);
         match decode_block_payload(payload) {
-            Ok(txs) => match apply_block_inner(
-                &mut run.utxo,
-                &HashMap::new(),
-                &txs,
-                subsidy,
-                cumulative_minted, // track cumulative minted for supply cap
-                height,
-                blue_score,
-                MULTISIG_ACTIVATION_SCORE,
-                NATIVE_TOKEN_ACTIVATION_SCORE,
-                STEALTH_ACTIVATION_SCORE,
-                SCRIPT_V2_ACTIVATION_SCORE,
-                HTLC_ACTIVATION_SCORE,
-                VAULT_ACTIVATION_SCORE,
-                MINT_PRICE_ACTIVATION_SCORE,
-                ASSET_LOGO_ACTIVATION_SCORE,
-            ) {
+            Ok(txs) => {
+                let mut asset_registry = HashMap::new();
+                match apply_block_inner(
+                    &mut run.utxo,
+                    &mut asset_registry,
+                    &txs,
+                    subsidy,
+                    cumulative_minted, // track cumulative minted for supply cap
+                    height,
+                    blue_score,
+                    MULTISIG_ACTIVATION_SCORE,
+                    NATIVE_TOKEN_ACTIVATION_SCORE,
+                    STEALTH_ACTIVATION_SCORE,
+                    SCRIPT_V2_ACTIVATION_SCORE,
+                    HTLC_ACTIVATION_SCORE,
+                    VAULT_ACTIVATION_SCORE,
+                    MINT_PRICE_ACTIVATION_SCORE,
+                    ASSET_LOGO_ACTIVATION_SCORE,
+                ) {
                 Ok(summary) => {
-                    cumulative_minted = cumulative_minted.saturating_add(summary.minted);
-                    run.accepted.push(id);
+                        cumulative_minted = cumulative_minted.saturating_add(summary.minted);
+                        run.accepted.push(id);
+                    }
+                    Err(e) => run.rejected.push((id, e)),
                 }
-                Err(e) => run.rejected.push((id, e)),
-            },
+            }
             Err(e) => run.rejected.push((id, LedgerError::Payload(e))),
         }
     }
@@ -2506,23 +2572,54 @@ impl Ledger {
     /// Update the asset registry with newly minted assets from coinbase outputs.
     fn update_asset_registry(&mut self, txs: &[Transaction], is_coinbase_block: bool) {
         for tx in txs {
-            if !tx.is_coinbase() {
-                continue;
+            let is_coinbase = tx.is_coinbase();
+            // Decode creation params from the tag (KVP-107).
+            let creation_params = AssetCreationParams::decode(tx.tag());
+            
+            // Only process if it's a coinbase block OR if the tx carries creation params.
+            if is_coinbase {
+                if !is_coinbase_block {
+                    continue; // Only update for coinbase blocks
+                }
+            } else if creation_params.is_none() {
+                continue; // Regular tx without creation params - nothing to register
             }
-            if !is_coinbase_block {
-                continue; // Only update for coinbase blocks
-            }
+            
             for output in tx.outputs() {
                 if let Some(asset_id) = output.asset_id {
                     if asset_id.is_native() {
                         continue; // Skip native KVNC
                     }
+                    // Only register if asset is new (not already in registry)
+                    if self.asset_registry.contains_key(&asset_id) {
+                        continue;
+                    }
                     let entry = self.asset_registry.entry(asset_id).or_insert_with(|| {
-                        // If the first mint has value=1, assume it's an NFT (KVP-106).
-                        // Otherwise, create a fungible entry.
-                        if output.value == 1 {
+                        if let Some(params) = &creation_params {
+                            // Has creation params - use them
+                            if output.value == 1 {
+                                AssetRegistryEntry::new_nft_with_mint_price(
+                                    asset_id,
+                                    params.mint_price_per_unit,
+                                    params.logo_uri.clone(),
+                                    params.metadata_uri.clone(),
+                                    params.creator,
+                                )
+                            } else {
+                                AssetRegistryEntry::new_fungible_with_mint_price(
+                                    asset_id,
+                                    u64::MAX,
+                                    params.mint_price_per_unit,
+                                    params.logo_uri.clone(),
+                                    params.metadata_uri.clone(),
+                                    params.creator,
+                                )
+                            }
+                        } else if output.value == 1 {
+                            // Legacy coinbase NFT
                             AssetRegistryEntry::new_nft(asset_id, None, None, None)
                         } else {
+                            // Legacy coinbase fungible
                             AssetRegistryEntry::new_fungible(asset_id, u64::MAX)
                         }
                     });
@@ -2777,6 +2874,8 @@ impl Ledger {
         // — the oracle finding this fixes).
         let mut view_minted = self.chain_minted_through(sp);
         let mut view_fees = self.chain_fees_burned_through(sp);
+        // Clone registry for mergeset application (speculative, won't commit if conflict)
+        let mut asset_registry_merged = self.asset_registry.clone();
         for merged in &preview.mergeset {
             let merged_blue_score = self.dag.ghostdag(merged).map_or(0, |g| g.blue_score);
             // C1: the merged block's TRUE chain height, not blue score. The
@@ -2800,7 +2899,7 @@ impl Ledger {
                 // necessarily here. This mirrors apply_dag's per-block reject.
                 if let Ok(merged_summary) = apply_block_inner(
                     &mut state,
-                    &self.asset_registry,
+                    &mut asset_registry_merged,
                     &merged_txs,
                     self.schedule.subsidy_at(merged_height),
                     view_minted, // pass current cumulative for supply cap check
@@ -2830,7 +2929,7 @@ impl Ledger {
         // its view pre-state. Failure rejects the block before it enters the DAG.
         let summary = apply_block_inner(
             &mut state,
-            &self.asset_registry,
+            &mut self.asset_registry,
             txs,
             self.schedule.subsidy_at(new_height),
             view_minted, // pass cumulative including mergeset for supply cap check
@@ -3022,9 +3121,10 @@ impl Ledger {
                 .expect("block is in the DAG")
                 .payload();
             if let Ok(txs) = decode_block_payload(payload) {
+                let mut asset_registry_clone = self.asset_registry.clone();
                 let _ = apply_block_inner(
                     &mut state,
-                    &self.asset_registry,
+                    &mut asset_registry_clone,
                     &txs,
                     self.schedule.subsidy_at(height),
                     0, // cumulative_minted
@@ -4343,7 +4443,7 @@ mod tests {
         // height 51 < 51+100 → immature
         let err = apply_block_inner(
             &mut utxo.clone(),
-            &HashMap::new(),
+            &mut HashMap::new(),
             std::slice::from_ref(&spend),
             0,
             0, // cumulative_minted
@@ -4364,7 +4464,7 @@ mod tests {
         // height 151 → mature
         apply_block_inner(
             &mut utxo,
-            &HashMap::new(),
+            &mut HashMap::new(),
             std::slice::from_ref(&spend),
             0,
             0, // cumulative_minted
@@ -4381,6 +4481,375 @@ mod tests {
         )
         .unwrap();
         assert!(!utxo.contains(&op));
+    }
+
+    // KVP-107: asset_logo_activation_score enforcement tests.
+    //
+    // The rule: when `blue_score > asset_logo_activation_score`, any logo_uri or
+    // metadata_uri on a registry entry involved in the transaction must satisfy
+    // the size constraints from `LogoUri::new` / `MetadataUri::new`. Before the
+    // activation score, logos are not validated.
+
+    fn asset_output(value: u64, asset_id: AssetId, addr: crate::keys::Address) -> TxOutput {
+        TxOutput::new(value, Some(asset_id), addr)
+    }
+
+    #[test]
+    fn logo_enforcement_rejects_oversized_logo_uri() {
+        let alice = KeyPair::from_u64(1);
+        let bob = KeyPair::from_u64(2);
+        let asset_id = AssetId::from_bytes([7u8; 32]);
+
+        // Fund an asset output for Alice.
+        let mut utxo = UtxoSet::new();
+        let op = OutPoint::new(TxId::from_bytes([1; 32]), 0);
+        utxo.insert(op, asset_output(100, asset_id, alice.address()));
+
+        // Registry entry with an oversized logo URI (> 256 bytes).
+        let bad_logo = LogoUri {
+            scheme: LogoScheme::Ipfs,
+            content_hash: [0u8; 32],
+            uri: "x".repeat(LogoUri::MAX_URI_LEN + 1),
+        };
+        let entry = AssetRegistryEntry {
+            asset_id,
+            kind: AssetKind::Fungible,
+            max_supply: u64::MAX,
+            minted: 0,
+            metadata_hash: None,
+            collection_id: None,
+            creator: None,
+            mint_price_per_unit: 0,
+            logo_uri: Some(bad_logo),
+            metadata_uri: None,
+        };
+        let mut registry = HashMap::new();
+        registry.insert(asset_id, entry);
+
+        // Alice sends 50 to Bob (asset output).
+        let tx = Transaction::signed(
+            &[(op, &alice)],
+            vec![asset_output(50, asset_id, bob.address())],
+            vec![],
+        );
+
+        // blue_score (100) > asset_logo_activation_score (0) → enforcement active.
+        let err = apply_block_inner(
+            &mut utxo,
+            &mut registry,
+            std::slice::from_ref(&tx),
+            0,
+            0,
+            0,
+            100, // blue_score
+            0,
+            0,
+            0,
+            0,
+            0,
+            VAULT_ACTIVATION_SCORE,
+            MINT_PRICE_ACTIVATION_SCORE,
+            ASSET_LOGO_ACTIVATION_SCORE,
+        )
+        .unwrap_err();
+        assert!(matches!(err, LedgerError::InvalidAssetLogo { field: "logo_uri", .. }));
+    }
+
+    #[test]
+    fn logo_enforcement_rejects_oversized_metadata_uri() {
+        let alice = KeyPair::from_u64(1);
+        let bob = KeyPair::from_u64(2);
+        let asset_id = AssetId::from_bytes([8u8; 32]);
+
+        let mut utxo = UtxoSet::new();
+        let op = OutPoint::new(TxId::from_bytes([2; 32]), 0);
+        utxo.insert(op, asset_output(100, asset_id, alice.address()));
+
+        let bad_metadata = MetadataUri {
+            scheme: MetadataScheme::Ipfs,
+            content_hash: [0u8; 32],
+            uri: "y".repeat(MetadataUri::MAX_URI_LEN + 1),
+        };
+        let entry = AssetRegistryEntry {
+            asset_id,
+            kind: AssetKind::Fungible,
+            max_supply: u64::MAX,
+            minted: 0,
+            metadata_hash: None,
+            collection_id: None,
+            creator: None,
+            mint_price_per_unit: 0,
+            logo_uri: None,
+            metadata_uri: Some(bad_metadata),
+        };
+        let mut registry = HashMap::new();
+        registry.insert(asset_id, entry);
+
+        let tx = Transaction::signed(
+            &[(op, &alice)],
+            vec![asset_output(50, asset_id, bob.address())],
+            vec![],
+        );
+
+        let err = apply_block_inner(
+            &mut utxo,
+            &mut registry,
+            std::slice::from_ref(&tx),
+            0,
+            0,
+            0,
+            100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            VAULT_ACTIVATION_SCORE,
+            MINT_PRICE_ACTIVATION_SCORE,
+            ASSET_LOGO_ACTIVATION_SCORE,
+        )
+        .unwrap_err();
+        assert!(matches!(err, LedgerError::InvalidAssetLogo { field: "metadata_uri", .. }));
+    }
+
+    #[test]
+    fn logo_enforcement_allows_valid_uris() {
+        let alice = KeyPair::from_u64(1);
+        let bob = KeyPair::from_u64(2);
+        let asset_id = AssetId::from_bytes([9u8; 32]);
+
+        let mut utxo = UtxoSet::new();
+        let op = OutPoint::new(TxId::from_bytes([3; 32]), 0);
+        utxo.insert(op, asset_output(100, asset_id, alice.address()));
+
+        let good_logo = LogoUri {
+            scheme: LogoScheme::Ipfs,
+            content_hash: [0u8; 32],
+            uri: "ipfs://QmValid".to_string(),
+        };
+        let good_metadata = MetadataUri {
+            scheme: MetadataScheme::Ipfs,
+            content_hash: [0u8; 32],
+            uri: "ipfs://QmValid".to_string(),
+        };
+        let entry = AssetRegistryEntry {
+            asset_id,
+            kind: AssetKind::Fungible,
+            max_supply: u64::MAX,
+            minted: 0,
+            metadata_hash: None,
+            collection_id: None,
+            creator: None,
+            mint_price_per_unit: 0,
+            logo_uri: Some(good_logo),
+            metadata_uri: Some(good_metadata),
+        };
+        let mut registry = HashMap::new();
+        registry.insert(asset_id, entry);
+
+        let tx = Transaction::signed(
+            &[(op, &alice)],
+            vec![asset_output(50, asset_id, bob.address())],
+            vec![],
+        );
+
+        // Valid URIs pass even with enforcement active.
+        apply_block_inner(
+            &mut utxo,
+            &mut registry,
+            std::slice::from_ref(&tx),
+            0,
+            0,
+            0,
+            100,
+            0,
+            0,
+            0,
+            0,
+            0,
+            VAULT_ACTIVATION_SCORE,
+            MINT_PRICE_ACTIVATION_SCORE,
+            ASSET_LOGO_ACTIVATION_SCORE,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn logo_enforcement_inactive_before_activation_score() {
+        let alice = KeyPair::from_u64(1);
+        let bob = KeyPair::from_u64(2);
+        let asset_id = AssetId::from_bytes([10u8; 32]);
+
+        let mut utxo = UtxoSet::new();
+        let op = OutPoint::new(TxId::from_bytes([4; 32]), 0);
+        utxo.insert(op, asset_output(100, asset_id, alice.address()));
+
+        // Oversized logo URI.
+        let bad_logo = LogoUri {
+            scheme: LogoScheme::Ipfs,
+            content_hash: [0u8; 32],
+            uri: "x".repeat(LogoUri::MAX_URI_LEN + 1),
+        };
+        let entry = AssetRegistryEntry {
+            asset_id,
+            kind: AssetKind::Fungible,
+            max_supply: u64::MAX,
+            minted: 0,
+            metadata_hash: None,
+            collection_id: None,
+            creator: None,
+            mint_price_per_unit: 0,
+            logo_uri: Some(bad_logo),
+            metadata_uri: None,
+        };
+        let mut registry = HashMap::new();
+        registry.insert(asset_id, entry);
+
+        let tx = Transaction::signed(
+            &[(op, &alice)],
+            vec![asset_output(50, asset_id, bob.address())],
+            vec![],
+        );
+
+        // blue_score (1) > native_token_activation_score (0) → native token active.
+        // blue_score (1) <= asset_logo_activation_score (100) → logo enforcement inactive.
+        // The oversized logo is not validated.
+        apply_block_inner(
+            &mut utxo,
+            &mut registry,
+            std::slice::from_ref(&tx),
+            0,
+            0,
+            0,
+            1,   // blue_score
+            0,
+            0,
+            0,
+            0,
+            0,
+            VAULT_ACTIVATION_SCORE,
+            MINT_PRICE_ACTIVATION_SCORE,
+            100, // asset_logo_activation_score
+        )
+        .unwrap();
+    }
+
+    // KVP-107: registry population from coinbase tag with creation params.
+    //
+    // The coinbase transaction's `tag` field carries an encoded
+    // `AssetCreationParams` with magic prefix `b"KVP107"`. `update_asset_registry`
+    // decodes this and uses `new_fungible_with_mint_price` /
+    // `new_nft_with_mint_price` to populate the registry with mint_price,
+    // logo_uri, and metadata_uri.
+
+    #[test]
+    fn registry_population_with_creation_params_fungible() {
+        let alice = KeyPair::from_u64(1);
+        let asset_id = AssetId::from_bytes([11u8; 32]);
+
+        // Build creation params for a fungible asset with mint price and logo
+        let params = AssetCreationParams {
+            mint_price_per_unit: 100_000_000, // 1 KVNC per unit
+            logo_uri: Some(LogoUri {
+                scheme: LogoScheme::Ipfs,
+                content_hash: [3u8; 32],
+                uri: "ipfs://QmFungibleLogo".to_string(),
+            }),
+            metadata_uri: Some(MetadataUri {
+                scheme: MetadataScheme::Ipfs,
+                content_hash: [4u8; 32],
+                uri: "ipfs://QmFungibleMetadata".to_string(),
+            }),
+            creator: Some([5u8; 32]),
+        };
+        let encoded_tag = params.encode();
+
+        // Coinbase tx with the creation params in its tag
+        // Fungible: output value > 1
+        let cb = Transaction::coinbase(
+            vec![asset_output(100_000, asset_id, alice.address())],
+            encoded_tag,
+        );
+
+        // Create a Ledger to test update_asset_registry
+        let mut ledger =
+            Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
+        ledger.update_asset_registry(std::slice::from_ref(&cb), true);
+
+        let entry = ledger.asset_registry.get(&asset_id).unwrap();
+        // Kind inferred from output value > 1 → Fungible
+        assert_eq!(entry.kind, AssetKind::Fungible);
+        // max_supply is u64::MAX for fungible (not in creation params)
+        assert_eq!(entry.max_supply, u64::MAX);
+        assert_eq!(entry.mint_price_per_unit, 100_000_000);
+        assert!(entry.logo_uri.is_some());
+        assert_eq!(entry.logo_uri.as_ref().unwrap().uri, "ipfs://QmFungibleLogo");
+        assert!(entry.metadata_uri.is_some());
+        assert_eq!(entry.metadata_uri.as_ref().unwrap().uri, "ipfs://QmFungibleMetadata");
+        assert_eq!(entry.creator, Some([5u8; 32]));
+    }
+
+    #[test]
+    fn registry_population_with_creation_params_nft() {
+        let alice = KeyPair::from_u64(1);
+        let asset_id = AssetId::from_bytes([12u8; 32]);
+
+        let params = AssetCreationParams {
+            mint_price_per_unit: 500_000_000, // 5 KVNC per unit
+            logo_uri: Some(LogoUri {
+                scheme: LogoScheme::Https,
+                content_hash: [6u8; 32],
+                uri: "https://example.com/nft-logo.png".to_string(),
+            }),
+            metadata_uri: None,
+            creator: Some([7u8; 32]),
+        };
+        let encoded_tag = params.encode();
+
+        // NFT: output value == 1
+        let cb = Transaction::coinbase(
+            vec![asset_output(1, asset_id, alice.address())],
+            encoded_tag,
+        );
+
+        let mut ledger =
+            Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
+        ledger.update_asset_registry(std::slice::from_ref(&cb), true);
+
+        let entry = ledger.asset_registry.get(&asset_id).unwrap();
+        // Kind inferred from output value == 1 → NFT
+        assert_eq!(entry.kind, AssetKind::NonFungible);
+        assert_eq!(entry.max_supply, 1);
+        assert_eq!(entry.mint_price_per_unit, 500_000_000);
+        assert!(entry.logo_uri.is_some());
+        assert_eq!(entry.logo_uri.as_ref().unwrap().uri, "https://example.com/nft-logo.png");
+        assert!(entry.metadata_uri.is_none());
+        assert_eq!(entry.creator, Some([7u8; 32]));
+    }
+
+    #[test]
+    fn registry_population_legacy_tag_uses_defaults() {
+        let alice = KeyPair::from_u64(1);
+        let asset_id = AssetId::from_bytes([13u8; 32]);
+
+        // Legacy tag without KVP107 magic prefix
+        let legacy_tag = b"legacy-coinbase-tag".to_vec();
+
+        let cb = Transaction::coinbase(
+            vec![asset_output(100, asset_id, alice.address())],
+            legacy_tag,
+        );
+
+        let mut ledger =
+            Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
+        ledger.update_asset_registry(std::slice::from_ref(&cb), true);
+
+        let entry = ledger.asset_registry.get(&asset_id).unwrap();
+        // Legacy entry should use defaults: mint_price=0, no logo, no metadata
+        assert_eq!(entry.mint_price_per_unit, 0);
+        assert!(entry.logo_uri.is_none());
+        assert!(entry.metadata_uri.is_none());
+        assert!(entry.creator.is_none());
     }
 }
 

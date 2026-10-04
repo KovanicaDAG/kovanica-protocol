@@ -21,7 +21,7 @@ use kovanica_dag::{
 };
 use kovanica_state::multisig::{verify_threshold_signatures, MultisigScript};
 use kovanica_state::{
-    apply_block_at_height, decode_block_payload, encode_block_payload, verify, Address, AssetId,
+    apply_block_at_height, decode_block_payload, encode_block_payload, verify, Address, AssetCreationParams, AssetId,
     AssetKind, HalvingSchedule, HtlcScript, KeyPair, Ledger, LedgerError, LedgerInsertError,
     LedgerStore, LogoUri, MetadataUri, OutPoint, Sig, StealthAddress, Transaction, TxId, TxInput,
     TxOutput, UtxoSet, VaultScript, ASSET_CREATION_FEE, COINBASE_MATURITY, DEFAULT_HALVING_ERA,
@@ -1915,15 +1915,27 @@ impl Node {
             return Err(NodeError::InsufficientFunds);
         }
 
-        // Output: new asset registration (value = 0 for fungible, 1 for NFT)
-        let initial_value = if kind == AssetKind::NonFungible { 1 } else { 0 };
+        // Output: new asset registration
+        // For fungible: mint at least 1 unit (value > 0 to pass non-zero output check)
+        // For NFT: value = 1
+        let initial_value = 1;
         let mut outputs = vec![TxOutput::new(initial_value, Some(asset_id), from)];
         let change = total - need;
         if change > 0 {
             outputs.push(TxOutput::native(change, from));
         }
+        
+        // Build creation params for the tag
+        let creation_params = AssetCreationParams {
+            mint_price_per_unit,
+            logo_uri,
+            metadata_uri,
+            creator: Some(creator_pk),
+        };
+        let tag = creation_params.encode();
+
         let outpoints: Vec<OutPoint> = selected.iter().map(|(op, _)| *op).collect();
-        let tx = Transaction::unsigned(&outpoints, outputs, Vec::new());
+        let tx = Transaction::unsigned(&outpoints, outputs, tag);
         let sighash = tx.sighash();
         Ok(Prepared {
             tx,

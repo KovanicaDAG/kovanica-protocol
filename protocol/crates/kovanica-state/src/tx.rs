@@ -443,6 +443,136 @@ impl AssetRegistryEntry {
     }
 }
 
+/// Creation params for a new asset (KVP-107).
+///
+/// These params are attached to a coinbase transaction's `tag` field and decoded
+/// by `Ledger::update_asset_registry` when the asset is first registered. The
+/// encoding uses a magic prefix so legacy coinbase tags (arbitrary bytes) are
+/// not misinterpreted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssetCreationParams {
+    /// Mint price per base unit (atoms of KVNC). 0 = free minting.
+    pub mint_price_per_unit: u64,
+    /// Optional on-chain logo commitment.
+    pub logo_uri: Option<LogoUri>,
+    /// Optional extended metadata commitment.
+    pub metadata_uri: Option<MetadataUri>,
+    /// Optional creator public key (Ed25519).
+    pub creator: Option<[u8; 32]>,
+}
+
+impl AssetCreationParams {
+    /// Magic prefix for coinbase tags that carry creation params.
+    pub const MAGIC: &[u8] = b"KVP107";
+
+    /// Encode as bytes for storage in a coinbase tag.
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = Vec::with_capacity(64);
+        buf.extend_from_slice(Self::MAGIC);
+        buf.extend_from_slice(&self.mint_price_per_unit.to_le_bytes());
+        buf.push(self.logo_uri.is_some() as u8);
+        if let Some(logo) = &self.logo_uri {
+            buf.push(logo.scheme.to_u8());
+            buf.extend_from_slice(&logo.content_hash);
+            let uri_bytes = logo.uri.as_bytes();
+            buf.extend_from_slice(&(uri_bytes.len() as u32).to_le_bytes());
+            buf.extend_from_slice(uri_bytes);
+        }
+        buf.push(self.metadata_uri.is_some() as u8);
+        if let Some(metadata) = &self.metadata_uri {
+            buf.push(metadata.scheme.to_u8());
+            buf.extend_from_slice(&metadata.content_hash);
+            let uri_bytes = metadata.uri.as_bytes();
+            buf.extend_from_slice(&(uri_bytes.len() as u32).to_le_bytes());
+            buf.extend_from_slice(uri_bytes);
+        }
+        buf.push(self.creator.is_some() as u8);
+        if let Some(creator) = &self.creator {
+            buf.extend_from_slice(creator);
+        }
+        buf
+    }
+
+    /// Decode from a coinbase tag. Returns `None` if the tag does not carry
+    /// creation params (i.e., it does not start with the magic prefix).
+    pub fn decode(tag: &[u8]) -> Option<Self> {
+        if tag.len() < Self::MAGIC.len() + 8 {
+            return None;
+        }
+        if &tag[..Self::MAGIC.len()] != Self::MAGIC {
+            return None;
+        }
+        let mut pos = Self::MAGIC.len();
+
+        let mint_price_per_unit = u64::from_le_bytes(
+            tag[pos..pos + 8].try_into().ok()?,
+        );
+        pos += 8;
+
+        let has_logo = tag.get(pos)? == &1;
+        pos += 1;
+        let logo_uri = if has_logo {
+            let scheme = LogoScheme::from_u8(*tag.get(pos)?)?;
+            pos += 1;
+            let content_hash: [u8; 32] = tag[pos..pos + 32].try_into().ok()?;
+            pos += 32;
+            let uri_len = u32::from_le_bytes(tag[pos..pos + 4].try_into().ok()?) as usize;
+            pos += 4;
+            let uri = String::from_utf8(tag[pos..pos + uri_len].to_vec()).ok()?;
+            pos += uri_len;
+            Some(LogoUri {
+                scheme,
+                content_hash,
+                uri,
+            })
+        } else {
+            None
+        };
+
+        let has_metadata = tag.get(pos)? == &1;
+        pos += 1;
+        let metadata_uri = if has_metadata {
+            let scheme = MetadataScheme::from_u8(*tag.get(pos)?)?;
+            pos += 1;
+            let content_hash: [u8; 32] = tag[pos..pos + 32].try_into().ok()?;
+            pos += 32;
+            let uri_len = u32::from_le_bytes(tag[pos..pos + 4].try_into().ok()?) as usize;
+            pos += 4;
+            let uri = String::from_utf8(tag[pos..pos + uri_len].to_vec()).ok()?;
+            pos += uri_len;
+            Some(MetadataUri {
+                scheme,
+                content_hash,
+                uri,
+            })
+        } else {
+            None
+        };
+
+        let has_creator = tag.get(pos)? == &1;
+        pos += 1;
+        let creator = if has_creator {
+            let bytes: [u8; 32] = tag[pos..pos + 32].try_into().ok()?;
+            pos += 32;
+            Some(bytes)
+        } else {
+            None
+        };
+
+        // Ensure we consumed the entire tag (no trailing bytes).
+        if pos != tag.len() {
+            return None;
+        }
+
+        Some(Self {
+            mint_price_per_unit,
+            logo_uri,
+            metadata_uri,
+            creator,
+        })
+    }
+}
+
 /// A 32-byte BLAKE3 digest identifying an asset definition.
 ///
 /// The native KVNC asset is represented by `None` (or `AssetId::native()`).
@@ -1424,5 +1554,63 @@ mod tests {
         let issuer = [0x42u8; 32];
         let asset_id = derive_rwa_asset_id(&issuer, "RE", "tower-12a", 1);
         assert!(!asset_id.is_native());
+    }
+
+    #[test]
+    fn asset_creation_params_encode_decode_roundtrip() {
+        let params = AssetCreationParams {
+            mint_price_per_unit: 100_000_000, // 1 KVNC = 1 ATOM
+            logo_uri: Some(LogoUri {
+                scheme: LogoScheme::Ipfs,
+                content_hash: [1u8; 32],
+                uri: "ipfs://QmValidLogo".to_string(),
+            }),
+            metadata_uri: Some(MetadataUri {
+                scheme: MetadataScheme::Ipfs,
+                content_hash: [2u8; 32],
+                uri: "ipfs://QmValidMetadata".to_string(),
+            }),
+            creator: Some([3u8; 32]),
+        };
+        let encoded = params.encode();
+        assert!(encoded.starts_with(b"KVP107"));
+        let decoded = AssetCreationParams::decode(&encoded).unwrap();
+        assert_eq!(decoded.mint_price_per_unit, params.mint_price_per_unit);
+        assert_eq!(decoded.logo_uri, params.logo_uri);
+        assert_eq!(decoded.metadata_uri, params.metadata_uri);
+        assert_eq!(decoded.creator, params.creator);
+    }
+
+    #[test]
+    fn asset_creation_params_encode_decode_minimal() {
+        let params = AssetCreationParams {
+            mint_price_per_unit: 0,
+            logo_uri: None,
+            metadata_uri: None,
+            creator: None,
+        };
+        let encoded = params.encode();
+        assert!(encoded.starts_with(b"KVP107"));
+        let decoded = AssetCreationParams::decode(&encoded).unwrap();
+        assert_eq!(decoded.mint_price_per_unit, params.mint_price_per_unit);
+        assert_eq!(decoded.logo_uri, params.logo_uri);
+        assert_eq!(decoded.metadata_uri, params.metadata_uri);
+        assert_eq!(decoded.creator, params.creator);
+    }
+
+    #[test]
+    fn asset_creation_params_decode_legacy_tag_returns_none() {
+        // Legacy coinbase tag without magic prefix
+        let legacy_tag = b"height-12345".to_vec();
+        let decoded = AssetCreationParams::decode(&legacy_tag);
+        assert!(decoded.is_none());
+    }
+
+    #[test]
+    fn asset_creation_params_decode_invalid_magic_returns_none() {
+        // Wrong magic prefix
+        let bad_tag = b"KVP108".to_vec();
+        let decoded = AssetCreationParams::decode(&bad_tag);
+        assert!(decoded.is_none());
     }
 }
