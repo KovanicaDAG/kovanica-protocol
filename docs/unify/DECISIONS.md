@@ -318,8 +318,8 @@
 - **Two steps, deliberately separate.** Step 1 (`fde6a46`) added
   `src/lib/kvnc.test.ts` (22 tests) pinning the *old* implementation against the
   shared derivation vectors and wired `npm run test` (`vitest run`) into the
-  `web` CI job, so the swap had a net before any code moved. Step 2 (this
-  decision) replaced the crypto.
+  `web` CI job, so the swap had a net before any code moved. Step 2
+  (decision commit `914cc49`) replaced the crypto.
 - **Blockers that had to be cleared first:**
   - the wasm module initialises asynchronously while every `kvnc.ts` entry point
     is sync and runs during render → `src/main.tsx` now awaits `ready()` before
@@ -364,7 +364,7 @@
 | #13 Phase 3c — Android uses the FFI for all key work | owner (Phase 3 direction) | 2026-10-04 | `88c4047` |
 | #14 iOS golden vectors verified on Linux (no Xcode) | owner (Phase 3 direction) | 2026-10-03 | `efd21b1` |
 | #15 Phase 3b — web + extension use the shared wasm keys | owner (Phase 3 direction) | 2026-10-03 | `7c2ff8c`, `af1ada5` |
-| #16 Phase 3b — dashboard uses the shared WASM core | owner (Phase 3 direction) | 2026-10-04 | — |
+| #16 Phase 3b — dashboard uses the shared WASM core | owner (Phase 3 direction) | 2026-10-04 | `fde6a46`, `914cc49` |
 
 ---
 
