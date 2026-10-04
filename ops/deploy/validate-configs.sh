@@ -2,7 +2,7 @@
 # Validate Kovanica seed env files against the variables the node actually
 # reads. Run before every deploy and after every edit.
 #
-#   ./deploy/validate-configs.sh
+#   ./ops/deploy/validate-configs.sh
 #
 # Why this exists: the node silently IGNORES any KOVANICA_* variable it does not
 # read. A config full of plausible-but-inert knobs looks authoritative while
@@ -13,7 +13,11 @@
 
 set -uo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# This script lives at ops/deploy/, so the repo root is two levels up.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# The deploy tree moved under ops/ in the Phase 1 restructure. Anchor it once
+# here instead of repeating the prefix in twenty places.
+DEPLOY_ROOT="$REPO_ROOT/ops/deploy"
 NODE_SRC="$REPO_ROOT/protocol/crates/kovanica-node/src"
 
 RED=$'\033[31m'; YEL=$'\033[33m'; GRN=$'\033[32m'; DIM=$'\033[2m'; RST=$'\033[0m'
@@ -166,7 +170,7 @@ check_file() {
 note "== per-seed env files =="
 for net in testnet mainnet; do
   for seed in 1 2 3; do
-    check_file "$REPO_ROOT/deploy/$net/configs/seed${seed}.env" "$net" "$seed"
+    check_file "$DEPLOY_ROOT/$net/configs/seed${seed}.env" "$net" "$seed"
   done
 done
 
@@ -174,13 +178,13 @@ done
 
 note "== cross-file consistency =="
 
-tn_ports="$(grep -h '^[[:space:]]*KOVANICA_LISTEN=' "$REPO_ROOT"/deploy/testnet/configs/seed*.env | sort -u | wc -l)"
-mn_ports="$(grep -h '^[[:space:]]*KOVANICA_LISTEN=' "$REPO_ROOT"/deploy/mainnet/configs/seed*.env | sort -u | wc -l)"
+tn_ports="$(grep -h '^[[:space:]]*KOVANICA_LISTEN=' "$DEPLOY_ROOT"/testnet/configs/seed*.env | sort -u | wc -l)"
+mn_ports="$(grep -h '^[[:space:]]*KOVANICA_LISTEN=' "$DEPLOY_ROOT"/mainnet/configs/seed*.env | sort -u | wc -l)"
 [[ "$tn_ports" == "1" ]] && ok "all testnet seeds share one P2P port" || bad "testnet seeds disagree on KOVANICA_LISTEN"
 [[ "$mn_ports" == "1" ]] && ok "all mainnet seeds share one P2P port" || bad "mainnet seeds disagree on KOVANICA_LISTEN"
 
-tn_p="$(grep -h '^[[:space:]]*KOVANICA_LISTEN=' "$REPO_ROOT"/deploy/testnet/configs/seed*.env | head -1 | cut -d: -f2 | tr -d ' \t\r')"
-mn_p="$(grep -h '^[[:space:]]*KOVANICA_LISTEN=' "$REPO_ROOT"/deploy/mainnet/configs/seed*.env | head -1 | cut -d: -f2 | tr -d ' \t\r')"
+tn_p="$(grep -h '^[[:space:]]*KOVANICA_LISTEN=' "$DEPLOY_ROOT"/testnet/configs/seed*.env | head -1 | cut -d: -f2 | tr -d ' \t\r')"
+mn_p="$(grep -h '^[[:space:]]*KOVANICA_LISTEN=' "$DEPLOY_ROOT"/mainnet/configs/seed*.env | head -1 | cut -d: -f2 | tr -d ' \t\r')"
 if [[ "$tn_p" != "$mn_p" ]]; then
   ok "testnet P2P $tn_p != mainnet P2P $mn_p — the two networks coexist on one host"
 else
@@ -191,8 +195,8 @@ fi
 # and a metrics bind failure is NON-FATAL (metrics.rs logs to stderr and the
 # node keeps running), so sharing a port silently leaves one network
 # unscrapeable while every health check still reports the node as up.
-tn_m="$(grep -h '^[[:space:]]*KOVANICA_METRICS_LISTEN=' "$REPO_ROOT"/deploy/testnet/configs/seed*.env | head -1 | cut -d= -f2- | tr -d ' \t\r')"
-mn_m="$(grep -h '^[[:space:]]*KOVANICA_METRICS_LISTEN=' "$REPO_ROOT"/deploy/mainnet/configs/seed*.env | head -1 | cut -d= -f2- | tr -d ' \t\r')"
+tn_m="$(grep -h '^[[:space:]]*KOVANICA_METRICS_LISTEN=' "$DEPLOY_ROOT"/testnet/configs/seed*.env | head -1 | cut -d= -f2- | tr -d ' \t\r')"
+mn_m="$(grep -h '^[[:space:]]*KOVANICA_METRICS_LISTEN=' "$DEPLOY_ROOT"/mainnet/configs/seed*.env | head -1 | cut -d= -f2- | tr -d ' \t\r')"
 if [[ -n "$tn_m" && -n "$mn_m" && "$tn_m" == "$mn_m" ]]; then
   bad "testnet and mainnet both bind metrics $tn_m — one network silently loses its metrics"
 else
@@ -200,7 +204,7 @@ else
 fi
 
 # Metrics must never be world-reachable, same rule as the explorer port.
-for f in "$REPO_ROOT"/deploy/*/configs/seed*.env; do
+for f in "$DEPLOY_ROOT"/*/configs/seed*.env; do
   m="$(grep -E '^[[:space:]]*KOVANICA_METRICS_LISTEN=' "$f" | head -1 | cut -d= -f2- | tr -d ' \t\r')"
   case "$m" in
     off|none|0|"") continue ;;
@@ -214,13 +218,13 @@ done
 # ledger read-only and the node cannot open it -- and that failure looks like
 # a corrupt chain, not a permissions bug.
 for net in testnet mainnet; do
-  unit="$REPO_ROOT/deploy/systemd/kovanica-${net}-seed@.service"
+  unit="$DEPLOY_ROOT/systemd/kovanica-${net}-seed@.service"
   rwp="$(grep -E '^[[:space:]]*ReadWritePaths=' "$unit" | head -1 | cut -d= -f2- | tr -d ' \t\r')"
   if [[ -z "$rwp" ]]; then
     bad "${unit#"$REPO_ROOT"/}: no ReadWritePaths — ProtectSystem=strict would make the data dir read-only"
     continue
   fi
-  for f in "$REPO_ROOT"/deploy/$net/configs/seed*.env; do
+  for f in "$DEPLOY_ROOT"/$net/configs/seed*.env; do
     data="$(grep -E '^[[:space:]]*KOVANICA_DATA=' "$f" | head -1 | cut -d= -f2- | tr -d ' \t\r')"
     # Expand the unit's %i using the seed index taken from the filename.
     idx="$(basename "$f" .env | sed -E 's/^seed//')"
@@ -237,7 +241,7 @@ done
 # instances share one machine. Two ceilings larger than the smallest seed's RAM
 # caps nothing and just lets the OOM killer take out both nodes and the host.
 mem_max_total_kb=0
-for unit in "$REPO_ROOT"/deploy/systemd/*seed@.service; do
+for unit in "$DEPLOY_ROOT"/systemd/*seed@.service; do
   mm="$(grep -E '^[[:space:]]*MemoryMax=' "$unit" | head -1 | cut -d= -f2- | tr -d ' \t\r')"
   case "$mm" in
     *G) kb=$(( ${mm%G} * 1024 * 1024 )) ;;
@@ -259,7 +263,7 @@ fi
 
 # A network-facing process holding root with no sandbox is a blast radius
 # problem, not a style one. Require the core set rather than any one directive.
-for unit in "$REPO_ROOT"/deploy/systemd/*seed@.service; do
+for unit in "$DEPLOY_ROOT"/systemd/*seed@.service; do
   for d in NoNewPrivileges ProtectSystem ProtectHome PrivateTmp; do
     grep -qE "^[[:space:]]*${d}=(yes|strict|true)" "$unit" \
       || bad "${unit#"$REPO_ROOT"/}: missing hardening ${d}=yes"
@@ -267,7 +271,7 @@ for unit in "$REPO_ROOT"/deploy/systemd/*seed@.service; do
 done
 
 # Data dirs must be distinct, or a reset on one wipes the other.
-dirs="$(grep -h '^[[:space:]]*KOVANICA_DATA=' "$REPO_ROOT"/deploy/*/configs/seed*.env | cut -d= -f2- | tr -d ' \t\r' | sort | uniq -d)"
+dirs="$(grep -h '^[[:space:]]*KOVANICA_DATA=' "$DEPLOY_ROOT"/*/configs/seed*.env | cut -d= -f2- | tr -d ' \t\r' | sort | uniq -d)"
 [[ -n "$dirs" ]] && bad "duplicate KOVANICA_DATA across seeds: $dirs" || ok "every seed has its own data directory"
 
 # Consensus params are compiled-in, not env — assert we did not reintroduce them.
@@ -277,7 +281,7 @@ for var in KOVANICA_K KOVANICA_MAX_SUPPLY KOVANICA_COINBASE_MATURITY KOVANICA_SU
            KOVANICA_NETWORK_ID KOVANICA_EXPLORER_PORT; do
   # Only real env files count. Prose in a runbook that NAMES the variable to
   # warn people off it is the opposite of a reintroduction.
-  hits="$(find "$REPO_ROOT"/deploy "$REPO_ROOT"/config -name '*.env' -type f -print0 2>/dev/null \
+  hits="$(find "$DEPLOY_ROOT" "$REPO_ROOT"/config -name '*.env' -type f -print0 2>/dev/null \
           | xargs -0 -r grep -lE "^[[:space:]]*${var}=" 2>/dev/null || true)"
   [[ -n "$hits" ]] && bad "$var is set in: $hits — compiled-in constants must not be env-configurable"
 done
@@ -286,7 +290,7 @@ ok "no consensus parameter is exposed as an env var"
 # --- 5. systemd units -------------------------------------------------------
 
 note "== systemd units =="
-for unit in "$REPO_ROOT"/deploy/systemd/*.service; do
+for unit in "$DEPLOY_ROOT"/systemd/*.service; do
   name="$(basename "$unit")"
   # Secrets must be EnvironmentFile=, never Environment=.
   if grep -qE '^[[:space:]]*Environment=.*(KEY|SEED|SECRET|PASSWORD|PRIVATE)' "$unit"; then
@@ -303,8 +307,8 @@ for unit in "$REPO_ROOT"/deploy/systemd/*.service; do
 done
 
 # The explorer ports the two units use must not collide with a live service.
-tn_x="$(grep -oE 'explorer[[:space:]]+127\.0\.0\.1:[0-9]+' "$REPO_ROOT"/deploy/systemd/kovanica-testnet-seed@.service | grep -oE '[0-9]+$')"
-mn_x="$(grep -oE 'explorer[[:space:]]+127\.0\.0\.1:[0-9]+' "$REPO_ROOT"/deploy/systemd/kovanica-mainnet-seed@.service | grep -oE '[0-9]+$')"
+tn_x="$(grep -oE 'explorer[[:space:]]+127\.0\.0\.1:[0-9]+' "$DEPLOY_ROOT"/systemd/kovanica-testnet-seed@.service | grep -oE '[0-9]+$')"
+mn_x="$(grep -oE 'explorer[[:space:]]+127\.0\.0\.1:[0-9]+' "$DEPLOY_ROOT"/systemd/kovanica-mainnet-seed@.service | grep -oE '[0-9]+$')"
 [[ "$tn_x" != "$mn_x" ]] && ok "testnet explorer $tn_x != mainnet explorer $mn_x" \
                          || bad "both units bind explorer port $tn_x — two processes cannot share it"
 
