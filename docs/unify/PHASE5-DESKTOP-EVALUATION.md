@@ -159,8 +159,10 @@ spike should be its own branch and should not touch `apps/android` / `apps/ios`.
    shippable installers.
 6. **No `LICENSE` file in the repo**, yet the nsis configs reference one and the manifests
    declare `MIT` / `MIT OR Apache-2.0`.
-7. `build-all.yml` still uses **pnpm** in its (tag/manual) release jobs, while the rest of the
-   repo is npm workspaces (Phase 4). Not a blocker, but it is drift.
+7. `build-all.yml` used to use **pnpm** in its (tag/manual) release jobs while the rest of the repo
+   is npm workspaces (Phase 4). **Fixed** — it and `ci-cd.yml` now install from the root
+   `package-lock.json` and run `npm run tauri build`, so no workflow still carries the old pnpm
+   steps or the dangling per-app lockfile paths.
 
 ---
 
@@ -202,10 +204,16 @@ recommendation to *not* act.
 
 - `apps/console-enterprise/src-tauri/tauri.conf.json` has the four v1 schema defects listed in §4.2.
 - `apps/desktop-node/Cargo.lock` is stale (`cargo check --locked` refuses to run).
-- `apps/desktop-node` and `apps/console-enterprise` have no CI coverage at all.
-- `entitlements.plist` referenced by both consoles does not exist.
+- ~~`apps/desktop-node` and `apps/console-enterprise` have no CI coverage at all.~~ **Fixed** —
+  `desktop-node (fmt / clippy / test)`, `desktop (Tauri config gate)` and the two-console
+  `desktop (Windows Tauri — …)` matrix landed (DECISIONS #24), and both consoles are now on
+  Tauri v2 (DECISIONS #25).
+- ~~`entitlements.plist` referenced by both consoles does not exist.~~ **Fixed** — the dangling
+  reference was removed from both configs; the entitlements *policy* is still an open owner
+  decision.
 - No `LICENSE` file in the repo.
-- `build-all.yml` still uses pnpm.
+- ~~`build-all.yml` still uses pnpm.~~ **Fixed** — it and `ci-cd.yml` now use the root npm
+  workspace.
 
 ---
 

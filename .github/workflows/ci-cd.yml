@@ -31,27 +31,23 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
-          # This job builds two consoles, each with its own lockfile, and there
-          # is no package-lock.json at the repository root. Without this,
-          # setup-node searches the root, finds nothing, and fails the job
-          # before either console is even attempted.
-          cache-dependency-path: |
-            apps/console-kovanica/package-lock.json
-            apps/console-enterprise/package-lock.json
+          # The repository is one npm workspace (DECISIONS #18): a single
+          # package-lock.json at the root installs every member. Node 24
+          # matches the npm 11 toolchain that wrote that lockfile.
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (root workspace)
+        run: npm ci
 
       - name: Build Kovanica Console
-        run: |
-          cd apps/console-kovanica
-          npm ci
-          npm run build
+        working-directory: ./apps/console-kovanica
+        run: npm run build
 
       - name: Build Enterprise Console
-        run: |
-          cd apps/console-enterprise
-          npm ci
-          npm run build
+        working-directory: ./apps/console-enterprise
+        run: npm run build
 
       - name: Upload Kovanica Console
         uses: actions/upload-artifact@v4
