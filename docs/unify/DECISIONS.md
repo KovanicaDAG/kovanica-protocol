@@ -694,7 +694,7 @@ all three configs; `ops/ci/test-validate-tauri-config.py` passes all five cases.
 | #21 Phase 4 — defer `packages/wallet-wasm` move (publish-sdk gate) | owner | 2026-10-04 | `46afb92` |
 | #22 Phase 4 — stale `apps/dashboard` manifest excluded, archive recommended | owner (Phase 4 direction) | 2026-10-04 | `46afb92` |
 | #24 Desktop hygiene — testnet re-pin, Tauri config fixes, blocking desktop gates | owner | 2026-10-04 | `244c731`, `e976008`, `cb0e1cd`, `fdcf66b` |
-| #25 Option B — both consoles migrated to Tauri v2 behind one shared shell | owner (Phase 5 direction) | 2026-10-04 | pending |
+| #25 Option B — both consoles migrated to Tauri v2 behind one shared shell | owner (Phase 5 direction) | 2026-10-04 | `5d69ca8` |
 
 ---
 
