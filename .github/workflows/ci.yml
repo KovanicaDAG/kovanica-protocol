@@ -517,7 +517,24 @@ jobs:
 
   # ───────────────────────────────────────────────────────────────────
   # desktop: ported from build-all.yml "linux-tauri" + "windows-tauri"
-  # Non-blocking: both require signing certs/secrets not available in public CI
+  #
+  # Non-blocking by design (`continue-on-error: true` on both jobs). They are
+  # release-shaped jobs: producing signed desktop artifacts is a maintainer
+  # decision, not a merge gate.
+  #
+  # desktop-linux is additionally blocked by something no config change can
+  # fix: this app is on Tauri v1 (tauri 1.8.3 -> wry 0.24 -> webkit2gtk-sys
+  # 0.18), which hard-requires pkg-config `webkit2gtk-4.0` /
+  # `javascriptcoregtk-4.0`. ubuntu-latest is Ubuntu 24.04 (noble), which ships
+  # only `libwebkit2gtk-4.1-dev`; `libwebkit2gtk-4.0-dev` does not exist there.
+  # Upstream tauri-apps/tauri#9662 is closed `not_planned` — the only supported
+  # fix is Tauri v2. Do not "repair" this by pinning a deprecated runner image
+  # or by adding another Ubuntu release's apt sources into noble. Migrating the
+  # console app to Tauri v2 is the real follow-up; until then Linux bundling is
+  # exercised locally / on release only.
+  #
+  # desktop-windows does build: WebView2 is preinstalled on windows-latest and
+  # mingw comes from choco, so no webkit version is involved.
   # ───────────────────────────────────────────────────────────────────
   desktop-linux:
     name: desktop (Linux Tauri)
