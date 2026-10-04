@@ -309,7 +309,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 24, not 20: these lockfiles were written by npm 11, and npm 10
+          # resolves some transitive peer dependencies differently. npm ci then
+          # refuses the tree it is handed (EUSAGE, "Missing: lru-cache@…").
+          # The desktop jobs already pin 24; this keeps one JS runtime in CI.
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: ${{ matrix.app }}/package-lock.json
 
