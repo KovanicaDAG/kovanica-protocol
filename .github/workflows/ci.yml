@@ -561,14 +561,10 @@ jobs:
           cache-dependency-path: package-lock.json
 
       # The schema this validates against is the one the pinned CLI ships, so
-      # the gate cannot drift from the toolchain. v1's `schema.json` comes from
-      # the root workspace install; v2's `config.schema.json` comes from the
-      # desktop-node UI install.
-      - name: Install root workspace (Tauri CLI schema)
-        run: npm ci
-
-      - name: Install desktop-node UI (Tauri v2 CLI schema)
-        working-directory: ./apps/desktop-node/ui
+      # the gate cannot drift from the toolchain. Every Tauri config in the repo
+      # is v2, and `config.schema.json` now comes from the root workspace
+      # install: `apps/desktop-node/ui` is a workspace member (DECISIONS #26).
+      - name: Install workspace (Tauri CLI schema)
         run: npm ci
 
       # Checks schema validity, `http.scope` URL parseability (a Rust-side

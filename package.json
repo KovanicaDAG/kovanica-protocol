@@ -10,7 +10,8 @@
     "apps/console-kovanica",
     "apps/console-enterprise",
     "packages/api-client",
-    "packages/console-shared"
+    "packages/console-shared",
+    "apps/desktop-node/ui"
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
