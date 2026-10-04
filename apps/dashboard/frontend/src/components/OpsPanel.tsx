@@ -3,9 +3,9 @@ import { Input, Button, Badge, Table, Select, SelectItem, PanelTabs } from '@/co
 import { Trash2 } from 'lucide-react';
 import { postApi } from '../hooks/useApi';
 
-interface OpsPanelProps {}
+type OpsPanelProps = Record<string, never>
 
-export function OpsPanel({}: OpsPanelProps) {
+export function OpsPanel(_props: OpsPanelProps) {
   const [opsToken, setOpsToken] = useState('');
   const [opsEnabled, setOpsEnabled] = useState(false);
   const [selectedAction, setSelectedAction] = useState<'restart' | 'diagnostics' | 'logs'>('restart');

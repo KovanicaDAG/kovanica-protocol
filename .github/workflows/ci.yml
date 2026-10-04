@@ -364,6 +364,13 @@ jobs:
         working-directory: ${{ matrix.app }}
         run: npm run test
 
+      # The dashboard had a `lint` script but no ESLint config to load, so it was
+      # never linted anywhere. It has one now, and this is the gate.
+      - name: Lint (apps/dashboard/frontend)
+        if: matrix.app == 'apps/dashboard/frontend'
+        working-directory: ${{ matrix.app }}
+        run: npm run lint
+
       # The spec is hand-maintained and the node is not, so the committed
       # src/schema.d.ts can go stale without any compiler noticing. Fail the
       # build instead.

@@ -5,9 +5,9 @@ import { Copy, AlertCircle, CheckCircle, Clock, ArrowRight } from 'lucide-react'
 import { fmtKvnc } from '../hooks/useApi';
 import { postApi } from '../hooks/useApi';
 
-interface HtlcPanelProps {}
+type HtlcPanelProps = Record<string, never>
 
-export function HtlcPanel({}: HtlcPanelProps) {
+export function HtlcPanel(_props: HtlcPanelProps) {
   const [step, setStep] = useState<'prepare' | 'redeem' | 'refund'>('prepare');
   const handleStepChange = (id: string) => setStep(id as 'prepare' | 'redeem' | 'refund');
   const [formData, setFormData] = useState({
