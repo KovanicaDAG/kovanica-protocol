@@ -271,6 +271,10 @@ jobs:
             build: npm run build
           - app: apps/console-enterprise
             build: npm run build
+          # packages/api-client is a library, so there is no bundler build: the
+          # gate is that the committed types still match the committed spec.
+          - app: packages/api-client
+            build: npm run typecheck
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -332,6 +336,19 @@ jobs:
         if: matrix.app == 'apps/dashboard/frontend'
         working-directory: ${{ matrix.app }}
         run: npm run test
+
+      # The spec is hand-maintained and the node is not, so the committed
+      # src/schema.d.ts can go stale without any compiler noticing. Fail the
+      # build instead.
+      - name: API contract drift (packages/api-client)
+        if: matrix.app == 'packages/api-client'
+        working-directory: ${{ matrix.app }}
+        run: npm run check:drift
+
+      - name: Test (packages/api-client)
+        if: matrix.app == 'packages/api-client'
+        working-directory: ${{ matrix.app }}
+        run: npm test
 
       - name: Build
         working-directory: ${{ matrix.app }}

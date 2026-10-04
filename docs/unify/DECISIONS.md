@@ -350,6 +350,73 @@
   helpers covered by host tests); `protocol` `cargo check --workspace --locked`
   green. The `web` CI job now builds the wasm package for the dashboard too.
 
+### 17. Phase 3e — the node HTTP API gets one spec and one generated client
+- **Finding:** the node speaks HTTP from a single file,
+  `protocol/crates/kovanica-node/src/explorer.rs` (6823 lines, hand-rolled
+  `if … return` chain at `:1819-2723` plus a POST catch-all at `:3366-3836`).
+  `rpc.rs` is a **console** RPC, not HTTP — a naming collision that made the
+  Phase 3 plan's "rpc.rs/explorer.rs" pairing read as if the API were split in
+  two. It is not. Meanwhile every TS surface re-declared the response shapes by
+  hand: `apps/dashboard/frontend/src/types.ts`, the extension's fetcher, the two
+  consoles. Four copies of one contract, none of them checked against the node.
+- **What already existed and was kept:** `apps/dashboard/frontend/scripts/api-contract.ts`
+  compares a *live* node response against the declared interfaces in
+  `src/types.ts`, both ways. Its header records the reason: a field the
+  dashboard declares but the node never sends is a perfectly valid TypeScript
+  type that simply has no runtime value, and `tsc` cannot catch it — the panels
+  just render `0` / `—` / `No results` on a healthy network. That class of bug
+  was hit four times. The script stays as the live check; the spec now replaces
+  the hand-declared half.
+- **Decision:** commit one OpenAPI 3.1 spec at
+  `packages/api-client/openapi/kovanica-node.yaml` as the contract, generate
+  `src/schema.d.ts` from it with `openapi-typescript`, and expose a thin
+  `openapi-fetch` factory (`createKovanicaClient`) plus bigint amount helpers.
+  `src/schema.d.ts` is committed so consumers type-check without running codegen,
+  and `npm run check:drift` regenerates to a temp file and diffs so a
+  hand-edited or stale `schema.d.ts` fails CI.
+- **Tooling:** `openapi-typescript` + `openapi-fetch` over a heavier generator.
+  A generator runtime is a supply-chain surface and a second thing to keep
+  current; two small packages and a one-line script are easier to audit, and the
+  generated output is types only, which is all these consumers need.
+- **The spec records what the code does, not what it should do.** It therefore
+  documents the traps rather than papering over them: two different shapes on
+  `/api/fee_estimate` (GET returns `{fee_rate, unit, mempool, bytes}`, POST
+  returns `{ok, slow, normal, fast}`), two pagination models (`limit`/`offset`/
+  `total` on `/api/history` and `/api/utxos` vs `page`/`per_page`/`pages` on
+  `/api/address/{address}`), three error encodings (JSON, `text/plain` for
+  every `POST /api/{action}` route plus `/api/history` and `/api/utxos`, and a
+  bare `not found`), `authority_set.hash` present on `/api/network` but absent
+  on `/api/head`, `tx_id_hex` from `/api/multisig/submit` where every other
+  tx-returning route uses `tx`, `?node=` silently ignored by `/api/block/{id}`
+  and `/api/tx/{id}`, `/api/state` mutating the selected mesh node from a GET,
+  and `/api/prepare` + `/api/submit` being query-string endpoints rather than
+  JSON-body ones. Every operation declares `security: []` (there is no
+  authentication anywhere) and flags role-gated routes with
+  `x-kovanica-gating`.
+- **Correction made while writing it.** An earlier draft of the `Atoms`
+  description claimed MAX_SUPPLY (9,020,000,000,000,000) "sits just under
+  `Number.MAX_SAFE_INTEGER`". It does not: 2^53−1 is 9,007,199,254,740,991,
+  i.e. ~90,071,992 KVNC — **below** the cap. So `max_supply`, `native_minted`,
+  `total` and `burned` are already rounded by the time `JSON.parse` returns
+  them, because the node serialises atoms as JSON numbers. That is now stated in
+  the spec, and `src/amounts.ts` exists because of it: every amount is a
+  `bigint`, `atomsFromWire` **refuses** rather than rounds, and the safe way to
+  read the cumulative supply fields is from the raw response text. A unit test
+  pins `Number.isSafeInteger(Number(MAX_SUPPLY_ATOMS)) === false` so the claim
+  cannot silently become true.
+- **Consensus impact:** none. Client-only, and no Rust was touched — this
+  decision adds a spec, a generated type file, a typed fetch wrapper and a CI
+  gate. It also does **not** yet change any consumer: the dashboard still uses
+  its own `src/types.ts`. Wiring the surfaces to the generated client is
+  deliberately a separate follow-up, so this lands as a contract that is
+  published and enforced before anything depends on it.
+- **Evidence:** 55 paths / 56 operations / 59 schemas / 4 reusable responses /
+  12 reusable parameters, zero unresolved `$ref`s, no duplicate `operationId`s,
+  no undeclared or unused tags. `npm run typecheck` exit 0, `npm test` 13/13,
+  `npm run check:drift` clean. `packages/api-client` is a new entry in the
+  existing `web` CI matrix (`packages/**` was already in that job's path filter),
+  so no new top-level job was needed.
+
 ---
 
 ## Approved Decisions (to be filled during review)
@@ -365,6 +432,7 @@
 | #14 iOS golden vectors verified on Linux (no Xcode) | owner (Phase 3 direction) | 2026-10-03 | `efd21b1` |
 | #15 Phase 3b — web + extension use the shared wasm keys | owner (Phase 3 direction) | 2026-10-03 | `7c2ff8c`, `af1ada5` |
 | #16 Phase 3b — dashboard uses the shared WASM core | owner (Phase 3 direction) | 2026-10-04 | `fde6a46`, `914cc49` |
+| #17 Phase 3e — one OpenAPI spec + generated client for the node HTTP API | owner (Phase 3 direction) | 2026-10-04 | — |
 
 ---
 
