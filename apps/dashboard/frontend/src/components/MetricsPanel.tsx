@@ -4,9 +4,9 @@ import { PanelTabs } from '@/components/ui';
 import { BarChart2, RefreshCw, ExternalLink } from 'lucide-react';
 import { fmtNumber } from '../hooks/useApi';
 
-interface MetricsPanelProps {}
+type MetricsPanelProps = Record<string, never>
 
-export function MetricsPanel({}: MetricsPanelProps) {
+export function MetricsPanel(_props: MetricsPanelProps) {
   const [metrics, setMetrics] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [selectedJob, setSelectedJob] = useState<string>('kovanica');

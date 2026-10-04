@@ -4,9 +4,9 @@ import { PanelTabs } from '@/components/ui';
 import { Copy, AlertCircle, CheckCircle, Users, Plus, Minus, ShieldAlert } from 'lucide-react';
 import { postApi } from '../hooks/useApi';
 
-interface MultisigPanelProps {}
+type MultisigPanelProps = Record<string, never>
 
-export function MultisigPanel({}: MultisigPanelProps) {
+export function MultisigPanel(_props: MultisigPanelProps) {
   const [step, setStep] = useState<'create' | 'build' | 'sign' | 'combine' | 'submit'>('create');
   const handleStepChange = (id: string) => setStep(id as 'create' | 'build' | 'sign' | 'combine' | 'submit');
   const [formData, setFormData] = useState({
