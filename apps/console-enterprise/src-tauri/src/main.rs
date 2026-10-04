@@ -4,5 +4,5 @@
 )]
 
 fn main() {
-    kovanica_enterprise_console_lib::run();
+    kovanica_enterprise_console::run();
 }
