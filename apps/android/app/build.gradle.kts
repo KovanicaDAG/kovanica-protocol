@@ -4,17 +4,31 @@ plugins {
     id("kotlin-parcelize")
 }
 
+// Release signing material is never committed. Supply it through the environment
+// (CI, release machines) or Gradle properties (~/.gradle/gradle.properties, or
+// -PKEYSTORE_PASSWORD=... on the command line):
+//
+//   KEYSTORE_FILE      path to the signing store; defaults to ../keystore/release.keystore
+//   KEYSTORE_PASSWORD  store password
+//   KEY_PASSWORD       key password
+//   KEY_ALIAS          key alias; defaults to "kovanica"
+//
+// apps/android/keystore/ is gitignored. A release build with no credentials fails
+// at signing time rather than falling back to a shared secret.
+fun signingSecret(name: String): String? =
+    System.getenv(name) ?: (project.findProperty(name) as String?)
+
 android {
     namespace = "com.kovanica.wallet"
     compileSdk = 34
 
-    // Signing configuration for release builds
+    // Signing configuration for release builds; see signingSecret above.
     signingConfigs {
         create("release") {
-            storeFile = file("../keystore/release.keystore")
-            storePassword = "kovanica123" // In production, use: System.getenv("KEYSTORE_PASSWORD") ?: ""
-            keyAlias = "kovanica"
-            keyPassword = "kovanica123" // In production, use: System.getenv("KEY_PASSWORD") ?: ""
+            storeFile = file(signingSecret("KEYSTORE_FILE") ?: "../keystore/release.keystore")
+            storePassword = signingSecret("KEYSTORE_PASSWORD")
+            keyAlias = signingSecret("KEY_ALIAS") ?: "kovanica"
+            keyPassword = signingSecret("KEY_PASSWORD")
         }
     }
 

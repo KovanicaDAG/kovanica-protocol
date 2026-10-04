@@ -92,3 +92,6 @@ ops/deploy/mainnet/authority-keys/*.env
 *.swp
 .idea/
 *.iml
+
+# Android release signing material is never committed.
+apps/android/keystore/
