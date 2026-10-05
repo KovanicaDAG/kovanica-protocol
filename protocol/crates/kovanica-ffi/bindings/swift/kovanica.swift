@@ -618,7 +618,7 @@ fileprivate struct FfiConverterData: FfiConverterRustBuffer {
 
 
 /**
- * A Kovanica light node: ledger + mempool + hybrid validator identity.
+ * A Kovanica light node: ledger + mempool + authority identity.
  *
  * Sync model for mobile: call [`Self::export_blocks`] to hand peers your
  * blocks, feed peer bytes into [`Self::receive_blocks`]. Everything else —
@@ -1012,7 +1012,7 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
     
 }
 /**
- * A Kovanica light node: ledger + mempool + hybrid validator identity.
+ * A Kovanica light node: ledger + mempool + authority identity.
  *
  * Sync model for mobile: call [`Self::export_blocks`] to hand peers your
  * blocks, feed peer bytes into [`Self::receive_blocks`]. Everything else —
