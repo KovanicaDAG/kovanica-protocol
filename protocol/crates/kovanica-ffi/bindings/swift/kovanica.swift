@@ -683,13 +683,6 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
     func blockCount() throws  -> UInt32
     
     /**
-     * The compact filter of a known block as a blob
-     * (`k || n || len || data`). Match addresses with
-     * [`Self::filter_matches`].
-     */
-    func blockFilter(blockIdHex: String) throws  -> Data
-    
-    /**
      * Build an unsigned multisig spend paying `outputs` from a single UTXO
      * owned by `address`. Returns a transaction blob encoding the unsigned tx
      * with the redeem script attached as `witness[0]`.
@@ -783,24 +776,6 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
      * header chain.
      */
     func exportLightSyncFrom(fromIdHex: String)  -> Data
-    
-    /**
-     * Fetch the full authority stake set for an epoch.
-     * Returns lines of "pubkey_hex stake_atoms".
-     */
-    func fetchEpochAuthoritySet(epoch: UInt64) throws  -> String
-    
-    /**
-     * Fetch the stake merkle proof for a slot from the node.
-     * Returns the proof as a hex-encoded bincode blob.
-     */
-    func fetchStakeProof(slot: UInt64) throws  -> String
-    
-    /**
-     * Whether `address` MIGHT appear in the filtered block (Golomb-Rice
-     * false positives are possible; a miss is definitive).
-     */
-    func filterMatches(filterBlob: Data, address: String) throws  -> Bool
     
     /**
      * Batch form of [`Self::filter_matches`]: does the filter match ANY of
@@ -1029,13 +1004,6 @@ public protocol LightNodeProtocol: AnyObject, Sendable {
     func vaultScriptHex(unlockHeight: UInt32, csv: UInt32, ownerPkHex: String) throws  -> String
     
     /**
-     * SW-PoA stake proof for a block's authority (SPV).
-     * Previously verified an SW-PoA block header with a stake proof.
-     * Removed: stake/VRF admission was dropped entirely (RFC-POA-Migration §0.7.1).
-     */
-    func verifySwPoaHeader(headerBlob: Data, proofHex: String) throws  -> Bool
-    
-    /**
      * Verify an inclusion-proof blob against the light-synced header of
      * `block_id_hex`: the proof must verify internally AND its merkle root
      * must equal the header's root. Unknown block → error.
@@ -1250,21 +1218,6 @@ open func blockCount()throws  -> UInt32  {
 }
     
     /**
-     * The compact filter of a known block as a blob
-     * (`k || n || len || data`). Match addresses with
-     * [`Self::filter_matches`].
-     */
-open func blockFilter(blockIdHex: String)throws  -> Data  {
-    return try  FfiConverterData.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
-        uniffiCallStatus in
-    uniffi_kovanica_ffi_fn_method_lightnode_block_filter(
-            self.uniffiCloneHandle(),
-        FfiConverterString.lower(blockIdHex),uniffiCallStatus
-    )
-})
-}
-    
-    /**
      * Build an unsigned multisig spend paying `outputs` from a single UTXO
      * owned by `address`. Returns a transaction blob encoding the unsigned tx
      * with the redeem script attached as `witness[0]`.
@@ -1469,49 +1422,6 @@ open func exportLightSyncFrom(fromIdHex: String) -> Data  {
     uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync_from(
             self.uniffiCloneHandle(),
         FfiConverterString.lower(fromIdHex),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Fetch the full authority stake set for an epoch.
-     * Returns lines of "pubkey_hex stake_atoms".
-     */
-open func fetchEpochAuthoritySet(epoch: UInt64)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
-        uniffiCallStatus in
-    uniffi_kovanica_ffi_fn_method_lightnode_fetch_epoch_authority_set(
-            self.uniffiCloneHandle(),
-        FfiConverterUInt64.lower(epoch),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Fetch the stake merkle proof for a slot from the node.
-     * Returns the proof as a hex-encoded bincode blob.
-     */
-open func fetchStakeProof(slot: UInt64)throws  -> String  {
-    return try  FfiConverterString.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
-        uniffiCallStatus in
-    uniffi_kovanica_ffi_fn_method_lightnode_fetch_stake_proof(
-            self.uniffiCloneHandle(),
-        FfiConverterUInt64.lower(slot),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * Whether `address` MIGHT appear in the filtered block (Golomb-Rice
-     * false positives are possible; a miss is definitive).
-     */
-open func filterMatches(filterBlob: Data, address: String)throws  -> Bool  {
-    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
-        uniffiCallStatus in
-    uniffi_kovanica_ffi_fn_method_lightnode_filter_matches(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(filterBlob),
-        FfiConverterString.lower(address),uniffiCallStatus
     )
 })
 }
@@ -2016,22 +1926,6 @@ open func vaultScriptHex(unlockHeight: UInt32, csv: UInt32, ownerPkHex: String)t
         FfiConverterUInt32.lower(unlockHeight),
         FfiConverterUInt32.lower(csv),
         FfiConverterString.lower(ownerPkHex),uniffiCallStatus
-    )
-})
-}
-    
-    /**
-     * SW-PoA stake proof for a block's authority (SPV).
-     * Previously verified an SW-PoA block header with a stake proof.
-     * Removed: stake/VRF admission was dropped entirely (RFC-POA-Migration §0.7.1).
-     */
-open func verifySwPoaHeader(headerBlob: Data, proofHex: String)throws  -> Bool  {
-    return try  FfiConverterBool.lift(try rustCallWithError(FfiConverterTypeLightNodeError_lift) {
-        uniffiCallStatus in
-    uniffi_kovanica_ffi_fn_method_lightnode_verify_sw_poa_header(
-            self.uniffiCloneHandle(),
-        FfiConverterData.lower(headerBlob),
-        FfiConverterString.lower(proofHex),uniffiCallStatus
     )
 })
 }
@@ -4489,9 +4383,6 @@ private let initializationResult: InitializationResult = {
     if (uniffi_kovanica_ffi_checksum_method_lightnode_block_count() != 12981) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_kovanica_ffi_checksum_method_lightnode_block_filter() != 27849) {
-        return InitializationResult.apiChecksumMismatch
-    }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_build_multisig_spend() != 63072) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -4529,15 +4420,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync_from() != 29986) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_kovanica_ffi_checksum_method_lightnode_fetch_epoch_authority_set() != 57004) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_kovanica_ffi_checksum_method_lightnode_fetch_stake_proof() != 31241) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches() != 44042) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any() != 23729) {
@@ -4628,9 +4510,6 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_vault_script_hex() != 26065) {
-        return InitializationResult.apiChecksumMismatch
-    }
-    if (uniffi_kovanica_ffi_checksum_method_lightnode_verify_sw_poa_header() != 48076) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_kovanica_ffi_checksum_method_lightnode_verify_tx_proof() != 40302) {
