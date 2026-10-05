@@ -162,3 +162,82 @@ Recorded so the work is not repeated a fourth time:
    retained blue sets).
 3. Stripping evicted ids from the retained maps — unsound in general per §3, and it
    violates the `ghostdag.rs:77` invariant.
+
+## 8. Empirical result: a retained `anticone(P)` block really can be a candidate
+
+A throwaway probe built chain `c1..=c40`, `S = [c20]`, set the block-pruning depth to
+3, inserted `x = [c40]` to trigger the prune, then inserted `z = [c40, S]` — making the
+retained stale block `S` a **non-selected parent**, i.e. a mergeset candidate. It
+inserted successfully:
+
+```
+PROBE s_retained=true x_present=true dag.len()=6
+PROBE is_ancestor(p,S)=false is_ancestor(S,p)=false in_anticone(p,S)=true
+PROBE z inserted: blue_score=41 blues=[] reds=1 s_is_blue=false
+```
+
+So the residual case in §3 is not hypothetical: `S` survives the prune, lies in
+`anticone(P)`, and is evaluated as a candidate. A `b ∈ past(P)` map key is therefore
+**not guaranteed inert**, and stripping it can under-count and flip a genuinely-red
+candidate to blue — divergence in the opposite direction from F1.
+
+Two corollaries:
+
+- **Option (A) is definitively a consensus-rule change.** Making every retained block
+  descend from `P` means requiring every *parent* (not just the selected parent) to be
+  in `future(P) ∪ {P}`; that rejects `z`, which the current code accepts. It can only
+  land behind an activation height or at the reset genesis.
+- **Option (B) cannot assume every retained block descends from `P`** — it must handle
+  the stale-candidate case explicitly.
+
+## 9. Which (blue, candidate) pairs are actually at risk
+
+Writing `sp` for the new block's selected parent and `c` for a mergeset candidate
+(`c ∈ past(C) \ past(sp)`), a map key `b ∈ past(sp)` is read for `c` iff
+`in_anticone(b, c)`, i.e. iff `b` is neither an ancestor nor a descendant of `c`.
+
+- If `c ∈ future(P) ∪ {P}` and `b ∈ past(P)`, then `past(P) ⊆ past(c)`, so `b` is an
+  ancestor of `c`: **inert**. Safe to drop.
+- If `c ∈ anticone(P)` and `b ∈ future(P) ∩ past(sp)`, then `b` is above `P` and `c` is
+  not a descendant of `P`; both directions can be false: **live**.
+- If `c ∈ anticone(P)` and `b ∈ past(P)`: live unless `c` happens to descend from `b`.
+
+So the risk set is exactly **(blues in `past(P)`) × (candidates in `anticone(P)`)**, plus
+the recent window. That is why a bound that keeps only the recent window
+(`future(P) ∩ past(sp)`, size ~`block_pruning_depth`) satisfies R1/R6 for the common
+case but is **not** acceptance-neutral unless stale candidates are handled explicitly.
+
+### Why the tempting shortcut is not sound
+
+The obvious stale-candidate rule — "if `c ∈ anticone(P)`, it is red anyway, because
+`past(P) \ past(c)` contributes at least `k` blues to its anticone" — does **not** hold in
+general. Let `A` be the deepest common ancestor of `P` and `c`; then
+`past(P) ∩ past(c) ⊆ past(A)`, so the count is at least
+`P.blue_score − A.blue_score`. A stale candidate that forks off immediately below `P`
+(`A = selected_parent(P)`) gives a bound of 1 — well under `k = 3`. Under-counting there
+can colour a genuinely-red candidate blue. The shortcut is therefore unsound, and the
+stale-candidate case needs its own sound rule (or the retained set must be restricted so
+that case cannot arise — which is option (A), a rule change).
+
+## 10. Consequence for the chosen design
+
+Design (B) (do not consult the historical map; bound the colouring state to the
+finality/pruning window) remains the right target because it is the only shape that
+satisfies R1 and R6 without changing which blocks are accepted. But §8-§9 pin down what
+it must still solve, and that is a genuine design question, not an implementation detail:
+
+1. A bounded structure over `future(P) ∩ past(sp)` handles every candidate in
+   `future(P) ∪ {P}` exactly (R2), because `past(P)` keys are provably inert there.
+2. The residual `anticone(P)` candidates must be evaluated without the historical map,
+   and the naive "always red" rule is unsound (§9). Any replacement rule must be proven
+   to reproduce the unpruned colouring for every such candidate — which is precisely what
+   the R4 gate exercises (`build_rich` keeps `S = [c20]` as a retained stale block and
+   colours `m` and five follow-on blocks after the prune).
+3. If no sound, acceptance-neutral rule for (2) is found, the honest options are to
+   restrict the retained set so the case cannot arise (option (A) — a consensus-rule
+   change, gated behind the reset or an activation height) or to keep the historical map
+   for stale candidates only (which does not satisfy R1/R6).
+
+The R4 gate is the arbiter: it must be un-ignored and green before any finite
+`block_pruning_depth` is re-enabled (R8), and it must keep covering a retained
+`anticone(P)` candidate.
