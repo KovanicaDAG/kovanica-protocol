@@ -688,7 +688,7 @@ impl Node {
     /// wall-clock now, clamped up to stay strictly after the latest parent
     /// (genesis is at 0). The wall clock makes timestamps meaningful; the clamp
     /// keeps them monotone even if the clock is behind or a parent is ahead, so
-    /// they still satisfy the difficulty layer's "not older than any parent" rule
+    /// they still satisfy the DAG's "not older than any parent" rule
     /// (see [`kovanica_dag::Dag::set_difficulty`]).
     pub fn next_timestamp(&self, dag: &Dag, parents: &[BlockId]) -> u64 {
         let floor = parents
@@ -813,7 +813,7 @@ impl Node {
     ///
     /// The genesis block id changes: it commits to the authority set, so a node
     /// configured with a different set derives a different genesis (a hard fork
-    /// marker). PoA and hybrid admission are mutually exclusive.
+    /// marker). PoA is the only admission regime.
     #[allow(clippy::too_many_arguments)] // genesis wiring takes every chain parameter explicitly
     pub fn genesis_with_poa(
         &mut self,
@@ -2801,10 +2801,16 @@ impl Node {
     /// Insert a block immediately on the current tips, PoA-aware: under PoA
     /// the block is signed by the scheduled authority for its slot (erroring
     /// with [`NodeError::NotAuthoritySlot`] when this node is not the
-    /// scheduled authority — an immediate send cannot wait for a later slot);
-    /// otherwise the legacy `ledger.insert` path is used. The shared tail of
-    /// the immediate-send flows (`send_with_asset`, `send_to_script_v2`,
-    /// `send_to_stealth`, the HTLC helpers, and `unbond_with`).
+    /// scheduled authority — an immediate send cannot wait for a later slot).
+    /// The shared tail of the immediate-send flows (`send_with_asset`,
+    /// `send_to_script_v2`, `send_to_stealth`, and the HTLC helpers).
+    ///
+    /// If PoA is *not* enabled the block is inserted unsigned. That is the
+    /// local/test-node shape (genesis-only fixtures, no authority set
+    /// configured), not a second admission regime: RFC-POA-Migration §0 left
+    /// no other regime to fall back to, so this branch carries no consensus
+    /// weight — a PoA network's blocks still have to pass the ledger's
+    /// authority admission on every other node.
     fn insert_immediate_block(
         &mut self,
         parents: Vec<BlockId>,

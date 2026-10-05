@@ -360,12 +360,14 @@ fn run(node: &mut Node, line: &str) -> Result<String, String> {
             Ok("loaded".to_string())
         }
 
-        "get_stake_proof" => {
-            // get_stake_proof <slot>
-            // Returns the stake merkle proof for the authority scheduled at <slot>
-            // Removed: stake/VRF admission was dropped entirely (RFC-POA-Migration §0.7.1)
-            Err("stake proofs removed with hybrid admission".to_string())
-        }
+        // Tombstone for a removed command, kept so an operator or client that
+        // still calls it gets an explicit reason instead of "unknown
+        // command". Stake/VRF admission was dropped entirely
+        // (RFC-POA-Migration §0.7.1), so there is nothing to return.
+        "get_stake_proof" => Err(
+            "get_stake_proof was removed with stake/VRF admission (RFC-POA-Migration §0.7.1)"
+                .to_string(),
+        ),
 
         other => Err(format!("unknown command '{other}' (try help)")),
     }

@@ -871,8 +871,8 @@ impl Dag {
     ///
     /// Fails if the block is a duplicate, references a missing parent, (for a
     /// non-genesis block) references no parents, is rejected by the installed
-    /// [`BlockValidator`] (if any), or — when difficulty is enforced (see
-    /// [`Dag::set_difficulty`]) — carries the wrong `work` or a timestamp that
+    /// [`BlockValidator`] (if any), or carries a `work` that disagrees with the
+    /// PoA nominal constant, or a timestamp that
     /// precedes a parent's. The structural DAG checks run first, so a validator
     /// only ever sees a block whose parents are present.
     pub fn insert(&mut self, block: Block) -> Result<BlockId, DagError> {
