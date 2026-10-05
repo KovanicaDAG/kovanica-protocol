@@ -40,6 +40,19 @@ existing PoW-era chain.
       admission.
 - [ ] `KOVANICA_AUTHORITIES` + `KOVANICA_AUTHORITY_THRESHOLD` present in each
       seed's `EnvironmentFile` (mode 0600). **Never committed.**
+- [ ] **Block pruning must be disabled on every node before the reset**
+      (`BLOCK_PRUNING_DEPTH = u64::MAX`, the default from this branch). Block
+      pruning as shipped by RFC-008 is consensus-unsafe — it can colour a block
+      differently from an unpruned node and split the chain once the reset chain
+      passes ~1000 blue with any fork. See
+      [`protocol/docs/RFC-009-BlockPruning-Colouring.md`](protocol/docs/RFC-009-BlockPruning-Colouring.md)
+      and `TASKLIST2.md` §2.5. Verify the live value on each seed's
+      `/api/head` (`block_pruning_depth == 18446744073709551615`) **after** the
+      rebuilt binary is deployed and before the reset window opens.
+- [ ] **Replay bound in place.** The migrated binary refuses a replay log whose
+      projected peak exceeds the node's memory limit, and a `replay-watchdog`
+      aborts cleanly rather than being OOM-killed. Confirm both are present in
+      the deployed build so a seed restart during the reset cannot silently die.
 
 ## 3.4 Safety invariants (must hold during and after)
 - [ ] The reset-permitting env flag enabled **only** on the node performing

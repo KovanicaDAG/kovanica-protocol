@@ -1,9 +1,18 @@
 # RFC-008 — Reachability Oracle Pruning (block-pruning depth wiring)
 
-**Status: Draft**
+**Status: Draft — ⚠️ CORRECTED by [RFC-009](RFC-009-BlockPruning-Colouring.md)**
 
-**Consensus impact: consensus-safe** (no new rejection surface; the pruning
-point is a pure function of the DAG and every evicted block is already final)
+**Consensus impact: ⚠️ consensus-UNSAFE as implemented — do NOT enable a finite
+`block_pruning_depth`.** The claim below that the change is consensus-safe is
+**false**; see [RFC-009](RFC-009-BlockPruning-Colouring.md). Evicted block ids
+persist in the `GhostdagData.blue_anticone_sizes` maps retained on surviving
+blocks, and `Dag::in_anticone` returns `true` for an evicted block that is a true
+ancestor, so a block inserted *after* an eviction can be coloured differently
+from the same block on an unpruned DAG — a chain split. The original (incorrect)
+rationale is preserved below for the record:
+
+> ~~(no new rejection surface; the pruning point is a pure function of the DAG
+> and every evicted block is already final)~~
 
 **One-line summary:** Wire the DAG core's existing block-pruning depth
 (`Dag::set_block_pruning_depth` / `Dag::prune_old_blocks`, which evicts blocks
@@ -97,6 +106,14 @@ downward-closed in the reachability tree, so:
   estimated ~100–200 MB, and stops growing with the chain.
 
 ## Consensus impact
+
+> ⚠️ **CORRECTED — this section is WRONG. See
+> [RFC-009](RFC-009-BlockPruning-Colouring.md).** The claim below that block
+> pruning is consensus-safe is false: evicted ids persist in the
+> `blue_anticone_sizes` maps retained on surviving blocks, so `in_anticone`
+> returns `true` for an evicted block that is a true ancestor and a block
+> inserted after an eviction is coloured differently — a chain split. The
+> argument is preserved below only for the record.
 
 **Consensus-safe.** The argument has three parts:
 

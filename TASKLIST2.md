@@ -87,14 +87,107 @@ seeds are now on a short chain.
 
 - [x] **Confirmed live and load-bearing.** seed1 could not replay its 9.3MB
       `alpha.log` inside a 10G budget: memory climbed 3.1G → 5.3G → 6.8G →
-      8.5G → 8.9G over four minutes without `:8000` ever binding. That is
-      ~1000x amplification, consistent with the documented per-block
-      full-UTXO-state O(n^2) memory trade-off.
+      8.5G → 8.9G over four minutes without `:8000` ever binding.
+- [x] **Root cause identified by measurement — and it is NOT the
+      per-block-UTXO-state O(n^2) previously blamed.** The UTXO undo log
+      (upgrade phase B3) already replaced that design: `Ledger` keeps ONE
+      materialised `tip_state` plus per-block net undo `deltas`, and measured
+      `deltas` stays at ~357 entries (the finality window) throughout replay.
+      The reachability oracle is also ruled out — measured `fcs_total` = 9,089
+      entries at replayed=11,776.
+      The real cause is **`GhostdagData.blue_anticone_sizes`**
+      (`crates/kovanica-dag/src/dag.rs:228`), one entry per blue block in a
+      block's blue set. Blue-set size grows with depth, so every retained block
+      carries an O(depth) map ⇒ **O(N²) across the DAG**. Measured: ~461 KB
+      retained per block at N=11,776, which extrapolates to ~62 GB for the
+      45,638-record log. It is retained on every stored block, in live
+      operation as well as replay.
+- [x] **Why replay never prunes it:** `Ledger::set_replay_mode(true)`
+      deliberately forces `block_pruning_depth = u64::MAX` so that anticone
+      blocks linearized last can still resolve deep selected parents, and
+      `store.rs` pass 2 calls it *after* applying the policy depths — so no
+      block is ever evicted during replay. Confirmed live: mid-replay
+      `bpd=18446744073709551615` while `ppd=1000`.
+- [x] **Reproduced offline in ~4 min against the real artifact** (no SSH): the
+      13.5 MB `alpha.log` was pulled from seed2's backup and replayed locally,
+      showing identical unbounded ~37 MB/s growth. Truncated-log series
+      (1k/2k/4k/8k/16k) pinned the curve.
 - [x] seed1 restored by wiping its log (backup taken first) and resyncing —
       re-derived the identical genesis, no fork.
-- [ ] **Fix the amplification.** Streaming replay, or reject-and-resync past a
-      size threshold. Until this is fixed, **any seed restart on a chain of
-      this size risks an OOM**, so a routine `systemctl restart` during the
-      testnet reset could take a seed down mid-procedure.
-- [ ] Add a memory-growth guard/alert so a replay storm is visible before the
-      cgroup kill rather than after.
+- [ ] **Fix the amplification — REOPENED, now known to be a consensus-correctness
+      problem, not a memory optimisation.** Two independent approaches were tried
+      and both were **disproven with reproductions**:
+      1. *Shrink the map.* Dropping the selected-chain ("spine") entries of
+         `blue_anticone_sizes` broke
+         `block_pruning::adversarial_wide_fork_pruning`: a spine ancestor of the
+         selected parent need not be an ancestor of a mergeset candidate, so
+         those entries genuinely participate in `try_colour_blue`.
+      2. *Evict DAG blocks during replay* (the previously-chosen design, evicting
+         a block only when below `finality_score()` **and**
+         `remaining[id] == 0`). An independent review plus a first-hand
+         differential test showed this is **UNSAFE**: eviction leaves the evicted
+         ids inside the `blue_anticone_sizes` maps retained on the surviving
+         blocks, and `Reachability::is_ancestor` answers `false` for an absent id
+         in *both* directions — so `Dag::in_anticone` returns `true` for an
+         evicted block that is a **true ancestor** of the candidate.
+      See the new item below: this is a live bug in block pruning itself, and it
+      is the reason the map cannot simply be bounded.
+- [ ] **⚠️ CONSENSUS BUG (live, latent): block pruning corrupts GHOSTDAG
+      colouring.** **Documented in
+      [`protocol/docs/RFC-009-BlockPruning-Colouring.md`](protocol/docs/RFC-009-BlockPruning-Colouring.md)**
+      (Draft, consensus-critical); RFC-008 is corrected in place and its
+      consensus-safe claim is retracted. **Interim mitigation adopted** (per
+      operator decision): block pruning disabled network-wide
+      (`BLOCK_PRUNING_DEPTH = u64::MAX`) plus an operational replay bound
+      (pre-flight refusal + `replay-watchdog`), so the unsound path cannot run
+      and an over-budget log cannot OOM-loop a seed. `Dag::remove_blocks` (`crates/kovanica-dag/src/dag.rs`) drops
+      evicted ids from the reachability oracle, `nodes`, and `tips`, but does
+      **not** strip them from the `blue_anticone_sizes` maps retained on live
+      blocks. `try_colour_blue` iterates *every* key of that map and asks
+      `in_anticone`, which is computed from `is_ancestor` — and for an evicted id
+      both `is_ancestor(evicted, x)` and `is_ancestor(x, evicted)` are `false`,
+      so `in_anticone` returns `true` even when the evicted block is a true
+      ancestor. **Consequence:** after any eviction, every mergeset candidate
+      whose colouring is evaluated sees `O(|past(P)|)` phantom anticone blues and
+      is forced red, diverging from an unpruned node's `blue_score` /
+      `mergeset_blues` — a chain split.
+      **Reproduced first-hand** (differential test, `block_pruning_depth = 3`,
+      20-block chain + one side block): the same later merging block is
+      `blue_score=24 blues=1 reds=0` unpruned vs `blue_score=23 blues=0 reds=1`
+      pruned. Kept as an `#[ignore]`d regression test,
+      `crates/kovanica-dag/tests/block_pruning_colouring.rs`
+      (`block_pruning_preserves_colouring`), to be un-ignored when fixed.
+      **It is latent on the current network only because the chain (~645 blue) is
+      shorter than `TESTNET_BLOCK_PRUNING_DEPTH = 1000`, so `pruning_point()`
+      is still genesis and nothing is evicted.** It will start biting as soon as
+      the chain passes ~1000 blue score *with any fork* — i.e. on the post-reset
+      chain. The existing `adversarial_wide_fork_pruning` test does not catch it
+      because it only asserts block presence/size, never inserts a merging block
+      after an eviction.
+      **Attempted fix, insufficient:** stripping evicted ids from the retained
+      maps restores the unpruned `blue_score` but violates the load-bearing
+      invariant asserted at `ghostdag.rs:77` ("blue anticone map must cover
+      exactly the blue set", `len == blue_score`) and fails 4 existing pruning
+      tests. A correct fix requires reworking the k-cluster evaluation so it does
+      not need the full historical blue map (Kaspa-style) — a consensus redesign,
+      out of scope for a memory fix.
+      **Interim mitigation to decide before the reset:** disable block pruning
+      (`block_pruning_depth = u64::MAX`) so the unsound path cannot run, and bound
+      replay another way (see next item). This trades memory for correctness and
+      must be paired with a real fix before the chain grows large.
+- [x] Add a memory-growth guard/alert so a replay storm is visible before the
+      cgroup kill rather than after. **Done:** a `replay-watchdog` thread
+      samples RSS every 10 s during replay, publishes
+      `kovanica_replay_rss_bytes`, logs progress, and `abort()`s with a named
+      diagnostic at 90% of the cgroup/host ceiling instead of being silently
+      OOM-killed. Verified with teeth: it fired at 3740 MiB against a 3686 MiB
+      ceiling (exit 134 = SIGABRT) with a `FATAL: … refusing to be OOM-killed`
+      message. `cargo clippy -p kovanica-node --all-targets` clean. This is a
+      backstop, not the fix.
+- [ ] **Bound replay without evicting mid-replay.** The safe directions are
+      operational rather than algorithmic: replay from a finality checkpoint /
+      snapshot instead of genesis (the node already has `LoadTier::Snapshot` and
+      `Store::open_checkpoint`), and/or refuse-and-resync an oversized log rather
+      than replaying it unbounded. Note `Node::load_with_poa` (used by the
+      `LoadTier::Snapshot` branch) still passes **no** pruning policy, so the
+      snapshot tier replays unbounded too — a secondary gap to close either way.

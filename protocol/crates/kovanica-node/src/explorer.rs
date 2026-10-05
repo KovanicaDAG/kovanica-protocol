@@ -9,6 +9,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -23,8 +24,8 @@ use crate::dht::{NodeId, PeerContact, RoutingTable};
 use crate::dns_seed::{DnsSeedConfig, DnsSeedResolver};
 use crate::metrics::{
     init_metrics, record_explorer_http_request, record_peer_disconnected, record_reorg,
-    record_supply, record_sync_complete, render_prometheus, set_dht_routing_table_size,
-    set_explorer_ws_clients, set_peer_count,
+    record_replay_rss, record_supply, record_sync_complete, render_prometheus,
+    set_dht_routing_table_size, set_explorer_ws_clients, set_peer_count,
 };
 use crate::net::{
     decode_records, encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first,
@@ -48,12 +49,29 @@ const FOUNDER_SEED: u64 = 1;
 const TESTNET_FINALITY_DEPTH: u64 = 100;
 /// Payload pruning depth used by the live testnet (blocks below this score have payloads evicted).
 const TESTNET_PAYLOAD_PRUNING_DEPTH: u64 = 1000;
-/// Block pruning depth used by the live testnet (blocks below this score are
-/// evicted entirely — payload, metadata, and reachability-oracle entries).
-/// Equal to the payload depth: a node cannot serve a block body it has pruned
-/// anyway, and `>= TESTNET_FINALITY_DEPTH` keeps eviction to already-final
-/// blocks (consensus-safe).
-const TESTNET_BLOCK_PRUNING_DEPTH: u64 = 1000;
+/// Block pruning depth used by **every** network.
+///
+/// **Interim mitigation — block pruning is DISABLED (`u64::MAX`).** Evicting a
+/// block is unsound for GHOSTDAG colouring: `Dag::remove_blocks` drops the
+/// evicted ids from the reachability oracle but not from the
+/// `blue_anticone_sizes` maps retained on the surviving blocks, and
+/// `Reachability::is_ancestor` answers `false` for an absent id in both
+/// directions — so `Dag::in_anticone` reports `true` for an evicted block that
+/// is in fact a true ancestor. Every later merging candidate then sees phantom
+/// anticone blues and is forced red, diverging from an unpruned node's
+/// `blue_score` / `mergeset_blues` (a chain split).
+///
+/// Reproduced in `crates/kovanica-dag/tests/block_pruning_colouring.rs`
+/// (`#[ignore]`d until fixed). The previous value was `1000`; the bug was latent
+/// only because the chain had not yet passed that blue score. See
+/// `docs/RFC-009-BlockPruningColouring.md`.
+///
+/// Consequence of disabling: the reachability oracle and the per-block GHOSTDAG
+/// blue-set maps are no longer evicted, so live RSS grows with the chain again.
+/// This trades memory for correctness until the colouring fix lands; the replay
+/// watchdog and the pre-flight replay bound keep the growth observable and
+/// fail fast rather than OOM-looping.
+const BLOCK_PRUNING_DEPTH: u64 = u64::MAX;
 const ACTORS: [u64; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
 /// Devnet operator seed (ASCII, exactly 32 bytes — see `devnet_operator_seed`
@@ -109,9 +127,15 @@ struct NetworkProfile {
     payload_pruning_depth: u64,
     /// Block pruning depth: blocks more than this many blue score below the tip
     /// are evicted entirely (payload, metadata, and reachability-oracle
-    /// entries), bounding the oracle's memory. `u64::MAX` disables block
-    /// pruning. Invariant: `>= finality_depth` (eviction stays within
-    /// already-final blocks).
+    /// entries), bounding the oracle's memory.
+    ///
+    /// ⚠️ **Currently `u64::MAX` on every profile — do not set a finite depth.**
+    /// Block pruning corrupts GHOSTDAG colouring (RFC-009 / F1): evicted ids
+    /// stay in the `blue_anticone_sizes` maps retained on live blocks, and
+    /// `in_anticone` then reports `true` for an evicted block that is a true
+    /// ancestor, so a later merging block is coloured differently than on an
+    /// unpruned node — a chain split. Invariant when re-enabled:
+    /// `>= finality_depth`.
     block_pruning_depth: u64,
     /// Dormant placeholder: genesis parameters are TBD and the profile refuses
     /// to boot unless explicitly overridden.
@@ -151,7 +175,7 @@ impl NetworkProfile {
             ],
             finality_depth: TESTNET_FINALITY_DEPTH,
             payload_pruning_depth: TESTNET_PAYLOAD_PRUNING_DEPTH,
-            block_pruning_depth: TESTNET_BLOCK_PRUNING_DEPTH,
+            block_pruning_depth: BLOCK_PRUNING_DEPTH,
             dormant: false,
             default_peers: DEFAULT_PEERS,
             p2p_listen_default: TESTNET_P2P_LISTEN_DEFAULT,
@@ -179,7 +203,7 @@ impl NetworkProfile {
             operator_seed: *DEVNET_OPERATOR_SEED,
             finality_depth: TESTNET_FINALITY_DEPTH,
             payload_pruning_depth: TESTNET_PAYLOAD_PRUNING_DEPTH,
-            block_pruning_depth: TESTNET_BLOCK_PRUNING_DEPTH,
+            block_pruning_depth: BLOCK_PRUNING_DEPTH,
             dormant: false,
             // Empty on purpose: a devnet node dials only what it is told to.
             default_peers: &[],
@@ -199,7 +223,8 @@ impl NetworkProfile {
             operator_seed: [0u8; 32],
             finality_depth: 1000,
             payload_pruning_depth: 10_000,
-            block_pruning_depth: 10_000,
+            // Disabled for the same reason as testnet — see `BLOCK_PRUNING_DEPTH`.
+            block_pruning_depth: BLOCK_PRUNING_DEPTH,
             dormant: true,
             // No default seeds: mainnet's bootstrap set is an unsettled input
             // (RFC-POA §0.7.2 is OPEN on how the initial set is chosen), so a
@@ -1395,6 +1420,153 @@ fn has_content(path: &Path) -> bool {
     fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
 }
 
+/// How often the replay watchdog samples RSS and reports progress.
+const REPLAY_WATCHDOG_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Fraction of the effective memory ceiling at which the watchdog aborts a
+/// replay that is on track to be OOM-killed.
+///
+/// Replay is a one-shot startup cost: a bounded replay finishes far below this,
+/// so tripping it means the load is pathological (the `blue_anticone_sizes`
+/// O(N²) growth of TASKLIST2 §2.5). Failing with an explicit diagnostic keeps
+/// the decision with the operator instead of leaving a bare `Killed` in the
+/// journal and a systemd restart loop, which is how the seeds died before.
+const REPLAY_RSS_ABORT_FRACTION: f64 = 0.90;
+
+/// Resident set size of this process in bytes, from `/proc/self/statm`.
+///
+/// Field 1 is the resident page count; Linux is 4 KiB pages on every platform
+/// Kovanica targets. Returns `None` where `/proc` is unavailable.
+fn process_rss_bytes() -> Option<u64> {
+    let statm = fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages.saturating_mul(4096))
+}
+
+/// Parse a file whose whole content is a single `u64` (trimmed), if present.
+fn read_u64_trimmed(path: &str) -> Option<u64> {
+    fs::read_to_string(path).ok()?.trim().parse::<u64>().ok()
+}
+
+/// Effective memory ceiling for this process in bytes.
+///
+/// Reads the process's own cgroup limit (v2 `memory.max`, then v1
+/// `memory.limit_in_bytes`) so the watchdog aborts against the same number the
+/// kernel would OOM at, then falls back to physical RAM. Returns `None` when
+/// neither is discoverable, in which case the watchdog only reports progress
+/// and never aborts.
+fn process_memory_ceiling_bytes() -> Option<u64> {
+    if let Ok(cgroup) = fs::read_to_string("/proc/self/cgroup") {
+        for line in cgroup.lines() {
+            if let Some(limit) = line
+                .strip_prefix("0::")
+                .and_then(|rest| read_u64_trimmed(&format!("/sys/fs/cgroup{rest}/memory.max")))
+            {
+                return Some(limit);
+            }
+        }
+    }
+    // cgroup v1 reports a sentinel near u64::MAX when the limit is unlimited.
+    if let Some(limit) = read_u64_trimmed("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        .filter(|limit| *limit < (1u64 << 60))
+    {
+        return Some(limit);
+    }
+    let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+    let kb = meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|kb| kb.parse::<u64>().ok())?;
+    Some(kb.saturating_mul(1024))
+}
+
+/// Stops the replay watchdog when dropped.
+struct ReplayWatchdog {
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for ReplayWatchdog {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Watch a log replay: report progress on a timer and abort before the kernel
+/// OOM-kills the process.
+///
+/// Spawned immediately before [`Node::load_log_with_poa_and_policy`] and
+/// dropped right after, so it only ever observes the replay window. The timer
+/// polls in short slices so the drop is cheap and serving is not delayed.
+fn spawn_replay_watchdog(log_bytes: u64) -> ReplayWatchdog {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = Arc::clone(&stop);
+    let abort_at = process_memory_ceiling_bytes()
+        .map(|ceiling| (ceiling as f64 * REPLAY_RSS_ABORT_FRACTION) as u64);
+    let handle = thread::Builder::new()
+        .name("replay-watchdog".into())
+        .spawn(move || loop {
+            let mut waited = Duration::ZERO;
+            while waited < REPLAY_WATCHDOG_INTERVAL {
+                if stop_thread.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(250));
+                waited += Duration::from_millis(250);
+            }
+            let Some(rss) = process_rss_bytes() else {
+                continue;
+            };
+            record_replay_rss(rss);
+            let mib = rss / (1024 * 1024);
+            match abort_at {
+                Some(limit) if rss >= limit => {
+                    eprintln!(
+                        "FATAL: log replay reached {mib} MiB (ceiling {} MiB, log {} MiB): \
+                         refusing to be OOM-killed. This is the replay memory blow-up \
+                         tracked as TASKLIST2 §2.5; the log was NOT truncated and the node \
+                         will not serve. Fix the replay bound or restore from a snapshot.",
+                        limit / (1024 * 1024),
+                        log_bytes / (1024 * 1024),
+                    );
+                    std::process::abort();
+                }
+                _ => eprintln!(
+                    "replay watchdog: rss={mib} MiB log={} MiB",
+                    log_bytes / (1024 * 1024)
+                ),
+            }
+        })
+        .ok();
+    ReplayWatchdog { stop, handle }
+}
+
+/// Empirically-fitted replay peak-memory model.
+///
+/// Replay retains a per-block GHOSTDAG blue-set map whose size grows with the
+/// block's blue set, so total retention is quadratic in the record count.
+/// Fitted from the measured curve on the real 13.5 MB testnet log
+/// (11,776 records → ~3,977 MiB): ≈ 30 bytes per record squared. Deliberately
+/// rough — it exists to fail fast on a log that plainly cannot fit, not to be a
+/// precise predictor.
+const REPLAY_PEAK_BYTES_PER_RECORD_SQ: u64 = 30;
+
+/// Mean serialized record size (8-byte length prefix + measured 288-byte mean
+/// body), used to turn a log length into an approximate record count.
+const REPLAY_MEAN_RECORD_BYTES: u64 = 296;
+
+/// Projected peak RSS of replaying a log of `log_bytes` from genesis.
+fn estimate_replay_peak_bytes(log_bytes: u64) -> u64 {
+    let records = log_bytes / REPLAY_MEAN_RECORD_BYTES;
+    records
+        .saturating_mul(records)
+        .saturating_mul(REPLAY_PEAK_BYTES_PER_RECORD_SQ)
+}
+
 /// Persistence tiers, in the order [`load_or_genesis`] will try them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoadTier {
@@ -1454,10 +1626,12 @@ fn load_or_genesis(name: &str) -> Result<Node, String> {
             // (identity-preserving replay lesson). Load with the PoA reader when
             // the operator runs PoA mode.
             //
-            // The pruning policy is applied BEFORE replay so the DAG and
-            // per-block state stay bounded during the load (the O(n²)
-            // GHOSTDAG maps otherwise peak at the full chain's footprint and
-            // the allocator retains that peak after the post-load prune).
+            // The pruning policy is applied before replay. Note that block
+            // pruning is disabled (see `BLOCK_PRUNING_DEPTH`), so replay memory
+            // still grows with the chain — the per-block GHOSTDAG blue-set maps
+            // are O(N²) overall. The pre-flight estimate below refuses a log
+            // that cannot fit rather than OOM-looping; the watchdog is the
+            // backstop if the estimate is wrong.
             let policy = kovanica_state::PruningPolicy {
                 finality_depth: profile.finality_depth,
                 payload_pruning_depth: profile.payload_pruning_depth,
@@ -1468,6 +1642,32 @@ fn load_or_genesis(name: &str) -> Result<Node, String> {
             // authority set, and there is no point replaying a chain we are
             // about to refuse to serve.
             check_authority_set(name, &cfg.authority_set)?;
+            let log_bytes = fs::metadata(&log).map(|m| m.len()).unwrap_or(0);
+            // Pre-flight: refuse a replay that is projected to exceed the memory
+            // limit, with actionable guidance, instead of aborting mid-load.
+            if let Some(ceiling) = process_memory_ceiling_bytes() {
+                let estimate = estimate_replay_peak_bytes(log_bytes);
+                if estimate > ceiling {
+                    return Err(format!(
+                        "refusing to replay {} for node {name}: projected replay peak is \
+                         ~{} MiB but the memory limit is {} MiB. Block pruning is disabled \
+                         (RFC-009), so replay memory grows with the chain.\n\
+                         The log is intact — do not truncate it in place.\n\
+                         Options:\n  \
+                         - restore this node from a snapshot, or\n  \
+                         - wipe the log and resync from peers:\n      \
+                         mv {} {}.broken",
+                        log.display(),
+                        estimate / (1024 * 1024),
+                        ceiling / (1024 * 1024),
+                        log.display(),
+                        log.display(),
+                    ));
+                }
+            }
+            // Guard the replay: report progress and abort cleanly if this load
+            // is on track to exhaust the cgroup, instead of being OOM-killed.
+            let _watchdog = spawn_replay_watchdog(log_bytes);
             let mut node = Node::load_log_with_poa_and_policy(
                 p,
                 cfg.authority_set,
@@ -1502,6 +1702,8 @@ fn load_or_genesis(name: &str) -> Result<Node, String> {
             let mut node = Node::new();
             let cfg = poa_config_from_env(&profile);
             check_authority_set(name, &cfg.authority_set)?;
+            let _watchdog =
+                spawn_replay_watchdog(fs::metadata(&snap).map(|m| m.len()).unwrap_or(0));
             node.load_with_poa(p, cfg.authority_set, cfg.slot_duration_ms)
                 .map_err(|e| {
                     format!(
@@ -6546,11 +6748,33 @@ mod tests {
         assert_eq!(profile.founder_seed, FOUNDER_SEED);
         assert_eq!(profile.finality_depth, TESTNET_FINALITY_DEPTH);
         assert_eq!(profile.payload_pruning_depth, TESTNET_PAYLOAD_PRUNING_DEPTH);
-        assert_eq!(profile.block_pruning_depth, TESTNET_BLOCK_PRUNING_DEPTH);
+        assert_eq!(profile.block_pruning_depth, BLOCK_PRUNING_DEPTH);
         assert!(
             profile.block_pruning_depth >= profile.finality_depth,
             "RFC-008 invariant: block pruning stays within final blocks"
         );
+    }
+
+    #[test]
+    fn block_pruning_is_disabled_on_every_profile() {
+        // RFC-009 (F1): `Dag::remove_blocks` leaves evicted ids inside the
+        // `blue_anticone_sizes` maps retained on surviving blocks, and
+        // `in_anticone` then answers `true` for an evicted block that is a true
+        // ancestor — so a block inserted after an eviction is coloured
+        // differently than on an unpruned node, which is a chain split. Until
+        // the k-cluster evaluation is reworked (RFC-009 R1–R8), a finite depth
+        // here would make this binary consensus-unsafe.
+        for (name, profile) in [
+            ("testnet", NetworkProfile::testnet()),
+            ("devnet", NetworkProfile::devnet()),
+            ("mainnet", NetworkProfile::mainnet()),
+        ] {
+            assert_eq!(
+                profile.block_pruning_depth,
+                u64::MAX,
+                "{name} must not enable block pruning while RFC-009 (F1) is open"
+            );
+        }
     }
 
     #[test]

@@ -184,6 +184,18 @@ pub mod names {
     /// - `GET /api/head` `blocks` — `Dag::len()`, i.e. the number of blocks
     ///   still retained in memory, which sits near `block_pruning_depth`.
     pub const CHAIN_HEIGHT: &str = "kovanica_chain_height";
+
+    /// Resident set size of this process during log replay, in bytes.
+    ///
+    /// Replay is the one phase whose memory is not yet bounded by the live
+    /// finality window (see the replay watchdog in `explorer`), so this is the
+    /// series to graph to catch a replay that is on track to exhaust its cgroup.
+    pub const REPLAY_RSS_BYTES: &str = "kovanica_replay_rss_bytes";
+}
+
+/// Record the process RSS observed by the replay watchdog.
+pub fn record_replay_rss(bytes: u64) {
+    gauge!(names::REPLAY_RSS_BYTES).set(bytes as f64);
 }
 
 /// Record the linearized chain height of the selected tip.
