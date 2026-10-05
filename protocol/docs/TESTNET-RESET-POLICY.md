@@ -105,14 +105,17 @@ A testnet reset (genesis wipe) is a **last resort**, triggered only by:
 3. **Explicit operator decision** documented in this file before execution —
    never ad-hoc.
 
-Non-triggers: difficulty retarget windows, slow sync, mempool churn, explorer
-outages, or a single seed going down (the other seed + backups cover these).
-**`[TARGET]`** the *difficulty retarget window* is `[TARGET]`-obsolete — difficulty
-is removed with PoW and has no gap to retarget into. PoA stalls look different:
-an offline authority yields an **empty slot**, and the chain continues on the
-fixed `SLOT_DURATION_MS` clock rather than slowing down. A run of empty slots is
-an **authority liveness** problem, not a difficulty problem, and it is **not** a
-reset trigger.
+Non-triggers: slow sync, mempool churn, explorer outages, a single seed going
+down (the other seeds + backups cover these), and **a run of empty slots** — an
+offline authority yields an empty slot and the chain continues on the fixed
+`SLOT_DURATION_MS` clock rather than slowing down, so that is an **authority
+liveness** problem, not a reset trigger.
+
+> **Historical (pre-PoA — no longer applicable).** *Difficulty retarget windows*
+> were listed here as a non-trigger under PoW. Difficulty was removed with PoW
+> (RFC-POA-Migration §0.1), so there is no retarget gap to reason about. The
+> term is kept only so older tickets and runbooks that mention it can be mapped
+> to the current model.
 
 ## 2. What survives a reset
 
@@ -126,18 +129,97 @@ reset trigger.
 | Treasury vaults | ⚠️ | Re-created from the RFC-006 genesis (8 × 1M vaults) |
 | Node data dirs (`KOVANICA_DATA`) | ❌ | Must be deleted before first sync on the new genesis |
 
-## 3. Reset procedure (operator-only)
+## 3. Reset runbook (operator-only)
 
-1. Announce on Discord + docs.kovanica.online **≥ 24h before** a planned reset.
-2. Snapshot both seeds' `data/` to cold storage (for post-mortem only).
-3. Stop both seed units; delete `KOVANICA_DATA` on both.
-4. Deploy the new genesis binary; start seed1, verify `/api/head` genesis hash
-   matches the release notes, then start seed2.
-5. Verify: both seeds agree on `/api/head` genesis + block count; a pristine
-   clone with `KOVANICA_PEERS=seed.kovanica.online:9000,seed2.kovanica.online:9000`
-   cold-bootstraps to the same tip.
-6. Update `protocol/TESTNET-RFC006.md` + `OPERATIONS.md` genesis hash and
-   reset date in the same commit as the reset.
+> Run this as an explicit, human-approved checklist — **one step at a time**.
+> Never chain the destructive steps into a single command. This is the same
+> playbook as the `kovanica-genesis-ops` skill and the `genesis-testnet` agent.
+
+### 3.0 Pre-flight — all green immediately before starting
+
+| Check | How | Expected |
+|---|---|---|
+| Window announced | Discord + docs.kovanica.online | ≥ 24h notice |
+| §0.2 gates 1–2 closed | this file | real ceremony keys; 24h soak done |
+| Mitigation binary on every seed | `sha256sum /usr/local/bin/kovanica-node` per host | `9f52d9dd…` (commit `255fbfb` or later) |
+| Block pruning disabled **live** | `curl -s 127.0.0.1:3001/api/head` per host | `block_pruning_depth == 18446744073709551615` |
+| Faucet off | `curl -s 127.0.0.1:3001/api/state` per host | `faucet == false` |
+| Fresh backup per host | `tar czf …/pre-reset-<TS>/datadir.tar.gz /var/lib/kovanica-testnet-seedN` | non-zero; includes `alpha.authorities` + `network` |
+| Key holders reachable | §3.4 | ≥ 2 of 3, with their keys |
+
+### 3.1 Blast radius
+
+- **Hosts:** seed1 `145.223.116.178`, seed2 `76.13.250.65`, seed3 `187.7.27.139`
+  — `kovanica-testnet` **only**. Mainnet (`mainnet.kovanica.online`, TCP 9000)
+  has no reset path and is not touched.
+- **Destroyed:** every seed's `KOVANICA_DATA`
+  (`/var/lib/kovanica-testnet-seedN`) — chain, the per-node `<node>.authorities`
+  commitment, and the log. Pre-reset balances are gone.
+- **Not destroyed:** wallet keys/mnemonics, address format, RFC-006 constants,
+  and the authority *keys* themselves (only their on-chain commitment is re-made).
+- **Public surfaces:** `explorer.kovanica.online` / `api.kovanica.online` will
+  serve a new genesis and a chain from height 0 — expect a visible discontinuity.
+- **DNS/P2P:** unchanged (DNS-only seeds, testnet TCP 8000).
+
+### 3.2 Order of operations
+
+1. **Announce** the window (≥ 24h) on Discord + docs.kovanica.online.
+2. **Freeze** — stop block production/participant traffic and confirm no external
+   node is mid-sync against a seed.
+3. **Back up every seed** (§3.0): data dir, current binary, and env files. Do not
+   skip because backups were taken at deploy time — take them *inside the window*.
+4. **Stop** all three seed units.
+5. **Wipe** `KOVANICA_DATA` on each host. Preserve `alpha.authorities` **only if**
+   the authority set is unchanged; for a set change remove it too, so the new
+   genesis re-commits (see §2).
+6. **Verify the new binary** on each host — one identical artifact across all three.
+7. **Start seed1 first.** Confirm `/api/head` genesis equals the release-notes
+   value and `blocks` advances past 1. Only then:
+8. **Start seed2.** Confirm the same genesis and convergence on seed1.
+9. **Start seed3.** Confirm the same genesis and 3-way convergence.
+10. **Verify supply** (§3.5): `subsidy == 1000000000` atoms, minted starts at 0,
+    `max_supply == 9020000000000000`.
+11. **Update** `protocol/TESTNET-RFC006.md` + `OPERATIONS.md` genesis hash and
+    reset date in the same commit as the reset, and add a §5 history row.
+
+### 3.3 Rollback
+
+A reset is **irreversible once the new genesis is produced** — there is no
+"undo". The rollback plan is therefore *restore*, and it only exists before the
+new-genesis write:
+
+- **Before any wipe:** abort freely; nothing has changed.
+- **After a wipe, before a new genesis:** restore each seed from
+  `…/pre-reset-<TS>/datadir.tar.gz` plus `kovanica-node.prev`, then start the
+  units. This returns the mesh to its pre-reset state — which is *not* a healthy
+  chain, only a recovery position.
+- **After the new genesis exists on seed1:** restoring the old data dir is the
+  only way back, and it re-forks from the reset. Treat it as "restore and
+  re-plan", not "rollback".
+- **Decision owner:** the maintainer who authorised the reset (§0.1).
+
+### 3.4 Key holders
+
+- Authority set: **3 keys, threshold 2**. The per-host signing secret lives in
+  `/etc/kovanica/testnet-authority-N.env` (`KOVANICA_AUTHORITY_KEY`, mode 0600).
+- **Who holds what** is recorded out-of-band before the window. Do not paste key
+  material into the repo, this runbook, or chat.
+- **Quorum:** 2 of 3 can produce. Do not attempt a reset with fewer than two
+  holders reachable — a single-authority chain cannot finalise under threshold 2.
+- Keys are never moved to a node that does not already own them, and never committed.
+
+### 3.5 Post-reset verification
+
+- Each seed's `/api/head` genesis matches the release notes and each other.
+- Block production advances (chain height increases on the fixed
+  `SLOT_DURATION_MS` clock).
+- `subsidy == 1000000000` atoms, minted starts at 0, `max_supply == 9020000000000000`
+  (RFC-006 is unchanged by a reset).
+- A pristine clone cold-bootstraps to the same tip using
+  `KOVANICA_PEERS=seed.kovanica.online:8000,seed2.kovanica.online:8000`
+  (**testnet is TCP 8000**, not 9000).
+- Re-verify mesh convergence (TASKLIST3 §3.2) — this is the post-reset item that
+  cannot be checked before the reset.
 
 ## 4. Safety rules
 
@@ -146,6 +228,12 @@ reset trigger.
 - The public explorer never runs `KOVANICA_ALLOW_RESET=1`.
 - No open faucet on public-facing nodes without explicit isolation and
   documentation (AGENTS.md rule 7).
+- **Block pruning must remain disabled** — every node must report
+  `block_pruning_depth == 18446744073709551615` (`u64::MAX`) on `/api/head`.
+  A finite depth makes the binary **consensus-unsafe**: `Dag::remove_blocks`
+  leaves evicted ids in the retained GHOSTDAG blue-set maps, so a block inserted
+  after an eviction is coloured differently than on an unpruned node — a chain
+  split. See `RFC-009-BlockPruning-Colouring.md`; the pre-flight check is in §3.0.
 - After a reset, the faucet cap and fee floor are re-verified against
   `/api/bootstrap` before announcing.
 
@@ -155,3 +243,4 @@ reset trigger.
 | --- | --- | --- | --- |
 | RFC-006 activation | Consensus fork (tokenomics) | `9565fc20…` | All pre-RFC-006 balances wiped; see `TESTNET-RFC006.md` |
 | 2026-09-26 | Gate 3 closed (decision recorded) | — | Gate 3 reworded from "CPU/RAM-vs-PoW" to a PoA resource-footprint measurement and closed with the baseline **112.7 us/block, +7.4 KiB/block RSS**. PoA-vs-PoW ratio formally unrecoverable. Gate 4 re-scoped as a *mainnet* gate. **Authorised by the maintainer; execution of the reset itself is still not authorised below.** |
+| 2026-10-05 | Mitigation deployed to all three seeds | unchanged (`1a635915…`) | Block pruning disabled network-wide (`block_pruning_depth == u64::MAX`) pending RFC-009 R1-R8; replay pre-flight + watchdog deployed. Faucet disabled on all public seeds (`faucet == false`). §3 rewritten as a PoA runbook (hosts, order, blast radius, key holders, rollback). **No reset performed** — gates 1 and 2 in §0.2 remain open. |
