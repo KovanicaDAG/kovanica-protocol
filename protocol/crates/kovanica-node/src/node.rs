@@ -107,6 +107,13 @@ pub enum NodeError {
     /// A PoA `produce_empty` was requested but this node is not the scheduled
     /// authority for the current slot (or holds no authority key at all).
     NotAuthoritySlot,
+    /// A block carrying no authority signature reached a node that requires PoA
+    /// admission (RFC-POA-Migration §0). Because PoA is the *only* admission
+    /// regime, an unsigned block has no valid author under any policy — so this
+    /// is refused rather than treated as an unadmitted legacy block. The
+    /// usual cause is a node that lost its authority set on restart and
+    /// silently fell back to admitting everything.
+    PoARequired,
 }
 
 impl core::fmt::Display for NodeError {
@@ -150,6 +157,10 @@ impl core::fmt::Display for NodeError {
             ),
             NodeError::NotAuthoritySlot => f.write_str(
                 "not the scheduled PoA authority for this slot (or no authority key set)"
+            ),
+            NodeError::PoARequired => f.write_str(
+                "block carries no authority signature but this node requires PoA admission \
+                 (RFC-POA §0) — is the authority set configured?"
             ),
         }
     }
@@ -519,6 +530,15 @@ pub struct Node {
     /// keys so a single node can produce in every slot. Empty on
     /// non-authority nodes, which then never produce under PoA.
     authority_sks: Vec<SigningKey>,
+    /// Whether this node refuses blocks that carry no authority signature.
+    ///
+    /// Defaults to `true` and should stay that way on every real node: PoA is
+    /// the only admission regime (RFC-POA-Migration §0), so an unsigned block
+    /// is never admissible. The `false` opt-out exists only so tests and
+    /// tooling can build *permissionless* DAGs to exercise GHOSTDAG and ledger
+    /// mechanics without standing up an authority set; it must never be set
+    /// on a node that talks to a network.
+    require_poa: bool,
     /// DHT NodeId for peer discovery (optional).
     dht_node_id: Option<crate::dht::NodeId>,
     /// DHT routing table for peer discovery (optional).
@@ -570,6 +590,7 @@ impl Default for Node {
             mempool: MempoolV2::default(),
             clock: Clock::default(),
             authority_sks: Vec::new(),
+            require_poa: true,
             dht_node_id: None,
             dht_routing_table: None,
             log: None,
@@ -611,6 +632,27 @@ impl Node {
         Self::default()
     }
 
+    /// A node that will accept blocks with **no authority signature**.
+    ///
+    /// This is not a supported network configuration under RFC-POA-Migration
+    /// §0 — PoA is the only admission regime, so an unsigned block is never
+    /// admissible. It exists so tests and tooling can build *permissionless*
+    /// DAGs to exercise GHOSTDAG, ledger and wire mechanics without standing
+    /// up an authority set and a key ceremony. Prefer this over
+    /// [`Node::set_require_poa`] so the opt-out is visible at the point the node
+    /// is built and cannot be silently reordered relative to genesis.
+    ///
+    /// Never use this for a node that connects to a network: it removes
+    /// admission control entirely, so any peer can insert arbitrary blocks.
+    ///
+    /// Not `#[cfg(test)]`: integration tests under `tests/` link this crate as
+    /// a normal dependency and never see `cfg(test)` items.
+    pub fn permissionless() -> Self {
+        let mut node = Self::new();
+        node.require_poa = false;
+        node
+    }
+
     /// Create a node with custom mempool configuration.
     pub fn with_mempool_config(config: MempoolConfig) -> Self {
         Self {
@@ -618,6 +660,7 @@ impl Node {
             mempool: MempoolV2::new(config),
             clock: Clock::default(),
             authority_sks: Vec::new(),
+            require_poa: true,
             dht_node_id: None,
             dht_routing_table: None,
             log: None,
@@ -1099,6 +1142,23 @@ impl Node {
     /// The active PoA policy, if any.
     pub fn poa_config(&self) -> Option<PoAConfig> {
         self.ledger.as_ref().and_then(Ledger::poa_config)
+    }
+
+    /// Whether this node refuses unsigned blocks. Defaults to `true`.
+    ///
+    /// Setting this to `false` lets the node accept blocks with no authority
+    /// signature, which is **not** a supported network configuration under
+    /// RFC-POA-Migration §0 — it exists for tests and tooling that build
+    /// permissionless DAGs. On a node that participates in a real network it
+    /// removes admission control entirely: any peer can then insert arbitrary
+    /// blocks, including blocks that would never pass PoA admission.
+    pub fn set_require_poa(&mut self, require: bool) {
+        self.require_poa = require;
+    }
+
+    /// Whether this node refuses unsigned blocks.
+    pub fn require_poa(&self) -> bool {
+        self.require_poa
     }
     ///
     /// Validates the update against the current authority set and replaces
@@ -2850,11 +2910,18 @@ impl Node {
             ledger
                 .insert_prepared_block(block, txs)
                 .map_err(NodeError::Insert)
-        } else {
+        } else if !self.require_poa {
+            // Permissionless mode (tests/tooling only). Producing a block with
+            // no authority signature is not valid block production under
+            // RFC-POA §0, so it is gated behind the same opt-out.
             let ledger = self.ledger.as_mut().ok_or(NodeError::NotInitialized)?;
             ledger
                 .insert(parents, work, timestamp, nonce, txs)
                 .map_err(NodeError::Insert)
+        } else {
+            // PoA is required but no authority set is configured. Refuse
+            // rather than mint an unadmitted block into the local DAG.
+            Err(NodeError::PoARequired)
         }
     }
 
@@ -3780,7 +3847,17 @@ impl Node {
                 payload,
             )
         } else {
-            // Legacy PoW block (no admission) - the id is still well-defined
+            // PoA is the only admission regime (RFC-POA-Migration §0), so an
+            // unsigned block has no valid author. Refuse it at the node
+            // boundary rather than admitting it unvalidated: `Dag::insert`
+            // skips `check_poa` entirely when no authority set is configured,
+            // so a node that lost `KOVANICA_AUTHORITIES` on restart would
+            // otherwise accept arbitrary blocks off the wire.
+            if self.require_poa {
+                return Err(NodeError::PoARequired);
+            }
+            // Permissionless mode (tests/tooling only): the id is still
+            // well-defined, but the block carries no admission proof.
             Block::new(
                 record.parents.clone(),
                 record.work,
@@ -3975,6 +4052,7 @@ impl Node {
             mempool: MempoolV2::default(),
             clock: Clock::default(),
             authority_sks: Vec::new(),
+            require_poa: true,
             dht_node_id: None,
             dht_routing_table: None,
             log: Some(store),
@@ -3998,6 +4076,7 @@ impl Node {
             mempool: MempoolV2::default(),
             clock: Clock::default(),
             authority_sks: Vec::new(),
+            require_poa: true,
             dht_node_id: None,
             dht_routing_table: None,
             log: None,
@@ -4197,8 +4276,10 @@ mod tests {
 
     #[test]
     fn test_node_spv_header_and_export() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         let (genesis, _) = node.genesis(3, 1000, 1000, 1, None).unwrap();
+        // Permissionless node: this test exercises SPV headers, not PoA
+        // admission. Real nodes must never disable this - see
         let sent1 = node.send(1, 100, 2).unwrap();
         let sent2 = node.send(2, 50, 3).unwrap();
 
@@ -4226,8 +4307,10 @@ mod tests {
 
     #[test]
     fn test_node_headers_from() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         let (genesis, _) = node.genesis(3, 1000, 1000, 1, None).unwrap();
+        // Permissionless node: this test exercises header queries, not PoA
+        // admission. Real nodes must never disable this - see
         let sent1 = node.send(1, 100, 2).unwrap();
         let sent2 = node.send(2, 50, 3).unwrap();
 
@@ -4263,8 +4346,10 @@ mod tests {
 
     #[test]
     fn test_node_merkle_block() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         node.genesis(3, 1000, 1000, 1, None).unwrap();
+        // Permissionless node: this test exercises merkle blocks, not PoA
+        // admission. Real nodes must never disable this - see
         let sent = node.send(1, 200, 2).unwrap();
 
         // Matching transaction

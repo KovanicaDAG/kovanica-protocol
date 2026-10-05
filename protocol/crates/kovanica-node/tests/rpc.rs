@@ -12,7 +12,7 @@ fn run(node: &mut Node, line: &str) -> String {
 
 #[test]
 fn end_to_end_transfers_update_balances() {
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     assert!(run(&mut node, "genesis 3 1000 500 1").starts_with("ok genesis "));
     assert_eq!(run(&mut node, "balance 1"), "ok 500");
 
@@ -29,7 +29,7 @@ fn end_to_end_transfers_update_balances() {
 
 #[test]
 fn balance_accepts_a_hex_address() {
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     run(&mut node, "genesis 3 1000 500 7");
     let addr = run(&mut node, "address 7");
     let addr_hex = addr.strip_prefix("ok ").unwrap();
@@ -38,7 +38,7 @@ fn balance_accepts_a_hex_address() {
 
 #[test]
 fn errors_are_reported_not_panicked() {
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     // Operating before genesis.
     assert!(run(&mut node, "send 1 10 2").starts_with("err"));
     assert!(run(&mut node, "balance 1").starts_with("err"));
@@ -67,7 +67,7 @@ fn snapshot_roundtrip_through_rpc_preserves_balances() {
     };
     let path_str = path.to_str().unwrap();
 
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     run(&mut node, "genesis 3 1000 500 1");
     run(&mut node, "send 1 200 2");
     run(&mut node, "send 2 50 3");
@@ -77,7 +77,7 @@ fn snapshot_roundtrip_through_rpc_preserves_balances() {
     );
 
     // Fresh node loads the snapshot and sees the same balances and height.
-    let mut restored = Node::new();
+    let mut restored = Node::permissionless();
     assert_eq!(run(&mut restored, &format!("load {path_str}")), "ok loaded");
     assert_eq!(run(&mut restored, "balance 1"), "ok 299");
     assert_eq!(run(&mut restored, "balance 2"), "ok 149");
@@ -102,7 +102,7 @@ fn checkpoint_roundtrip_through_rpc_preserves_balances() {
     };
     let path_str = path.to_str().unwrap();
 
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     // Use genesis_finality with finality_depth=3 to enable finality
     run(&mut node, "genesis_finality 3 1000 500 1 3");
     run(&mut node, "send 1 200 2");
@@ -115,7 +115,7 @@ fn checkpoint_roundtrip_through_rpc_preserves_balances() {
     );
 
     // Fresh node loads the checkpoint and sees the same balances.
-    let mut restored = Node::new();
+    let mut restored = Node::permissionless();
     assert_eq!(
         run(&mut restored, &format!("load_checkpoint {path_str}")),
         "ok loaded"
@@ -135,7 +135,7 @@ fn checkpoint_roundtrip_through_rpc_preserves_balances() {
 fn parallel_sends_from_two_actors_both_land() {
     // Two actors funded from genesis change spend in separate blocks; the DAG
     // grows and both transfers take effect.
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     run(&mut node, "genesis 3 1000 1000 1");
     run(&mut node, "send 1 400 2"); // 1 -> 2 (400), change 599 to 1 (1 fee)
     run(&mut node, "send 1 300 3"); // 1 -> 3 (300), change 298 to 1

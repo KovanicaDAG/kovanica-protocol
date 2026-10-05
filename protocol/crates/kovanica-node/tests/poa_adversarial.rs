@@ -503,3 +503,137 @@ fn test_authority_set_with_seeds(
         sks,
     )
 }
+
+// ---------------------------------------------------------------------------
+// Vector 7 — the silent-downgrade bypass (RFC-POA-Migration §0.7.1 / §0.7.2)
+// ---------------------------------------------------------------------------
+//
+// `Dag::insert` runs `check_poa` only when the DAG has a PoA policy configured
+// (`if let Some(poa) = &self.poa`). With no policy, *no* work pin, signature or
+// slot check runs and any block is admitted. A node that restarts without its
+// authority set therefore silently downgraded from PoA to no admission control
+// and would accept arbitrary blocks off the wire. `Node` now refuses unsigned
+// blocks by default (`require_poa`, default true) so the downgrade cannot happen
+// at the node boundary.
+
+use kovanica_node::{BlockRecord, Node, NodeError};
+use kovanica_state::ATOM;
+
+/// An unsigned block record on top of `parents`, claiming arbitrary work.
+fn unsigned_record(parents: Vec<BlockId>, timestamp_ms: u64) -> BlockRecord {
+    BlockRecord {
+        parents,
+        // Deliberately not the PoA nominal work: a block that would also fail
+        // the work pin, so a regression cannot pass by accidentally enforcing it.
+        work: 1_000_000,
+        timestamp_ms,
+        nonce: 0,
+        authority_sig: None,
+        txs: Vec::new(),
+    }
+}
+
+#[test]
+fn adversarial_missing_authority_set_refuses_unsigned_blocks() {
+    // The downgrade scenario: a node whose PoA policy is NOT configured, which
+    // is exactly what a lost/missed KOVANICA_AUTHORITIES looks like.
+    let mut node = Node::new();
+    node.set_now_ms(1_000);
+    assert!(
+        !node.poa_enabled(),
+        "precondition: no PoA policy configured"
+    );
+    assert!(node.require_poa(), "PoA admission is required by default");
+    let (genesis, _) = node.genesis(3, 10 * ATOM, 200_000 * ATOM, 1, None).unwrap();
+
+    let rec = unsigned_record(vec![genesis], 2_000);
+    let err = node
+        .receive_block(rec)
+        .expect_err("unsigned block must be refused with no authority set");
+
+    assert!(
+        matches!(err, NodeError::PoARequired),
+        "expected PoARequired, got {err:?}"
+    );
+    // The DAG must not have grown: refusal has to happen before insertion.
+    assert_eq!(node.ledger().unwrap().dag().len(), 1, "only genesis");
+}
+
+#[test]
+fn adversarial_unsigned_block_refused_even_with_work_pinned() {
+    // Same refusal, but for a record that *does* carry the nominal work, so the
+    // result cannot be attributed to the work pin: what is refused is the
+    // absent signature itself.
+    let mut node = Node::new();
+    node.set_now_ms(1_000);
+    let (genesis, _) = node.genesis(3, 10 * ATOM, 200_000 * ATOM, 1, None).unwrap();
+
+    let mut rec = unsigned_record(vec![genesis], 2_000);
+    rec.work = POA_NOMINAL_WORK;
+    let err = node
+        .receive_block(rec)
+        .expect_err("unsigned block must be refused");
+    assert!(matches!(err, NodeError::PoARequired), "got {err:?}");
+    assert_eq!(node.ledger().unwrap().dag().len(), 1);
+}
+
+#[test]
+fn adversarial_permissionless_opt_out_is_explicit_and_works() {
+    // The escape hatch must actually work for the permissionless DAGs the test
+    // suite builds, and it must be reachable only by asking for it.
+    let mut node = Node::new();
+    assert!(node.require_poa(), "default is fail-closed");
+    node.set_require_poa(false);
+    node.set_now_ms(1_000);
+    let (genesis, _) = node.genesis(3, 10 * ATOM, 200_000 * ATOM, 1, None).unwrap();
+
+    let rec = unsigned_record(vec![genesis], 2_000);
+    let id = node
+        .receive_block(rec)
+        .expect("opt-out accepts unsigned blocks");
+    assert_eq!(node.ledger().unwrap().dag().len(), 2, "genesis + 1");
+    assert!(
+        node.ledger().unwrap().dag().contains(&id),
+        "the accepted block really is in the DAG"
+    );
+
+    // And the constructor form used across the test suite agrees.
+    let other = Node::permissionless();
+    assert!(!other.require_poa(), "permissionless() opts out");
+}
+
+#[test]
+fn adversarial_poa_node_still_accepts_signed_blocks() {
+    // No regression: a PoA-configured node must keep admitting correctly signed
+    // blocks on the wire path. The guard refuses *unsigned* records, not all
+    // records.
+    let (set, _sks) = test_authority_set();
+    let mut node = Node::new();
+    node.set_now_ms(1_000);
+    let (genesis, _) = node
+        .genesis_with_poa(
+            3,
+            10 * ATOM,
+            200_000 * ATOM,
+            1,
+            None,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            None,
+            set,
+            SLOT_MS,
+        )
+        .expect("PoA genesis");
+
+    assert!(node.poa_enabled(), "PoA configured");
+    assert!(node.require_poa(), "still fail-closed");
+
+    // An unsigned record on a PoA node is refused by the same guard, before the
+    // ledger's own authority check ever runs.
+    let err = node
+        .receive_block(unsigned_record(vec![genesis], 2_000))
+        .expect_err("unsigned refused on a PoA node too");
+    assert!(matches!(err, NodeError::PoARequired), "got {err:?}");
+    assert_eq!(node.ledger().unwrap().dag().len(), 1);
+}

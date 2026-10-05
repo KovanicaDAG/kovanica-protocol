@@ -28,7 +28,7 @@ use kovanica_node::{serve_headers_first, sync_headers_first, Node};
 const IO: Duration = Duration::from_secs(5);
 
 fn genesis_node() -> Node {
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     node.genesis(3, 1_000, 1_000, 1, None).expect("genesis");
     node
 }

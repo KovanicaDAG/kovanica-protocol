@@ -905,7 +905,7 @@ mod tests {
 
     #[test]
     fn test_handle_relay_query() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         node.genesis(3, 1000, 1000, 1, None).unwrap();
         let sent = node.send(1, 200, 2).unwrap();
 

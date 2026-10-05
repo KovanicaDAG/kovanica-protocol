@@ -25,7 +25,11 @@
 //! ```
 //! use kovanica_node::{rpc, Node};
 //!
-//! let mut node = Node::new();
+//! // Permissionless so this tour stays short. A node on a real network MUST be
+//! // PoA-configured and must never use this: under RFC-POA-Migration §0 PoA is
+//! // the only admission regime, so an unsigned block is never admissible, and
+//! // [`Node::permissionless`] disables admission control entirely.
+//! let mut node = Node::permissionless();
 //! // Genesis mints 500 to actor 1; actor 1 sends 200 to actor 2.
 //! assert!(rpc::execute_line(&mut node, "genesis 3 1000 500 1").starts_with("ok genesis"));
 //! assert!(rpc::execute_line(&mut node, "send 1 200 2").starts_with("ok block"));

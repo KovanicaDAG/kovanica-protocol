@@ -371,7 +371,7 @@ fn test_merkle_odd_leaf_count_and_index_bounds_analysis() {
 
 #[test]
 fn test_cross_block_merkle_forgery_and_tampered_payloads() {
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     node.set_now_ms(1000);
     node.genesis(3, 1000, 1000, 1, None).unwrap();
 
@@ -438,7 +438,7 @@ fn test_concurrent_tcp_light_clients_and_high_throughput_load() {
 
     // 1. Single Node Actor thread owning the Node
     let node_handle = thread::spawn(move || {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         node.set_now_ms(1_000);
         node.genesis(3, 1000, 1000, 1, None).unwrap();
         let mut block_idx = 0u64;

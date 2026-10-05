@@ -14,7 +14,7 @@ const DRIFT_MS: u64 = 2 * 60 * 60 * 1000;
 /// A node with the standard genesis (mints 1000 to actor 1), matching the setup
 /// in `network.rs`.
 fn genesis_node() -> Node {
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     node.genesis(3, 1000, 1000, 1, None).unwrap();
     node
 }
