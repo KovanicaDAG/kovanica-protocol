@@ -1906,7 +1906,10 @@ fn bind_p2p_addrs(raw: &str) -> Vec<TcpListener> {
                 }
             }
         } else {
-            match TcpListener::bind(&addr) {
+            // socket2 rather than `TcpListener::bind` so the accept queue can
+            // be widened; see `P2P_LISTEN_BACKLOG` for why the 128 default is
+            // not enough under the re-dial-every-peer sync timer.
+            match bind_with_backlog(&addr, false) {
                 Ok(l) => Some(l),
                 Err(e) => {
                     eprintln!("kovanica p2p listen {addr} failed: {e}");
@@ -1930,6 +1933,15 @@ fn bind_p2p_addrs(raw: &str) -> Vec<TcpListener> {
 /// Bind an `[::]:port` listener with IPV6_V6ONLY set, so it accepts IPv6
 /// only and leaves the IPv4 wildcard to its sibling socket.
 fn bind_v6_only(addr: &str) -> std::io::Result<TcpListener> {
+    bind_with_backlog(addr, true)
+}
+
+/// Bind a TCP listener with an explicit accept-queue depth.
+///
+/// `v6_only` sets `IPV6_V6ONLY` before bind (there is no std equivalent, and
+/// it must be set pre-bind to take effect) so the v4 and v6 listeners can
+/// share a port without shadowing each other.
+fn bind_with_backlog(addr: &str, v6_only: bool) -> std::io::Result<TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
     let sock_addr: std::net::SocketAddr = addr
         .parse()
@@ -1939,13 +1951,30 @@ fn bind_v6_only(addr: &str) -> std::io::Result<TcpListener> {
         Type::STREAM,
         Some(Protocol::TCP),
     )?;
-    socket.set_only_v6(true)?;
+    if v6_only {
+        socket.set_only_v6(true)?;
+    }
     socket.bind(&sock_addr.into())?;
-    socket.listen(128)?;
+    socket.listen(P2P_LISTEN_BACKLOG)?;
     let listener: std::net::TcpListener = socket.into();
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
+
+/// Accept-queue depth for the P2P listeners.
+///
+/// `std::net::TcpListener::bind` uses the platform default of 128, which is
+/// what the v4 path was getting. On seed1 that was not enough: every node
+/// re-dials every peer on a fixed sync timer, and the kernel recorded
+/// `TcpExtListenOverflows 3380` / `TcpExtListenDrops 3385` against the
+/// listener — the accept queue saturated, inbound SYNs were dropped, and a
+/// dialer's non-blocking `connect` came back `EAGAIN`, which the peer then
+/// treated as a dead link. A larger queue breaks that feedback loop at the
+/// source instead of only damping it downstream with a backoff.
+///
+/// Clamped to `net.core.somaxconn` by the kernel, so raising this past the
+/// host limit is harmless.
+const P2P_LISTEN_BACKLOG: i32 = 1024;
 
 /// Testnet's compiled-in bootstrap set, used only when `KOVANICA_PEERS` is unset
 /// and the node is running the testnet profile.
@@ -6359,6 +6388,79 @@ mod tests {
         let after = app.mesh.node("alpha").unwrap().block_count().unwrap();
         assert!(mine_body.contains("\"ok\":true"));
         assert_eq!(after, before + 1, "mine must produce exactly one block");
+    }
+
+    /// Read a bound port's accept-queue depth from `ss`.
+    ///
+    /// `ss` is the only thing that actually reports this: it reads
+    /// `sk_max_ack_backlog` via `getsockopt`, which `/proc/net/tcp` does not
+    /// expose (there, both queue columns read 0 for a `LISTEN` socket). This
+    /// is the same observable an operator sees, so the test asserts on what
+    /// they would see. Returns `None` when `ss` is unavailable, letting the
+    /// caller skip rather than pass vacuously.
+    fn listen_backlog_depth(port: u16) -> Option<u32> {
+        // `ss` is invoked by absolute path: the test harness does not always
+        // inherit a PATH containing /usr/bin, and a silent PATH failure would
+        // make this observation vacuous rather than failing loudly.
+        const SS: &str = "/usr/bin/ss";
+        if !std::path::Path::new(SS).exists() {
+            return None;
+        }
+        let out = std::process::Command::new(SS).arg("-ltnH").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        String::from_utf8(out.stdout)
+            .ok()?
+            .lines()
+            .find_map(|line| {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.first() != Some(&"LISTEN") {
+                    return None;
+                }
+                // ss -ltnH columns: state, Recv-Q, Send-Q, local addr:port, peer.
+                // Send-Q on a LISTEN socket is the accept-queue depth the kernel
+                // advertises, i.e. the backlog listen() was called with.
+                // The port is printed in DECIMAL (verified: sshd shows as `:22`),
+                // not hex.
+                let lport = cols.get(3)?.rsplit_once(':')?.1;
+                if lport.parse::<u16>().ok()? != port {
+                    return None;
+                }
+                cols.get(2)?.parse().ok()
+            })
+    }
+
+    /// Regression guard for the seed1 accept-queue saturation: both P2P
+    /// listeners used to be built with the platform default of 128, which the
+    /// kernel overflowed (`TcpExtListenOverflows 3380`) under the
+    /// re-dial-every-peer sync timer, dropping inbound SYNs and making
+    /// dialers see `EAGAIN`.
+    #[test]
+    fn p2p_listeners_use_the_widened_accept_queue_not_the_platform_default() {
+        let l = bind_with_backlog("127.0.0.1:0", false).expect("v4 listener");
+        let port = l.local_addr().expect("addr").port();
+        // Drop our copy of the fd handle so nothing depends on it staying open.
+        let Some(depth) = listen_backlog_depth(port) else {
+            // Only skip when `ss` genuinely cannot be observed. If `ss` ran but
+            // found nothing, that means the listener is not what we think it is
+            // and the assertion below would prove nothing.
+            panic!("`ss` is present but reported no accept-queue depth for port {port}");
+        };
+        // The point of the guard is that the P2P listeners are NOT left on
+        // the platform default. Comparing only against the configured constant
+        // would pass even at the default, so compare against 128 explicitly:
+        // that is the value `TcpListener::bind` and the old v6 path used.
+        const PLATFORM_DEFAULT_ACCEPT_QUEUE: u32 = 128;
+        assert!(
+            depth >= P2P_LISTEN_BACKLOG as u32,
+            "accept queue depth {depth} is below the configured {P2P_LISTEN_BACKLOG}"
+        );
+        assert!(
+            depth > PLATFORM_DEFAULT_ACCEPT_QUEUE,
+            "accept queue depth {depth} is still the platform default \
+             {PLATFORM_DEFAULT_ACCEPT_QUEUE}; the seed1 SYN-drop regression returns"
+        );
     }
 
     #[test]
