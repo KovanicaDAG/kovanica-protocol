@@ -296,3 +296,88 @@ The R4 gate must therefore keep two cases distinct and cover both: a candidate i
 `future(P)` (the `build_rich` `m` path) and a retained `anticone(P)` candidate
 (the `build_rich` `S = [c20]` path). Both are currently failing, which is the
 correct state until (B1) and (B2) land.
+
+## 12. Second eviction bug: `Reachability::remove_blocks` leaves the tree inconsistent
+
+A differential search over randomly generated DAGs (1-3 parents per block drawn
+from a recent window, so merges, stale forks and stale-on-stale are all
+possible; several `k` values and prune depths) found a **second, independent
+bug in the same family as F1 — but a hard panic rather than a silent colouring
+divergence.**
+
+### Symptom
+
+```
+thread 'b2_search_wide' panicked at crates/kovanica-dag/src/reachability.rs:232:44:
+ancestor sized
+```
+
+That line is inside `Reachability::register_leaf`, in the walk that increments
+`subtree_size` along the `tree_parent` chain upward from a new block's
+`selected_parent`:
+
+```rust
+let mut cur = Some(selected_parent);
+while let Some(x) = cur {
+    *self.subtree_size.get_mut(&x).expect("ancestor sized") += 1;
+    cur = self.tree_parent.get(&x).copied();
+}
+```
+
+The panic means some ancestor on that chain has **no `subtree_size` entry** —
+i.e. the walk passes *through* a node that was already removed.
+
+### It is eviction-triggered, and it is not a construction artefact
+
+- With the build loop instrumented, the **unpruned** build completed every
+  insert; the **pruned** build panicked on the first insert after the prune.
+  The captured failing construction is `k = 2`, `depth = 4`, panicking at
+  iteration `i = 7`.
+- `set_block_pruning_depth(depth)` runs `prune_old_blocks()` **immediately**,
+  before that iteration's `dag.insert`. So the prune evicts blocks and the
+  *very next insert* panics: the eviction leaves the tree inconsistent.
+- The probe's DAG script is valid: parent indices are drawn only from strictly
+  earlier slots, are deduped, and can never be the block itself or a later
+  block. So this is not an invalid-DAG artefact.
+
+### Mechanism
+
+`Reachability::remove_blocks` (`reachability.rs:288-336`) collects the present
+tree-children of evicted blocks and rewrites `tree_parent[child] = genesis` for
+them, then removes the evicted ids from `intervals`, `fcs`, `tree_children`,
+`tree_parent`, `subtree_size` and `next_free`, and finally subtracts
+`evicted.len()` from `subtree_size[genesis]`. Two gaps are visible by
+inspection and need confirmation against a minimal repro:
+
+1. The re-parent is **one level deep** — it only rewrites the direct present
+   children of evicted blocks. Any chain that was already inconsistent, or a
+   child that was itself evicted in the same set and whose own child was not
+   captured because `tree_children[evicted]` no longer listed it, leaves a
+   `tree_parent` link pointing at a removed node.
+2. Re-parented children are pushed onto genesis's `tree_children` **without
+   de-duplication** against children already listed there (which can happen when
+   a node is re-parented more than once across successive prunes).
+
+Either way the invariant `subtree_size` must hold for every node reachable via
+`tree_parent` from any retained block is violated after eviction.
+
+### Impact
+
+A **liveness / DoS bug on any node with block pruning enabled**: an ordinary
+DAG containing merges is enough to trip it. It is not exposed on the current
+network only because block pruning is disabled network-wide
+(`BLOCK_PRUNING_DEPTH = u64::MAX`) per RFC-009 R8 — the same mitigation that
+covers F1. It is a second, independent reason that a finite
+`block_pruning_depth` must not be re-enabled until R5 (sound eviction) is
+actually satisfied.
+
+### Status and next steps
+
+Not yet reduced to a minimal deterministic repro. The captured parameters are
+`k = 2`, `n = 10`, `prune_at = 7`, `depth = 4`; isolating it needs the fixed
+parent script for that construction dumped, then a small fixed DAG written as a
+permanent regression test alongside `crates/kovanica-dag/tests/block_pruning_colouring.rs`.
+Until then this section records the finding and its evidence, not a fix.
+
+Cross-references: F1 (section 3), RFC-009 R5 (sound eviction) and R8 (load paths
+guarded), and `crates/kovanica-dag/tests/block_pruning_colouring.rs`.
