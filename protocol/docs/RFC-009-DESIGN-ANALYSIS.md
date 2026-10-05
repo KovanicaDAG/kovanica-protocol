@@ -241,3 +241,58 @@ it must still solve, and that is a genuine design question, not an implementatio
 The R4 gate is the arbiter: it must be un-ignored and green before any finite
 `block_pruning_depth` is re-enabled (R8), and it must keep covering a retained
 `anticone(P)` candidate.
+
+## 11. Empirical result: a stale candidate is genuinely blue unpruned, and the
+divergence is not confined to `anticone(P)`
+
+A second throwaway probe (chain `c1..=c40`; `S` forking off `c37`/`c38`/`c39`;
+`set_block_pruning_depth(3)`; `x = [c40]` triggers the prune; then `z = [c40, S]`
+so `S` is a mergeset candidate) settles the open question from §9:
+
+```
+fork_at=c37  s_retained=true in_anticone(P,S)=true   len_ref=44 len_pru=7
+   ref: z.blue_score=42  s_blue=true   blues=1 reds=0
+   pru: z.blue_score=41  s_blue=false  blues=0 reds=1
+fork_at=c38  s_retained=true in_anticone(P,S)=false  len_ref=44 len_pru=7
+   ref: z.blue_score=42  s_blue=true   blues=1 reds=0
+   pru: z.blue_score=41  s_blue=false  blues=0 reds=1
+fork_at=c39  s_retained=true in_anticone(P,S)=false  len_ref=44 len_pru=7
+   ref: z.blue_score=42  s_blue=false  blues=1 reds=0
+   pru: z.blue_score=41  s_blue=false  blues=0 reds=1
+```
+
+Three consequences, each of which constrains design (B):
+
+1. **The "a stale candidate is red anyway" shortcut is wrong.** At `fork_at=c37`
+   and `c38` the retained stale block `S` is genuinely **blue** in the unpruned
+   DAG (`s_blue=true`, `z.blue_score=42`, `blues=1`). Design (B) must evaluate
+   stale candidates **exactly**; it cannot declare them red.
+2. **Pruning flips a genuinely-blue candidate to red in all three cases**
+   (`s_blue=false`, `z.blue_score=41`, `blues=0 reds=1`) — the phantom-anticone
+   *over*-count direction of F1, reproduced at three different fork positions,
+   not just in the single-block minimal repro.
+3. **The divergence is not confined to `anticone(P)` candidates.** At
+   `fork_at=c38`/`c39`, `in_anticone(P,S)=false` — i.e. `S ∈ future(P) ∪ {P}` —
+   and the colouring *still* diverges. The mechanism is that evicted `past(P)`
+   ids remain as keys in `sp`'s map and `in_anticone(evicted, S)` returns a
+   phantom `true`, so a blue that is a true **ancestor** of `S` is counted as
+   being in `S`'s anticone.
+
+Consequence 3 is important for the design: for candidates in `future(P) ∪ {P}`
+the evicted `past(P)` keys are provably inert (§9) and must simply be **dropped**
+— which the current code does not do. So design (B) has two separable
+sub-problems:
+
+- **(B1) candidates in `future(P) ∪ {P}`** — drop every key that the oracle can
+  no longer resolve; these are provably inert here, so the colouring is exact.
+  This alone fixes the `fork_at=c38`/`c39` divergence.
+- **(B2) candidates in `anticone(P)`** — `S` at `fork_at=c37`. Here a `past(P)`
+  key may be genuinely live, so (B1)'s drop is not sound (§9), and a replacement
+  rule must be proven to reproduce the unpruned colouring. If no such
+  acceptance-neutral rule exists, the retained set must be restricted so the case
+  cannot arise (option (A), gated behind the reset or an activation height).
+
+The R4 gate must therefore keep two cases distinct and cover both: a candidate in
+`future(P)` (the `build_rich` `m` path) and a retained `anticone(P)` candidate
+(the `build_rich` `S = [c20]` path). Both are currently failing, which is the
+correct state until (B1) and (B2) land.
