@@ -58,6 +58,20 @@ Each item states why it was deferred.
       so replay memory still grows with the chain. Reworking the k-cluster
       evaluation so it does not need the full historical blue map is what
       restores a true O(finality-window) bound. See RFC-009 and TASKLIST2 §2.5.
+      **Progress:** design (B) chosen and **(B1) landed in `0cb5b99`** — once
+      pruning is enabled, `compute_ghostdag` drops every `past(P)` key (and any
+      key the oracle can no longer resolve) from the inherited
+      `blue_anticone_sizes`, which removes the F1 phantom-anticone mechanism and
+      bounds the map to ~`block_pruning_depth` entries. The RFC-009 **R4**
+      differential gate is now an active, un-ignored regression test
+      (`crates/kovanica-dag/tests/block_pruning_colouring.rs`, 3 tests, all
+      green; `cargo test --workspace` = 932 passed / 0 failed). **Still open:
+      (B2)** — for a stale candidate in `anticone(P)` that forked off
+      `A ∈ past(P)`, the dropped chain blocks in `past(P) \ past(A)` are
+      genuinely in its anticone, so the drop can in principle *under*-count; the
+      R4 gate exercises that configuration and (B1) reproduces the unpruned
+      colouring for it, but one construction is not a proof. Block pruning
+      therefore stays disabled until (B2) is settled (RFC-009 R8).
 
 ## 4.4 Deferred: RFC-POA 0.7.2 governance residuals
 Per KVP-202, still `[OPEN]` / `[TARGET]` and **not** to be implemented on the
