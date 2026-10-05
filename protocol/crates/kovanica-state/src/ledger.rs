@@ -2544,7 +2544,7 @@ impl Ledger {
     /// height of a final block from the nearest non-final ancestor. Returns
     /// `None` only when the walk is impossible — the whole chain below the
     /// finality boundary is pruned (callers fall back to blue score).
-    fn chain_height_of(&self, block: BlockId) -> Option<u64> {
+    pub fn chain_height_of(&self, block: BlockId) -> Option<u64> {
         let mut steps = 0u64;
         let mut cur = block;
         loop {

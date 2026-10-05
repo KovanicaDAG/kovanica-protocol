@@ -33,8 +33,8 @@ use kovanica_wallet::Wallet;
 
 use crate::mempool_v2::{MempoolConfig, MempoolV2};
 use crate::metrics::{
-    record_block_observed, record_block_produced, record_mempool_evicted, record_mempool_promoted,
-    set_mempool_counts,
+    record_block_observed, record_block_produced, record_chain_height, record_mempool_evicted,
+    record_mempool_promoted, set_mempool_counts,
 };
 
 /// How far ahead of the local wall clock a received block's timestamp may sit
@@ -1231,6 +1231,12 @@ impl Node {
     }
 
     /// The current chain height: the selected tip's blue score.
+    /// ⚠️ **This returns the tip's _blue score_, not a linearized chain
+    /// height**, despite the name. Blue score is the size of the tip's blue
+    /// set, so it outruns chain height by a growing margin. Left as-is
+    /// because callers (notably the unbond maturity gate) depend on the
+    /// existing value, and changing it is consensus-adjacent. For the true
+    /// chain height use `Ledger::chain_height_of`.
     pub fn chain_height(&self) -> Result<u64, NodeError> {
         Ok(self.ledger()?.tip_blue_score())
     }
@@ -4147,6 +4153,17 @@ impl Node {
             .map(|g| g.blue_score)
             .unwrap_or(0);
         record_block_observed(score, score);
+        // `record_block_observed` deliberately reports blue score under the
+        // `kovanica_block_height` name, so it cannot double as the chain
+        // height. Publish the real linearized height alongside it, otherwise
+        // an operator has no series that means "how far has the chain
+        // advanced" (see `names::CHAIN_HEIGHT`).
+        let chain_height = self
+            .ledger
+            .as_ref()
+            .and_then(|l| l.chain_height_of(l.dag().selected_tip()))
+            .unwrap_or(0);
+        record_chain_height(chain_height);
         set_mempool_counts(
             self.mempool.len_pending(),
             self.mempool.len_orphans(),

@@ -512,6 +512,9 @@ pub struct Explorer {
     /// that goes silent ages out instead of being dropped by the next pass's
     /// wholesale replacement.
     outbound_seen: HashMap<String, u64>,
+    /// Peers in connection-level backoff, mapped to the tick at which
+    /// they become eligible again. See [`PEER_SYNC_BACKOFF_TICKS`].
+    peer_backoff: HashMap<String, u64>,
     /// Inbound peers (which dialed *us* on the P2P listeners) mapped to the tick
     /// they last completed an exchange. On a production seed this is the larger
     /// half of the mesh — the other seeds connect to us, not the other way
@@ -573,6 +576,20 @@ const PEER_LIVENESS_TICKS: u64 = 1_000;
 /// and republish the gauge, so the standalone `:9090` scrape listener sees
 /// fresh values even between sync rounds.
 const PEER_LIVENESS_REFRESH_TICKS: u64 = 125;
+
+/// Ticks a peer is skipped after a *connection-level* sync failure.
+///
+/// seed1 was observed dropping ~3380 inbound connections
+/// (`TcpExtListenOverflows`/`TcpExtListenDrops`) because its accept queue
+/// saturated under a full-mesh sync storm. Every node dialled every peer on a
+/// fixed timer, so a peer whose SYNs were being dropped kept re-dialling and
+/// kept adding to the backlog it was already failing on. Skipping a
+/// hard-failed peer for a while breaks that feedback loop and lets the
+/// accepting side drain.
+///
+/// Two sync intervals, so a peer that is merely slow is retried promptly
+/// while one that is genuinely unreachable is not hammered.
+const PEER_SYNC_BACKOFF_TICKS: u64 = 500;
 
 /// Canonical form of a peer key for de-duplication.
 ///
@@ -642,6 +659,7 @@ impl Explorer {
             origins: HashMap::new(),
             live_peers: HashSet::new(),
             outbound_seen: HashMap::new(),
+            peer_backoff: HashMap::new(),
             inbound_seen: HashMap::new(),
             last_tip: None,
             peer_sync_errors: HashMap::new(),
@@ -863,6 +881,18 @@ impl Explorer {
     /// ratcheting: a mesh that genuinely grows is reflected immediately, and a
     /// peer that goes silent ages out on its own without needing a successful
     /// round-trip to evict it.
+    /// Whether `addr` is currently serving a connection-level backoff.
+    ///
+    /// Split out from [`Explorer::sync_peers`] so the window is testable
+    /// without a live peer: the skip decision is the whole point of the
+    /// change, and asserting on the raw `HashMap` would only test the
+    /// standard library.
+    fn peer_in_backoff(&self, addr: &str) -> bool {
+        self.peer_backoff
+            .get(addr)
+            .is_some_and(|until| self.ticks < *until)
+    }
+
     fn refresh_live_peers(&mut self) {
         let cutoff = self.ticks.saturating_sub(PEER_LIVENESS_TICKS);
         // Evicting a peer out of the liveness maps is this node's only notion of
@@ -973,6 +1003,13 @@ impl Explorer {
         // does not fight the mesh borrow.
         let order = self.dial_order(&peers);
         self.peer_sync_cursor = (self.peer_sync_cursor + 1) % order.len();
+        // Drop backed-off peers *before* taking the mesh borrow below: a peer's
+        // backoff is node policy, not a function of the mesh, and deciding it
+        // here keeps the `&self` read out of the `node_mut` borrow scope.
+        let order: Vec<String> = order
+            .into_iter()
+            .filter(|addr| !self.peer_in_backoff(addr))
+            .collect();
         let mut answered: HashSet<String> = HashSet::new();
         // Accumulated across the whole pass so one observation describes the
         // round, not a single peer. Publishing per-peer would make the sync
@@ -1018,10 +1055,20 @@ impl Explorer {
                         // Reachable, just nothing new to apply.
                         // Headers still count: the peer answered, and a headers-
                         // only pass is a healthy outcome on an up-to-date node.
+                        //
+                        // This arm used to be silent, which made a healthy peer
+                        // indistinguishable from one that was never contacted —
+                        // exactly the symptom that hid the seed1 EAGAIN
+                        // problem behind a dial-order bug that did not exist.
+                        eprintln!(
+                            "kovanica p2p in sync with {addr}: {} headers, 0 bodies applied",
+                            stats.headers_received
+                        );
                         headers_received += stats.headers_received;
                         bodies_applied += stats.bodies_applied;
                         answered.insert(addr.clone());
                         self.peer_sync_errors.remove(&addr);
+                        self.peer_backoff.remove(&addr);
                     }
                     Err(e) => {
                         // Log on *change* only: sync runs on a timer, so a dead
@@ -1043,6 +1090,7 @@ impl Explorer {
                                 bodies_applied += k;
                                 answered.insert(addr.clone());
                                 self.peer_sync_errors.remove(&addr);
+                                self.peer_backoff.remove(&addr);
                             }
                             Ok(_) => {}
                             Err(fe) => {
@@ -1051,6 +1099,11 @@ impl Explorer {
                                     eprintln!("kovanica p2p peer {addr} unreachable: {fe}");
                                     self.peer_sync_errors.insert(addr.clone(), fmsg);
                                 }
+                                // Both legs failed to even connect: back off so
+                                // this node stops feeding a saturated accept
+                                // queue. See `PEER_SYNC_BACKOFF_TICKS`.
+                                self.peer_backoff
+                                    .insert(addr.clone(), self.ticks + PEER_SYNC_BACKOFF_TICKS);
                             }
                         }
                     }
@@ -1145,6 +1198,7 @@ impl Explorer {
             origins: load_origins(),
             live_peers: HashSet::new(),
             outbound_seen: HashMap::new(),
+            peer_backoff: HashMap::new(),
             inbound_seen: HashMap::new(),
             last_tip: None,
             peer_sync_errors: HashMap::new(),
@@ -5659,6 +5713,69 @@ mod tests {
     /// chop a portless literal down to `2001:db8:`. The seed set mixes hostnames,
     /// IPv4 and (via `[::]:P` dual-stack listeners) IPv6 sources, so all three
     /// have to survive normalisation.
+    /// A peer that failed to connect must stop being re-dialled every sync
+    /// pass, or this node keeps feeding a peer's already-saturated accept
+    /// queue — observed live on seed1 (`TcpExtListenOverflows 3380`).
+    #[test]
+    fn a_connection_failed_peer_is_skipped_until_its_backoff_expires() {
+        let mut app = Explorer::boot();
+        let addr = "a.example:8000".to_string();
+
+        assert!(
+            !app.peer_in_backoff(&addr),
+            "a fresh peer is never backed off"
+        );
+
+        app.peer_backoff
+            .insert(addr.clone(), app.ticks + PEER_SYNC_BACKOFF_TICKS);
+        assert!(
+            app.peer_in_backoff(&addr),
+            "a peer that just failed must be skipped on the very next pass"
+        );
+
+        // One tick before expiry: still inside the window.
+        app.ticks = app.peer_backoff[&addr] - 1;
+        assert!(
+            app.peer_in_backoff(&addr),
+            "window is still open one tick early"
+        );
+
+        // Exactly at expiry: the window is inclusive of `until`, so the peer
+        // becomes eligible again and is not skipped forever.
+        app.ticks = app.peer_backoff[&addr];
+        assert!(
+            !app.peer_in_backoff(&addr),
+            "peer must be retried once the backoff window elapses"
+        );
+    }
+
+    /// A peer that answers must not keep a stale backoff, or a recovered peer
+    /// would stay invisible for the rest of the window and the mesh would
+    /// look permanently smaller than it is.
+    #[test]
+    fn a_successful_sync_clears_the_backoff() {
+        let mut app = Explorer::boot();
+        let addr = "a.example:8000".to_string();
+
+        app.peer_backoff
+            .insert(addr.clone(), app.ticks + PEER_SYNC_BACKOFF_TICKS);
+        app.peer_sync_errors.insert(addr.clone(), "boom".into());
+        assert!(app.peer_in_backoff(&addr));
+
+        // Exactly what the success arm does: clear both together.
+        app.peer_sync_errors.remove(&addr);
+        app.peer_backoff.remove(&addr);
+
+        assert!(
+            !app.peer_in_backoff(&addr),
+            "a recovered peer is dialed again"
+        );
+        assert!(
+            !app.peer_sync_errors.contains_key(&addr),
+            "the error marker must be cleared too, or the log keeps reprinting"
+        );
+    }
+
     #[test]
     fn peer_key_normalisation_handles_ipv4_ipv6_and_hostnames() {
         // Hostnames and IPv4 collapse on the port.
