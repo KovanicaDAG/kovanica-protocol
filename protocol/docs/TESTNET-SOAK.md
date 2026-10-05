@@ -1,9 +1,19 @@
 # Kovanica Testnet Soak Plan
 
-**Status**: 🔴 **ACTIVE** (Day 0 started 2026-09-20) — Post-Stage 3 #4  
+**Status**: 🔴 **ACTIVE** — **PoA soak restarted 2026-10-05T20:56:41Z** (closes 2026-10-06T20:56:41Z if no SEV-1). The original Day 0 (2026-09-20) predates the PoA-only migration; its record is retained below as history.  
 **Goal**: Run 24/7 testnet with multiple independent seeds for ≥30 days, collect operational metrics, validate mainnet readiness.
 
-### Current Status (2026-09-20)
+### Current Status (2026-10-05T20:56:41Z)
+- ✅ **seed1**: `145.223.116.178`, unit `kovanica-testnet-seed@1.service`, **active**, `NRestarts=0` — blue 2251 / blocks 2821 / 2 peers
+- ✅ **seed2**: `76.13.250.65`, unit `kovanica-testnet-seed@2.service`, **active**, `NRestarts=0` — blue 2251 / blocks 2821 / 2 peers
+- ✅ **seed3**: `187.7.27.139`, unit `kovanica-testnet-seed@3.service`, **active**, `NRestarts=0` — blue 1742 / blocks 1880 / 2 peers (catching up)
+- ✅ **P2P**: all three on **TCP 8000** (testnet; mainnet is 9000), DNS-only / grey-cloud, mutually peered
+- ✅ **Block production**: PoA slot round-robin on the fixed `SLOT_DURATION_MS = 3000` clock
+- ✅ **Metrics**: Prometheus `:9090` per host; `kovanica_peer_count` now reports real peer counts (the 2026-09-20 bug is fixed)
+- ⚠️ **Consensus caveat**: the pre-reset mesh is **diverged** (RFC-009 / TASKLIST2 §2.5 — block pruning corrupts GHOSTDAG colouring). This soak therefore evidences **authority liveness and slot-clock stability**, *not* cross-validator state agreement. A consensus-parity soak requires the post-reset chain.
+- ⚠️ **Still open**: the ≥2-continents / ≥2-entities / distinct-ASN diversity goal is **NOT met** — all three seeds are core-team hardware.
+
+### Current Status (2026-09-20) — historical, pre-PoA
 - ✅ **seed1** (primary): Hostinger VPS `145.223.116.178`, `kovanica-explorer` unit, mining 1 block/60s, 191 blocks
 - ✅ **seed2** (secondary): Hostinger KVM2 VPS `76.13.250.65` (`srv1991525`), `kovanica-seed2` unit, mining 1 block/60s, 1782 blocks
 - 🟡 **seed3**: **new VPS, not yet in service** — `187.7.27.139` (`srv2013143`), provisioned 2026-09-29, node not running (TCP 9000 closed), no fail2ban. The original AWS seed3 was decommissioned 2026-09-21.
@@ -20,7 +30,7 @@
 |------|------|----------|--------|
 | `seed.kovanica.online` | Hostinger VPS | Core team | ✅ Live |
 | `seed2.kovanica.online` | Hostinger KVM2 VPS | Core team | ✅ Live (IP `76.13.250.65`, `srv1991525`) |
-| `seed3.kovanica.online` | `187.7.27.139` (`srv2013143`) | Core team | 🟡 New VPS, **not yet in service**. Node not running, TCP 9000 closed. Its A record still resolves to Cloudflare proxy IPs, so the name does not reach it — re-point DNS-only first. Do not dial it yet. |
+| `seed3.kovanica.online` | `187.7.27.139` (`srv2013143`) | Core team | ✅ **Live** — DNS-only / grey-cloud, node running on TCP **8000**, `fail2ban` active, `NRestarts=0`. |
 
 ### Target: ≥3 Independent Operators
 - **Geographic diversity**: ≥2 continents (currently EU only)
@@ -36,7 +46,7 @@
 - [ ] Provision VPS (2 vCPU, 4GB RAM, 100GB SSD minimum)
 - [ ] Install Rust 1.82.0, build from `main` tag
 - [ ] Configure `KOVANICA_PEERS` with bootstrap list
-- [ ] Open ports: 9000 (P2P, grey-cloud), 9090 (metrics), 22 (SSH key-only)
+- [ ] Open ports: **8000 (P2P, grey-cloud — testnet; mainnet uses 9000)**, 9090 (metrics), 22 (SSH key-only)
 - [ ] Deploy systemd unit + backup timer + logrotate
 - [ ] Verify: `curl localhost:9090/metrics` → healthy output
 - [ ] Join Discord ops channel for coordination
@@ -50,7 +60,7 @@
 | Metric | Query | Target | Alert Threshold |
 |--------|-------|--------|-----------------|
 | **Block rate** | `rate(kovanica_block_rate[5m])` | > 0.5/min | < 0.1/min for 10m |
-| **Peer count** | `kovanica_peer_count` | ≥ 3 | < 2 for 5m |
+| **Peer count** | `kovanica_peer_count` (fixed 2026-10-05 — previously reported 0 despite mesh peers) | ≥ 3 | < 2 for 5m |
 | **Fork rate** | `kovanica_orphan_blocks_total / kovanica_blocks_total` | < 0.1% | > 1% |
 | **Propagation latency** | `histogram_quantile(0.95, kovanica_block_propagation_seconds_bucket)` | < 2s | > 5s p95 |
 | **Reorg depth** | `kovanica_reorg_depth` | 0–1 | > 3 |
@@ -160,12 +170,12 @@
 ## 7. Next Steps
 
 1. [x] **Recruit seed3 operator** — done 2026-09-29 in the sense that a new `srv2013143` VPS exists; ⚠️ it is still **core-team** hardware, so the actual **geographic / organisational / ASN diversity goal is NOT met** (see §1)
-2. [ ] **Bring seed3 into service**: re-point `seed3.kovanica.online` → `187.7.27.139` as DNS-only / grey-cloud, then start the node and confirm TCP 9000 serves
-3. [ ] Install fail2ban on seed3 (currently absent — it is the only seed without it)
-4. [ ] Verify all 3 seeds peering, metrics flowing, `peer_count` metric fixed
-5. [ ] Fix `kovanica_peer_count` metric (currently 0 despite mesh peers)
+2. [x] **Bring seed3 into service** — done: `seed3.kovanica.online` → `187.7.27.139` as DNS-only / grey-cloud, node running on **TCP 8000** (testnet; mainnet is 9000), `NRestarts=0`
+3. [x] Install fail2ban on seed3 — done (FailBan v1.0.2 active)
+4. [x] Verify all 3 seeds peering, metrics flowing, `peer_count` metric fixed — done (TASKLIST2 §2.3; each seed reports 2–3 peers)
+5. [x] Fix `kovanica_peer_count` metric — done (TASKLIST2 §2.4; single gauge writer, reports real counts)
 6. [ ] Enable DHT/reorg/sync/validation metrics emission
-7. [ ] Start Day 1 clock (all 3 seeds running, metrics flowing)
+7. [x] Start Day 1 clock — done **2026-10-05T20:56:41Z** (PoA soak restart; baseline in *Current Status*)
 8. [ ] Weekly ops reviews in Discord ops channel
 9. [ ] Day 30: compile report, Go/No-Go
 
