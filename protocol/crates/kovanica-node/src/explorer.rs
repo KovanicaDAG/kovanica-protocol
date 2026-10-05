@@ -1702,8 +1702,25 @@ fn load_or_genesis(name: &str) -> Result<Node, String> {
             let mut node = Node::new();
             let cfg = poa_config_from_env(&profile);
             check_authority_set(name, &cfg.authority_set)?;
-            let _watchdog =
-                spawn_replay_watchdog(fs::metadata(&snap).map(|m| m.len()).unwrap_or(0));
+            let snap_bytes = fs::metadata(&snap).map(|m| m.len()).unwrap_or(0);
+            // Same pre-flight as the log tier. `read_snapshot_impl` rebuilds the
+            // whole DAG with `insert_raw_block` and never enables block pruning,
+            // so it is subject to the same quadratic retention (RFC-009).
+            if let Some(ceiling) = process_memory_ceiling_bytes() {
+                let estimate = estimate_replay_peak_bytes(snap_bytes);
+                if estimate > ceiling {
+                    return Err(format!(
+                        "refusing to load snapshot {} for node {name}: projected replay peak is \
+                         ~{} MiB but the memory limit is {} MiB. Block pruning is disabled \
+                         (RFC-009), so replay memory grows with the chain.\n\
+                         Restore a smaller snapshot, or wipe and resync from peers.",
+                        snap.display(),
+                        estimate / (1024 * 1024),
+                        ceiling / (1024 * 1024),
+                    ));
+                }
+            }
+            let _watchdog = spawn_replay_watchdog(snap_bytes);
             node.load_with_poa(p, cfg.authority_set, cfg.slot_duration_ms)
                 .map_err(|e| {
                     format!(

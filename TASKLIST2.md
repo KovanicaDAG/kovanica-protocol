@@ -204,11 +204,17 @@ shipped in `6d0581e`; the real fix is tracked in
       `6d0581e`. Verified: the real 13.5 MB log is refused with
       `projected replay peak is ~59569 MiB but the memory limit is 4096 MiB`,
       while a 1000-record log still loads and serves.
-- [ ] **Bound replay — snapshot tier, and a real memory bound.** Still open:
-      `Node::load_with_poa` (used by the `LoadTier::Snapshot` branch) passes
-      **no** pruning policy, so the snapshot tier replays without a policy at
-      all — a secondary gap. And the operational bound above is a guard, not a
-      fix: replay memory still grows with the chain until RFC-009 R1-R8 land,
-      because block pruning is disabled network-wide. Replay from a finality
-      checkpoint / snapshot (`Store::open_checkpoint`) is the intended
-      structural answer.
+- [x] **Bound replay — snapshot tier.** `Ledger::read_snapshot_impl`
+      (`ledger.rs:3192-3237`) rebuilds the whole DAG with `insert_raw_block` and
+      never enables block pruning, so the snapshot path had the same quadratic
+      exposure as the log path. It now runs the **same pre-flight refusal** plus
+      the `replay-watchdog` before loading. Shipped in the snapshot-guard commit.
+      (The snapshot format does not carry `block_pruning_depth`, so the loader
+      still cannot apply a pruning policy — but with block pruning disabled
+      network-wide that makes no difference today; recorded as a format gap.)
+- [ ] **A real memory bound (RFC-009 R1-R8).** Still open by design: the
+      operational bound above is a guard, not a fix. Replay memory still grows
+      with the chain until the k-cluster evaluation is reworked so colouring does
+      not need the full historical blue map, which is also what would let block
+      pruning be re-enabled safely. Replaying from a finality checkpoint /
+      snapshot (`Store::open_checkpoint`) is the intended structural answer.
