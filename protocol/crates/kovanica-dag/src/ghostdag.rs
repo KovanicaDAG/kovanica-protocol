@@ -47,6 +47,50 @@ impl Dag {
         let mut blue_anticone_sizes = sp_node.ghostdag.blue_anticone_sizes.clone();
         blue_anticone_sizes.insert(selected_parent, 0);
 
+        // RFC-009 R1/R5, design (B1): bound the inherited colouring state to the
+        // pruning window. A key `b` in `past(P)` is an ancestor of every candidate
+        // in `future(P) ∪ {P}` (because `past(P) ⊆ past(candidate)`), so it is
+        // *inert* there — `try_colour_blue` skips it via `in_anticone` and the
+        // increment loop can never touch it. Dropping it keeps this map bounded by
+        // roughly `block_pruning_depth` entries instead of the whole chain.
+        //
+        // This is what makes eviction sound: F1 was that evicted ids lingered as
+        // keys the oracle can no longer resolve, so `in_anticone(evicted, c)`
+        // answered a phantom `true` and forced genuinely-blue candidates red.
+        // With the dropped keys gone, no unresolvable id survives in the map.
+        //
+        // No-op when block pruning is disabled: `pruning_point()` then returns
+        // genesis (threshold 0), so the branch is skipped entirely and the map is
+        // byte-identical to the previous behaviour. That is why this can land
+        // while `BLOCK_PRUNING_DEPTH = u64::MAX` without changing the live chain.
+        //
+        // ⚠️ Still open (B2): a candidate in `anticone(P)` may genuinely have a
+        // `past(P)` block in its anticone, which this drop under-counts. Those
+        // candidates are covered by the RFC-009 R4 gate; until (B2) has a proven
+        // rule, a finite `block_pruning_depth` must stay disabled (R8).
+        //
+        // Cost: O(|map|) oracle queries per insert, only while pruning is enabled.
+        let pruning_point = self.pruning_point();
+        if pruning_point != self.genesis() {
+            // Keep everything except blocks provably *below* the pruning point.
+            // `is_ancestor(b, P)` is exactly `b ∈ past(P)`: those keys are inert
+            // for every candidate in `future(P) ∪ {P}` and are the ones that grow
+            // without bound. Blocks in `anticone(P)` (and `P` itself) are kept —
+            // they may still be live for a stale candidate, and the selected
+            // parent in particular is in *every* mergeset candidate's anticone.
+            // Already-evicted ids are dropped too: they are in `past(P)` and, being
+            // absent, would otherwise be reported as phantom anticone blues by
+            // `in_anticone` (the F1 mechanism).
+            blue_anticone_sizes.retain(|b, _| {
+                // The selected parent is load-bearing — it is in *every* mergeset
+                // candidate's anticone — so it survives even on a path that is
+                // about to be rejected for building on pruned history (where the
+                // selected parent itself lies in `past(P)`).
+                *b == selected_parent
+                    || (self.nodes.contains_key(b) && !self.is_ancestor(b, &pruning_point))
+            });
+        }
+
         let mut mergeset_blues = Vec::new();
         let mut mergeset_reds = Vec::new();
 
@@ -74,10 +118,19 @@ impl Dag {
             blue_work += self.nodes[b].block.work();
         }
 
-        debug_assert_eq!(
-            blue_anticone_sizes.len() as u64,
-            blue_score,
-            "blue anticone map must cover exactly the blue set"
+        // RFC-009 R3: the map no longer necessarily covers the *whole* blue set —
+        // once pruning bounds it, it covers the blue set within the pruning window
+        // (design (B1) above). The old `len == blue_score` equality is therefore
+        // deliberately replaced by the two facts that must still hold: the map is
+        // never larger than the blue set, and it always contains the selected
+        // parent (every block's colouring is seeded from it).
+        debug_assert!(
+            blue_anticone_sizes.len() as u64 <= blue_score,
+            "blue anticone map must not exceed the blue set"
+        );
+        debug_assert!(
+            blue_anticone_sizes.contains_key(&selected_parent),
+            "blue anticone map must contain the selected parent"
         );
 
         GhostdagData {

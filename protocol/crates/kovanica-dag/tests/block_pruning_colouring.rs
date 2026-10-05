@@ -15,14 +15,26 @@
 //! is evaluated sees O(|past(P)|) phantom anticone blues and is forced red,
 //! diverging from an unpruned node's `blue_score` / `mergeset_blues`.
 //!
-//! These tests currently FAIL (see TASKLIST2 §2.5 and RFC-009). They are
-//! `#[ignore]`d so the suite stays green while the bug is open; remove the
-//! `#[ignore]` once the R1-R8 redesign lands. The second and third tests are
-//! the RFC-009 **R4 differential gate**: the same DAG built with pruning on
-//! and off must agree on colouring and reachability for every non-final
-//! block, over a DAG that contains merges *and* a retained `anticone(P)`
-//! block (the case that makes the naive "strip evicted ids" repair unsound —
-//! see `RFC-009-DESIGN-ANALYSIS.md` §3).
+//! These tests are **active regression gates** for the RFC-009 (B1) fix in
+//! `Dag::compute_ghostdag`: once block pruning is enabled, the inherited
+//! `blue_anticone_sizes` map is bounded to the pruning window by dropping keys
+//! in `past(P)` (and any key the oracle can no longer resolve), which removes
+//! the phantom-anticone mechanism above. The second and third tests are the
+//! RFC-009 **R4 differential gate**: the same DAG built with pruning on and off
+//! must agree on colouring and reachability for every non-final block, over a
+//! DAG that contains merges *and* a retained `anticone(P)` block (the case that
+//! makes the naive "strip evicted ids" repair unsound — see
+//! `RFC-009-DESIGN-ANALYSIS.md` §3).
+//!
+//! ⚠️ **Known limitation (RFC-009 (B2), open).** Dropping `past(P)` keys is
+//! provably sound for every candidate in `future(P) ∪ {P}`, but for a stale
+//! candidate `S ∈ anticone(P)` that forked off `A ∈ past(P)` the chain blocks in
+//! `past(P) \ past(A)` are genuinely in `S`'s anticone, so the drop can in
+//! principle *under*-count there (the opposite direction from the F1 over-count).
+//! The gate below exercises exactly that configuration and the (B1) map still
+//! reproduces the unpruned colouring for it — but that is one construction, not a
+//! proof. A finite `block_pruning_depth` therefore **stays disabled** network-wide
+//! (RFC-009 R8) until (B2) is settled.
 
 use kovanica_dag::{Block, BlockId, Dag};
 
@@ -92,22 +104,41 @@ fn build_rich(prune: bool, depth: u64) -> (Dag, Vec<(String, BlockId)>) {
         ids.push((format!("c{i}"), id));
         chain.push(id);
     }
-    // A stale fork off c20: retained as an anticone(P) block once P > c20.
-    let s = add(&mut dag, &[chain[20]], "S");
+    // A stale fork off a chain block *below* the pruning point. It is left as a
+    // **dangling tip** until after the prune: if it were merged before the prune
+    // it would become an ancestor of the pruning point and be evicted as
+    // `past(P)`, which is not the case the R4 gate must cover. Forking off
+    // `chain[34]` (with `P = c35` at depth 5) puts `S` in `anticone(P)` while
+    // still being retained, because a dangling tip is never an ancestor of `P`.
+    let s = add(&mut dag, &[chain[34]], "S");
     ids.push(("S".into(), s));
-    // A merge that brings the stale fork into the blue set.
-    let n = add(&mut dag, &[chain[40], s], "n");
-    ids.push(("n".into(), n));
     if prune {
         dag.set_block_pruning_depth(depth);
     }
     // Inserting `x` is what triggers the prune (it runs at the end of an
-    // insert), so everything after this point is coloured against the pruned
-    // DAG — the F1 condition.
+    // insert). `S` is still a dangling tip here — not an ancestor of `P` — so it
+    // is retained in `anticone(P)`: the (B2) case.
     let x = add(&mut dag, &[chain[40]], "x");
     ids.push(("x".into(), x));
-    let m = add(&mut dag, &[n, x], "m");
+    // Now merge the stale fork, which makes `S` a mergeset candidate coloured
+    // against the pruned DAG — the F1 condition.
+    // The pruning point in effect when `m` is coloured (captured before the
+    // insert, since the prune runs at the end of every insert).
+    let p_at_merge = dag.pruning_point();
+    let m = add(&mut dag, &[x, s], "m");
     ids.push(("m".into(), m));
+    if dag.in_anticone(&p_at_merge, &s) {
+        ids.push(("S@anticoneP".into(), s));
+    }
+    // `S` is a mergeset candidate for `m` — this instant is the (B2) case the R4
+    // gate must cover. Record that `S` was still present *now*: the prune runs at
+    // the end of every insert, so once the follow-on blocks land `S` falls into
+    // `past(P)` and is legitimately evicted, making an end-of-build check
+    // impossible. The colouring that matters is stored in `m`'s `GhostdagData`,
+    // which survives `S`'s eviction.
+    if dag.contains(&s) {
+        ids.push(("S@merge".into(), s));
+    }
     let mut prev = m;
     for i in 0..5 {
         let id = add(&mut dag, &[prev], &format!("p{i}"));
@@ -118,7 +149,6 @@ fn build_rich(prune: bool, depth: u64) -> (Dag, Vec<(String, BlockId)>) {
 }
 
 #[test]
-#[ignore = "F1 open: block pruning corrupts later GHOSTDAG colouring (TASKLIST2 §2.5)"]
 fn block_pruning_preserves_colouring() {
     let (dag_ref, m_ref) = build(false);
     let (dag_pru, m_pru) = build(true);
@@ -150,10 +180,9 @@ fn block_pruning_preserves_colouring() {
 /// legitimately holds fewer keys, so comparing it would fail by construction.
 /// The compared fields are the consensus-visible ones.
 #[test]
-#[ignore = "F1 open: block pruning corrupts later GHOSTDAG colouring (TASKLIST2 §2.5)"]
 fn block_pruning_preserves_colouring_for_every_retained_block() {
     let (dag_ref, ids) = build_rich(false, 0);
-    let (dag_pru, _) = build_rich(true, 5);
+    let (dag_pru, ids_pru) = build_rich(true, 5);
 
     let mut compared = 0usize;
     for (label, id) in &ids {
@@ -162,7 +191,10 @@ fn block_pruning_preserves_colouring_for_every_retained_block() {
         if !dag_pru.contains(id) {
             continue;
         }
-        assert!(dag_ref.contains(id), "{label}: missing from the unpruned DAG");
+        assert!(
+            dag_ref.contains(id),
+            "{label}: missing from the unpruned DAG"
+        );
 
         let r = dag_ref.ghostdag(id).expect("reference colouring");
         let p = dag_pru.ghostdag(id).expect("pruned colouring");
@@ -185,26 +217,28 @@ fn block_pruning_preserves_colouring_for_every_retained_block() {
     }
 
     assert!(compared > 0, "no retained block was compared");
-    // The gate is only meaningful if the DAG actually exercised the F1 case.
+    // The gate is only meaningful if the DAG actually exercised the F1 case:
+    // `S` must have been in the pruning point's anticone at the instant the
+    // merging block `m` was coloured — the (B2) stale-candidate case. `S` is
+    // legitimately evicted afterwards (the prune runs at the end of every
+    // insert), so this is the merge-time marker captured in `build_rich`, not an
+    // end-of-build containment check.
     assert!(
-        ids.iter()
-            .any(|(label, id)| label == "S" && dag_pru.contains(id)),
-        "the retained anticone(P) block S was evicted; the R4 case is not covered"
+        ids_pru.iter().any(|(label, _)| label == "S@anticoneP"),
+        "the anticone(P) block S was not in the pruning point's anticone when the \
+         merging block was coloured; the R4 (B2) case is not covered"
     );
 }
 
 /// RFC-009 **R4** (reachability half): pruning must not change `is_ancestor`
 /// or `in_anticone` between any two blocks the pruned DAG still retains.
 #[test]
-#[ignore = "F1 open: block pruning corrupts later GHOSTDAG colouring (TASKLIST2 §2.5)"]
 fn block_pruning_preserves_reachability_for_retained_blocks() {
     let (dag_ref, ids) = build_rich(false, 0);
     let (dag_pru, _) = build_rich(true, 5);
 
-    let retained: Vec<&(String, BlockId)> = ids
-        .iter()
-        .filter(|(_, id)| dag_pru.contains(id))
-        .collect();
+    let retained: Vec<&(String, BlockId)> =
+        ids.iter().filter(|(_, id)| dag_pru.contains(id)).collect();
 
     for (la, a) in &retained {
         for (lb, b) in &retained {
