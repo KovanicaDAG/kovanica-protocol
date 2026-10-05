@@ -26,15 +26,17 @@
 //! makes the naive "strip evicted ids" repair unsound — see
 //! `RFC-009-DESIGN-ANALYSIS.md` §3).
 //!
-//! ⚠️ **Known limitation (RFC-009 (B2), open).** Dropping `past(P)` keys is
-//! provably sound for every candidate in `future(P) ∪ {P}`, but for a stale
-//! candidate `S ∈ anticone(P)` that forked off `A ∈ past(P)` the chain blocks in
-//! `past(P) \ past(A)` are genuinely in `S`'s anticone, so the drop can in
-//! principle *under*-count there (the opposite direction from the F1 over-count).
-//! The gate below exercises exactly that configuration and the (B1) map still
-//! reproduces the unpruned colouring for it — but that is one construction, not a
-//! proof. A finite `block_pruning_depth` therefore **stays disabled** network-wide
-//! (RFC-009 R8) until (B2) is settled.
+//! ⚠️ **Known limitation (RFC-009 (B2) — now a confirmed counterexample).**
+//! Dropping `past(P)` keys is provably sound for every candidate in
+//! `future(P) ∪ {P}`, but for a stale candidate `S ∈ anticone(P)` that forked off
+//! `A ∈ past(P)` the blue blocks in `past(P) \ past(A)` are genuinely in `S`'s
+//! anticone, so the drop *under*-counts there (the opposite direction from the F1
+//! over-count). The gate below exercises one such configuration and (B1) happens
+//! to reproduce the unpruned colouring for it — but that is one construction, not
+//! a proof. A wider differential sweep finds divergences at **every** finite
+//! depth, k=3 included (`RFC-009-DESIGN-ANALYSIS.md` §13). A finite
+//! `block_pruning_depth` therefore **stays disabled** network-wide (RFC-009 R8)
+//! until (B2) is settled by a redesign — option (A) or (C), not by this gate.
 
 use kovanica_dag::{Block, BlockId, Dag};
 
@@ -254,4 +256,93 @@ fn block_pruning_preserves_reachability_for_retained_blocks() {
             );
         }
     }
+}
+
+/// RFC-009 §13 counterexample — design (B1) is unsound at **every** depth.
+///
+/// Minimal reproduction of the confirmed (B2) counterexample. With `k = 3` and
+/// pruning depth 3 enabled before `b3`, blocks `b0..b7` insert; the incremental
+/// prunes evict `b1` (end of `b5`), `b3` (end of `b6`) and `{b2, b4}` (end of
+/// `b7`). `b7` (selected parent `b6`) merges `b4`, which forks off the evicted
+/// `b1`; the unpruned reference colours `b4` **red** (`b7.blue_score == 7`,
+/// `mergeset_blues = 0`, `mergeset_reds = 1`), but the (B1) pruned build
+/// colours it **blue** (`blue_score == 8`, `mergeset_blues = 1`,
+/// `mergeset_reds = 0`): blues evicted into `past(P)` — in `b4`'s anticone and
+/// over `k` together — were dropped from the inherited `blue_anticone_sizes`.
+/// `b8`/`b9` are not part of the repro: their parents are evicted, so the build
+/// stops at `b7`, where the divergence already appears.
+///
+/// Ignored until the bounded-colouring redesign (option (A) or (C)) lands; then
+/// this test must be un-ignored and must pass. `block_pruning_depth` therefore
+/// **stays disabled** network-wide (RFC-009 R8).
+#[test]
+#[ignore = "RFC-009 (B2) confirmed counterexample: un-ignore when the bounded-colouring redesign lands"]
+fn known_counterexample_b1_diverges_at_depth_3() {
+    let build = |prune: bool| -> (Dag, Vec<BlockId>) {
+        let (mut dag, genesis) = new_dag(3);
+        let mut ids = vec![genesis];
+        // Parent indices into `ids` (genesis-first), per RFC-009 §13.
+        let script: [&[usize]; 8] = [
+            &[0],    // b0
+            &[1],    // b1  (evicted at the end of b5's insert)
+            &[1],    // b2  (evicted at the end of b7's insert)
+            &[1, 3], // b3  (pruning enabled just before this insert; evicted at b6)
+            &[1, 2], // b4  (forks off the evicted b1; evicted at the end of b7)
+            &[2, 4], // b5
+            &[4, 6], // b6
+            &[5, 7], // b7  (merges b4; colouring diverges)
+        ];
+        for (i, parents) in script.iter().enumerate() {
+            if prune && i == 3 {
+                dag.set_block_pruning_depth(3);
+            }
+            let ps: Vec<BlockId> = parents.iter().map(|&p| ids[p]).collect();
+            let id = add(&mut dag, &ps, &format!("b{i}"));
+            ids.push(id);
+        }
+        (dag, ids)
+    };
+
+    let (dag_ref, ids_ref) = build(false);
+    let (dag_pru, ids_pru) = build(true);
+
+    // The reference must genuinely exercise the case: `b4` is red in the merge.
+    let b7_ref = dag_ref.ghostdag(&ids_ref[8]).expect("reference colouring");
+    assert_eq!(b7_ref.blue_score, 7, "reference b7 blue_score changed");
+    assert_eq!(
+        b7_ref.mergeset_blues.len(),
+        0,
+        "reference b4 must be red in b7's mergeset"
+    );
+
+    // Every retained block must match the unpruned reference (R2/R4). This is
+    // the assertion that currently fails under (B1) at `b7`.
+    let mut compared = 0;
+    for (i, id) in ids_pru.iter().enumerate() {
+        if !dag_pru.contains(id) {
+            continue;
+        }
+        let label = if i == 0 {
+            "genesis".to_string()
+        } else {
+            format!("b{}", i - 1)
+        };
+        let r = dag_ref.ghostdag(id).expect("reference colouring");
+        let p = dag_pru.ghostdag(id).expect("pruned colouring");
+        assert_eq!(r.blue_score, p.blue_score, "{label}: blue_score diverged");
+        assert_eq!(
+            r.selected_parent, p.selected_parent,
+            "{label}: selected_parent diverged"
+        );
+        assert_eq!(
+            r.mergeset_blues, p.mergeset_blues,
+            "{label}: mergeset_blues diverged"
+        );
+        assert_eq!(
+            r.mergeset_reds, p.mergeset_reds,
+            "{label}: mergeset_reds diverged"
+        );
+        compared += 1;
+    }
+    assert!(compared > 0, "no retained block was compared");
 }

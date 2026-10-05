@@ -103,6 +103,11 @@ There is an `#[ignore]`d regression test waiting to be un-ignored:
 - **R5 — Sound eviction.** `Dag::remove_blocks` must leave every surviving
   block's colouring state consistent: either strip evicted ids while maintaining
   a valid invariant, or make colouring not consult historical ids at all.
+  *(2026-10-06: the eviction path is now sound — `prune_old_blocks` collects each
+  chain block's mergeset before stopping and `mergeset_ordered` treats genesis as
+  an unconditional boundary, so the evicted set is genesis-free and
+  downward-closed. See `RFC-009-DESIGN-ANALYSIS.md` §12 and
+  `crates/kovanica-dag/tests/block_pruning_eviction.rs`.)*
 - **R6 — Memory bound restored.** With block pruning at depth `D`, retained
   colouring state must be ~O(D × width), not O(chain_length × width). The O(N²)
   map must not be retained on live blocks.
@@ -143,6 +148,11 @@ There is an `#[ignore]`d regression test waiting to be un-ignored:
 
 1. **Redesign shape** — Kaspa-style k-cluster/past-based evaluation vs an
    incremental blue-anticone structure. This is the main genuinely-open decision.
+   *(2026-10-06: design (B1) is now a confirmed counterexample — it diverges from
+   an unpruned node at every finite depth, k=3 included; see
+   `RFC-009-DESIGN-ANALYSIS.md` §13. The concrete path is option (A): strengthen
+   the insert rule to require **every** parent in `future(P) ∪ {P}` — a
+   consensus-rule change, reset/activation gated.)*
 2. **Invariant replacement** — whether `len == blue_score` survives (R3).
 3. **Re-enable depths** — RFC-008's testnet 1000 / mainnet 10,000 are prior
    proposals, not decisions.

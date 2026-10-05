@@ -64,10 +64,15 @@ impl Dag {
         // byte-identical to the previous behaviour. That is why this can land
         // while `BLOCK_PRUNING_DEPTH = u64::MAX` without changing the live chain.
         //
-        // ⚠️ Still open (B2): a candidate in `anticone(P)` may genuinely have a
-        // `past(P)` block in its anticone, which this drop under-counts. Those
-        // candidates are covered by the RFC-009 R4 gate; until (B2) has a proven
-        // rule, a finite `block_pruning_depth` must stay disabled (R8).
+        // ⚠️ UNSOUND (B2 confirmed — RFC-009 §13): a candidate in `anticone(P)`
+        // may genuinely have a `past(P)` block in its anticone, and this drop
+        // under-counts it, so a stale candidate can be coloured blue that must be
+        // red. A wider differential sweep found divergences from an unpruned node
+        // at *every* finite depth, k=3 included (238/2400 at depth 3, still 8/2400
+        // at depth 8). A bounded map cannot be produced by dropping `past(P)`
+        // keys: design (A) (forbid `anticone(P)` candidates — a consensus-rule
+        // change) or (C) is required. Until then `block_pruning_depth` must stay
+        // `u64::MAX` (R8). See `docs/RFC-009-DESIGN-ANALYSIS.md` §13.
         //
         // Cost: O(|map|) oracle queries per insert, only while pruning is enabled.
         let pruning_point = self.pruning_point();

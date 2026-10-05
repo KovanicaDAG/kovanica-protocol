@@ -612,10 +612,12 @@ impl Dag {
 
         // Walk the selected chain from the pruning point down, collecting each
         // chain block's mergeset and then the chain block itself, until genesis
-        // or an already-evicted block. The newly evicted set is exactly
-        // `past(P_new) \ past(P_old)`: the chain blocks between the old and new
-        // pruning points plus the mergesets of the chain blocks in
-        // `(P_old, P_new]` (mergeset(P_new) included, P_new itself kept).
+        // or an already-evicted block. The newly evicted set is exactly the
+        // blocks of `past(P_new)` still present: the chain blocks below
+        // `P_new` plus the mergesets of the chain blocks walked (mergeset(P_new)
+        // included, P_new itself kept). After a selected-chain reorg `P_old`
+        // need not be an ancestor of `P_new`, so this is stated over the
+        // already-evicted set, not over `past(P_old)`.
         let mut evicted: HashSet<BlockId> = HashSet::new();
         let mut cur = Some(new_point);
         while let Some(c) = cur {
@@ -623,7 +625,10 @@ impl Dag {
             let sp = node.ghostdag.selected_parent;
             // Evict the mergeset of the current chain block: every merged block
             // is in past(c) ⊆ past(P_new) but not in past(sp) ⊇ past(P_old), so
-            // it is newly evicted and still present.
+            // it is newly evicted and still present. This must run even when `sp`
+            // is already evicted: `c` can be the present child of the previous
+            // pruning point, and its mergeset (present blocks merged from off the
+            // old selected chain) is then still present and must be evicted.
             if let Some(sp) = sp {
                 let mergeset = self.mergeset_ordered(sp, node.block.parents());
                 for m in mergeset {
@@ -763,8 +768,12 @@ impl Dag {
                 // without consulting the oracle (which no longer holds it).
                 continue;
             }
-            if x == sp || self.is_ancestor(&x, &sp) {
-                continue; // x ∈ past(sp) ∪ {sp}: boundary
+            if x == sp || x == self.genesis || self.is_ancestor(&x, &sp) {
+                // x ∈ past(sp) ∪ {sp}: boundary. Genesis is always in `past(sp)`
+                // (every block descends from it), and is checked explicitly
+                // because the oracle cannot answer `is_ancestor(genesis, sp)`
+                // once `sp` has itself been evicted by block pruning.
+                continue;
             }
             mergeset.push(x);
             for parent in self.nodes[&x].block.parents() {

@@ -312,7 +312,7 @@ thread 'b2_search_wide' panicked at crates/kovanica-dag/src/reachability.rs:232:
 ancestor sized
 ```
 
-That line is inside `Reachability::register_leaf`, in the walk that increments
+That line is inside `Reachability::add_block`, in the walk that increments
 `subtree_size` along the `tree_parent` chain upward from a new block's
 `selected_parent`:
 
@@ -329,37 +329,62 @@ i.e. the walk passes *through* a node that was already removed.
 
 ### It is eviction-triggered, and it is not a construction artefact
 
-- With the build loop instrumented, the **unpruned** build completed every
-  insert; the **pruned** build panicked on the first insert after the prune.
-  The captured failing construction is `k = 2`, `depth = 4`, panicking at
-  iteration `i = 7`.
-- `set_block_pruning_depth(depth)` runs `prune_old_blocks()` **immediately**,
-  before that iteration's `dag.insert`. So the prune evicts blocks and the
-  *very next insert* panics: the eviction leaves the tree inconsistent.
+- The **unpruned** build completed every insert; the **pruned** build panicked
+  on a later insert. The reduced construction is `k = 2`, `depth = 4`, with
+  `set_block_pruning_depth(4)` called before the `b7` insert; the panic is at
+  the `b9` insert.
+- `Dag::set_block_pruning_depth` only stores the depth; the prune runs at the
+  **end of the next insert**. So the prune that breaks the tree happens at the
+  end of one insert, and a later insert exposes it: the eviction leaves the tree
+  inconsistent.
 - The probe's DAG script is valid: parent indices are drawn only from strictly
   earlier slots, are deduped, and can never be the block itself or a later
   block. So this is not an invalid-DAG artefact.
 
-### Mechanism
+### Two distinct root causes, both fixed
 
-`Reachability::remove_blocks` (`reachability.rs:288-336`) collects the present
-tree-children of evicted blocks and rewrites `tree_parent[child] = genesis` for
-them, then removes the evicted ids from `intervals`, `fcs`, `tree_children`,
-`tree_parent`, `subtree_size` and `next_free`, and finally subtracts
-`evicted.len()` from `subtree_size[genesis]`. Two gaps are visible by
-inspection and need confirmation against a minimal repro:
+The original hypotheses (one-level re-parenting; missing de-duplication) were
+**not** the cause. The reduced repro pinned it down to `Dag::prune_old_blocks`:
 
-1. The re-parent is **one level deep** — it only rewrites the direct present
-   children of evicted blocks. Any chain that was already inconsistent, or a
-   child that was itself evicted in the same set and whose own child was not
-   captured because `tree_children[evicted]` no longer listed it, leaves a
-   `tree_parent` link pointing at a removed node.
-2. Re-parented children are pushed onto genesis's `tree_children` **without
-   de-duplication** against children already listed there (which can happen when
-   a node is re-parented more than once across successive prunes).
+1. **Genesis could be evicted.** The walk computed each chain block `c`'s
+   mergeset via `mergeset_ordered(sp, c.parents())`, where
+   `sp = selected_parent(c)` might already be evicted. `mergeset_ordered`
+   treated `x ∈ past(sp)` as a boundary using `is_ancestor(x, sp)`, but once
+   `sp` is evicted the oracle can no longer answer `is_ancestor(genesis, sp)`
+   (its interval is gone), so **genesis was misclassified as a merge candidate**
+   and inserted into the evicted set. `Reachability::remove_blocks` then deleted
+   genesis's `subtree_size`, and the next insert's upward walk hit the missing
+   root: `ancestor sized`.
+2. **Eviction was not downward-closed after a selected-chain reorg.** The first
+   fix attempt broke out of the walk as soon as `sp` was evicted, *before*
+   collecting `c`'s mergeset. When the selected tip reorgs onto a branch that
+   forked below the previous pruning point, the chain block `c` just above the
+   evicted region can be present while its mergeset (present blocks merged from
+   off the old selected chain) is also present. Skipping that mergeset left a
+   present ancestor `A ∈ past(evicted X)` unevicted — a dangling
+   future-covering-set reference `X ∈ fcs[A]`, which panicked a later insert at
+   `insert_to_future_covering_set` indexing `intervals[X]`.
 
-Either way the invariant `subtree_size` must hold for every node reachable via
-`tree_parent` from any retained block is violated after eviction.
+### The fix (`crates/kovanica-dag/src/dag.rs`)
+
+- `mergeset_ordered` now treats **genesis** as an unconditional boundary
+  (`x == self.genesis`), because the oracle cannot confirm it once `sp` is
+  evicted. This is a no-op while pruning is disabled (genesis always resolves
+  through the oracle then).
+- `prune_old_blocks` always collects `c`'s mergeset **before** checking whether
+  `sp` is already evicted, and stops only after the eviction set is complete.
+  This keeps the evicted set downward-closed (ancestor-closed except genesis),
+  which restores every invariant `Reachability::remove_blocks` relies on: no
+  dangling `fcs` references, correct one-level re-parenting of present children
+  to genesis, and `subtree_size[genesis] -= evicted.len()`.
+
+### Regression coverage
+
+`crates/kovanica-dag/tests/block_pruning_eviction.rs` builds both reduced DAGs
+(the `k = 2` genesis-eviction case and the reorg case) with pruning off
+(reference) and on, and asserts: genesis is never evicted, eviction is
+downward-closed, and the retained blocks' colouring and reachability match the
+unpruned reference.
 
 ### Impact
 
@@ -371,13 +396,110 @@ covers F1. It is a second, independent reason that a finite
 `block_pruning_depth` must not be re-enabled until R5 (sound eviction) is
 actually satisfied.
 
-### Status and next steps
-
-Not yet reduced to a minimal deterministic repro. The captured parameters are
-`k = 2`, `n = 10`, `prune_at = 7`, `depth = 4`; isolating it needs the fixed
-parent script for that construction dumped, then a small fixed DAG written as a
-permanent regression test alongside `crates/kovanica-dag/tests/block_pruning_colouring.rs`.
-Until then this section records the finding and its evidence, not a fix.
-
 Cross-references: F1 (section 3), RFC-009 R5 (sound eviction) and R8 (load paths
-guarded), and `crates/kovanica-dag/tests/block_pruning_colouring.rs`.
+guarded), `crates/kovanica-dag/tests/block_pruning_eviction.rs`, and
+`crates/kovanica-dag/tests/block_pruning_colouring.rs`.
+
+## 13. Confirmed counterexample: design (B1) is unsound at every depth
+
+The earlier narrow differential sweep (sections 4 and 11) found (B1)
+divergence-free for `depth >= 3` and concluded the residual risk was confined to
+`depth == 2`. A **wider** sweep — stale-on-stale forks, multiple merges, wider
+mergesets, and a random parent-window/parent-count per case — refutes that:
+
+| family | k | depth | cases | divergences |
+|---|---|---|---|---|
+| narrow (section 4) | 3 | 2–6 | 1695 | 891 |
+| narrow (section 4) | 3 | 3–10 | 1965 | 0 |
+| wide | 1, 2, 3 | 2–8 | 36000 | 1141 |
+| wide | 3 | 2–8 | 12000 | **707** |
+
+and, per depth, for `k = 3`:
+
+| depth | divergences |
+|---|---|
+| 3 | 238 / 2400 |
+| 4 | 260 / 2400 |
+| 5 | 133 / 2400 |
+| 6 | 68 / 2400 |
+| 8 | 8 / 2400 |
+
+**There is no safe finite depth**: k=3 diverges at every depth tested. The rate
+falls with depth but never reaches zero. Every divergence has the same
+direction — the **pruned** `blue_score` is *higher* than the reference — i.e.
+(B1) under-counts a candidate's blue anticone and colours a block blue that must
+be red. No panics were observed (the section 12 eviction fix holds across 48000
+cases).
+
+### Minimal reproduction (k=3, depth=3, pruning enabled before `b3`)
+
+```
+b0:[0] b1:[1] b2:[1] b3:[1,3] b4:[1,2] b5:[2,4]
+b6:[4,6] b7:[5,7]                        (indices into [genesis, b0, …])
+```
+
+Only `b0..b7` are needed. The incremental prunes evict `b1` at the end of
+`b5`'s insert, `b3` at the end of `b6`'s, and `{b2, b4}` at the end of `b7`'s —
+so `b7`'s colouring is computed against a DAG that has already lost `b1` and
+`b3`. `b4` forks off the evicted `b1`; block `b7` (selected parent `b6`) merges
+`b4`:
+
+| block | sp (ref) | blue_score ref/pruned | mergeset blues ref/pruned | reds ref/pruned |
+|---|---|---|---|---|
+| b4 | b1 (evicted) | 3 / 3 | 0 / 0 | 0 / 0 |
+| b5 | b3 | 5 / 5 | 1 / 1 | 0 / 0 |
+| b6 | b5 | 6 / 6 | 0 / 0 | 0 / 0 |
+| **b7** | **b6** | **7 / 8** | **0 / 1** | **1 / 0** |
+
+`b4` is **red** in the reference and **blue** in the pruned build. (An earlier
+draft listed `b8`/`b9` as well; they cannot be inserted because their parents
+are evicted — the divergence is already present at `b7`.)
+
+### Mechanism
+
+`try_colour_blue` (`crates/kovanica-dag/src/ghostdag.rs`) iterates over the
+**keys** of `blue_anticone_sizes` and applies the k-cluster rule to each:
+
+```rust
+for (&blue, &blue_size) in blue_anticone_sizes {
+    if !self.in_anticone(&blue, candidate) { continue; }
+    if anticone_blues.len() + 1 > k { return None; }
+    if blue_size + 1 > k { return None; }
+    anticone_blues.push(blue);
+}
+```
+
+Correctness needs the map to contain **every blue block that can be in the
+candidate's anticone**. (B1) drops every key in `past(P)`. For a candidate
+`c ∈ future(P) ∪ {P}` that is inert — `past(P) ⊆ past(c)`. But for a retained
+stale candidate `c ∈ anticone(P)`, a dropped key `b ∈ past(P)` can be in `c`'s
+anticone. Here `b2, b3 ∈ past(P)` are both in `b4`'s anticone; dropping them
+removes the conflict that made `b4` red (a blue block `b` with
+`blue_size + 1 > k`). The candidate is then wrongly coloured blue, and the error
+propagates into `b7`'s `blue_score` and beyond.
+
+This is exactly the open (B2) case, now realised: `anticone(P)` candidates are
+not inert, so a bounded map cannot be produced by *dropping* `past(P)` keys.
+Dropping fewer keys (a smaller bound) would eventually keep the whole map and
+lose the bound; dropping more would break `future(P)` candidates.
+
+### Consequence for the design
+
+(B1) cannot be repaired by tuning the retained set — the counterexample is
+structural. The remaining options are:
+
+- **(A) Forbid `anticone(P)` candidates**: strengthen the insert rule from
+  "selected parent ∈ `future(P) ∪ {P}`" to "**every** parent ∈
+  `future(P) ∪ {P}`". Then no post-pruning block can merge a stale
+  `anticone(P)` block, so its (bounded) colouring is never consulted. This
+  **rejects blocks the current code accepts**, i.e. a consensus-rule change,
+  gated behind a reset or an activation height.
+- **(C) A different bounded-colouring design** that does not rely on dropped
+  keys being inert (e.g. a red-set/checkpoint scheme).
+
+Until one is proven, **block pruning stays disabled** (`BLOCK_PRUNING_DEPTH =
+u64::MAX`, R8) — now with a concrete counterexample rather than an open question.
+
+Reproduction: `crates/kovanica-dag/tests/rfc009_b2_tmp.rs` (temporary probe,
+not committed) and `crates/kovanica-dag/tests/block_pruning_colouring.rs` (the
+R4 gate, whose narrow `build_rich` family does *not* expose this case).
