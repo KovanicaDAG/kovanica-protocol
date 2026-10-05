@@ -2557,6 +2557,18 @@ impl Ledger {
         }
     }
 
+    /// The selected tip's linearized chain height, or `None` if it cannot be
+    /// reconstructed (the whole chain below the finality boundary is pruned).
+    ///
+    /// ⚠️ This is **not** [`Self::tip_blue_score`]: blue score is the size of
+    /// the tip's blue set and outruns chain height by a wide, growing margin.
+    /// Coinbase maturity (RFC-006, [`COINBASE_MATURITY`]) is measured in
+    /// linearized chain height, so wallet-facing UTXO selection must use this,
+    /// not the blue score.
+    pub fn tip_chain_height(&self) -> Option<u64> {
+        self.chain_height_of(self.dag.selected_tip())
+    }
+
     /// Recompute `native_minted` / `fees_burned` from the selected tip's
     /// cumulative view totals. Both maps are cumulative, so the tip's entry is
     /// the total in its past — summing along the chain would double-count.

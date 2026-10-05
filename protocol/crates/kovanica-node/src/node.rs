@@ -1345,7 +1345,8 @@ impl Node {
         let chain_height = self
             .ledger()
             .as_ref()
-            .map(|l| l.tip_blue_score())
+            .ok()
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut owned: Vec<(OutPoint, u64)> = state
@@ -1443,7 +1444,8 @@ impl Node {
         let chain_height = self
             .ledger()
             .as_ref()
-            .map(|l| l.tip_blue_score())
+            .ok()
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut owned: Vec<(OutPoint, u64)> = state
@@ -1581,7 +1583,8 @@ impl Node {
         let chain_height = self
             .ledger()
             .as_ref()
-            .map(|l| l.tip_blue_score())
+            .ok()
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut owned: Vec<(OutPoint, u64)> = state
@@ -1918,7 +1921,8 @@ impl Node {
         let chain_height = self
             .ledger()
             .as_ref()
-            .map(|l| l.tip_blue_score())
+            .ok()
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
 
@@ -2023,7 +2027,7 @@ impl Node {
             .ok_or(NodeError::InsufficientFunds)?;
 
         let state = ledger.ledger_state();
-        let chain_height = ledger.tip_blue_score();
+        let chain_height = ledger.tip_chain_height().unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
 
         // Select covering UTXOs from `from` (native KVNC only) for the mint fee
@@ -2091,7 +2095,12 @@ impl Node {
 
         let fee = self.min_fee();
         let state = self.ledger()?.ledger_state();
-        let chain_height = self.chain_height().unwrap_or(0);
+        let chain_height = self
+            .ledger()
+            .as_ref()
+            .ok()
+            .and_then(|l| l.tip_chain_height())
+            .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
 
         // Select covering UTXOs from claimant (for fee)
@@ -2203,7 +2212,12 @@ impl Node {
         }
         let fee = self.min_fee();
         let state = self.ledger()?.ledger_state();
-        let chain_height = self.chain_height().unwrap_or(0);
+        let chain_height = self
+            .ledger()
+            .as_ref()
+            .ok()
+            .and_then(|l| l.tip_chain_height())
+            .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
 
         // Collect all inputs and outputs from participants
@@ -2333,7 +2347,12 @@ impl Node {
     /// returned; coinbase outputs whose `creation_height` is still within
     /// `COINBASE_MATURITY` blocks of the tip are filtered out.
     pub fn spendable_utxos_of(&self, owner: &Address) -> Result<Vec<(OutPoint, u64)>, NodeError> {
-        let chain_height = self.chain_height().unwrap_or(0);
+        let chain_height = self
+            .ledger()
+            .as_ref()
+            .ok()
+            .and_then(|l| l.tip_chain_height())
+            .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut rows: Vec<(OutPoint, u64)> = self
             .ledger()?
@@ -3177,7 +3196,7 @@ impl Node {
                 ledger.subsidy(),
                 ledger.ledger_state(),
                 ledger.ledger_state(),
-                ledger.tip_blue_score() + 1,
+                ledger.tip_chain_height().unwrap_or(0) + 1,
             )
         };
         let mut selected = Vec::new();
@@ -4161,7 +4180,7 @@ impl Node {
         let chain_height = self
             .ledger
             .as_ref()
-            .and_then(|l| l.chain_height_of(l.dag().selected_tip()))
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         record_chain_height(chain_height);
         set_mempool_counts(
@@ -4388,5 +4407,110 @@ mod tests {
         // Non-existent block
         let unknown_block = BlockId::from_bytes([99u8; 32]);
         assert!(node.merkle_block(&unknown_block, &sent.tx).is_err());
+    }
+
+    /// Regression: wallet-facing UTXO selection must measure coinbase maturity
+    /// (RFC-006) in the **linearized chain height**, not the tip's blue score.
+    /// In a purely linear PoA chain the two are equal, which is why the original
+    /// `tip_blue_score() - 100` bound looked correct; this test therefore builds
+    /// a **merge** first, so blue score exceeds chain height and the old bound
+    /// would admit a coinbase that consensus rejects with `CoinbaseImmature`.
+    #[test]
+    fn spendable_coinbases_respect_linearized_maturity_across_a_merge() {
+        // Every authority key is loaded so any slot's scheduled authority is
+        // signable (the RFC-POA admission regime is the only one).
+        let keys: Vec<AuthorityPublicKey> = (1..=3u64)
+            .map(|i| SigningKey::from_bytes(&KeyPair::from_u64(i).seed()).verifying_key())
+            .collect();
+        let set = AuthoritySet::new(keys.clone(), 2).expect("valid authority set");
+        let mut node = Node::permissionless();
+        node.genesis_with_poa(
+            3,
+            2000,
+            2000,
+            1,
+            None,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            None,
+            set,
+            3000,
+        )
+        .expect("genesis");
+        for i in 1..=3u64 {
+            node.set_authority_signing_key(KeyPair::from_u64(i).seed());
+        }
+
+        // Long enough that a coinbase sits inside the 100-block maturity window.
+        for _ in 0..105 {
+            node.produce_empty().expect("produce empty");
+        }
+
+        // Fork a sibling off the block two below the tip. `produce_empty` takes
+        // `parents = dag().tips()`, so the next produced block merges the fork
+        // and its blue score exceeds its linearized chain height.
+        let (older, fork_ts) = {
+            let ledger = node.ledger().expect("ledger");
+            let tip = ledger.dag().selected_tip();
+            let tip_ts = ledger
+                .dag()
+                .block(&tip)
+                .map(|b| b.timestamp_ms())
+                .unwrap_or(0);
+            let sp = ledger
+                .dag()
+                .ghostdag(&tip)
+                .and_then(|g| g.selected_parent)
+                .expect("tip has a selected parent");
+            let older = ledger
+                .dag()
+                .ghostdag(&sp)
+                .and_then(|g| g.selected_parent)
+                .expect("selected parent has a selected parent");
+            (older, tip_ts + 3_000)
+        };
+        // A PoA block must carry exactly the nominal work, and its slot must not
+        // precede its parent's.
+        node.insert_immediate_block(vec![older], 1u128, fork_ts, 0, &[])
+            .expect("fork sibling");
+        node.produce_empty().expect("merge the fork");
+
+        let ledger = node.ledger().expect("ledger");
+        let tip_chain_height = ledger.tip_chain_height().expect("tip chain height");
+        let tip_blue_score = ledger.tip_blue_score();
+        assert!(
+            tip_blue_score > tip_chain_height,
+            "the merge must make blue score exceed chain height \
+             (blue={tip_blue_score}, chain={tip_chain_height})"
+        );
+
+        let mature_before = tip_chain_height.saturating_sub(COINBASE_MATURITY);
+        let state = ledger.ledger_state();
+        let mut checked = 0usize;
+        for pk in &keys {
+            let owner = Address::p2pk(*pk.as_bytes());
+            for (op, _value) in node.spendable_utxos_of(&owner).expect("spendable") {
+                let entry = state
+                    .get_entry(&op)
+                    .expect("a spendable utxo is in the ledger state");
+                if !entry.is_coinbase || entry.creation_height == 0 {
+                    continue;
+                }
+                checked += 1;
+                assert!(
+                    entry.creation_height <= mature_before,
+                    "wallet offered an immature coinbase: creation_height={} > \
+                     tip_chain_height-COINBASE_MATURITY={} (tip blue score was {})",
+                    entry.creation_height,
+                    mature_before,
+                    tip_blue_score,
+                );
+            }
+        }
+        assert!(
+            checked > 0,
+            "expected at least one spendable coinbase to check"
+        );
     }
 }
