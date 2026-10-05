@@ -5,37 +5,46 @@ RFC-POA-Migration §0.6 makes the reset mandatory: the genesis block id commits
 to the authority set, so a PoA node derives a different genesis than the
 existing PoW-era chain.
 
-> Status: **NOT READY — 3 blocking items open.** §3.1: (1) authority-key
-> ratification, (2) human sign-off of the now-drafted reset runbook, (3) the
-> 24h multi-validator soak. All three require a human/maintainer and cannot be
-> self-approved by the agent. §3.2, §3.3 and the deploy-side §3.4 invariants are
-> satisfied and verified live; the remaining §3.4/§3.2 items are reset-window or
-> post-reset by nature.
+> Status: **NOT READY — soak window in progress.** All three §3.1 blockers are
+> cleared or running: (1) the testnet authority set is **ratified** (2026-10-05),
+> (2) the reset runbook's blast radius and order are **signed off** (2026-10-05),
+> (3) the **24h multi-validator soak started 2026-10-05T20:56:41Z** and closes
+> 2026-10-06T20:56:41Z if no SEV-1 occurs. §3.2, §3.3 and the deploy-side §3.4
+> invariants are satisfied and verified live; the remaining §3.4/§3.2 items are
+> reset-window or post-reset by nature. Once the soak closes, the reset may be
+> executed per `TESTNET-RESET-POLICY.md` §3.2 (seed1 first).
 
 ## 3.1 Blocking — must clear before any reset
-- [ ] **Authority keys exist and are distributed.** The reset re-derives genesis
-      from the authority set; without the real set on every producing node the
-      new genesis diverges per node. RFC-POA-GOVERNANCE (KVP-202) is still
-      **Draft** and the initial-set choice is `[SELECTED]`-by-maintainer, not
-      ratified. **A reset cannot be executed against an unratifed key set.**
-      This is the same requirement as RFC-POA-Migration §0.2 gate 1 — real,
-      randomly generated authority keys, not the publicly derivable
-      `AUTHORITY_PLACEHOLDER_BASE = 9001`. The ceremony procedure is written in
-      `AUTHORITY-KEY-CEREMONY.md` but has **not been performed**. Requires
-      maintainer sign-off; cannot be self-approved.
-- [ ] **Reset runbook + blast radius signed off.** ✅ **Drafted.**
-      `TESTNET-RESET-POLICY.md` §3 is now a PoA runbook (pre-flight table §3.0,
+- [x] **Authority keys exist and are distributed — RATIFIED 2026-10-05.** The
+      deployed set is the real, randomly generated testnet set in
+      `protocol/authority-keys/authorities.conf` (3 Ed25519 public keys,
+      threshold 2, slot 3000 ms, set commitment `3b030005…`), verified **not** to
+      be the publicly derivable `AUTHORITY_PLACEHOLDER_BASE = 9001` set — the
+      live keys match no `KeyPair::from_u64(9001 + i)` seat, so no forgery is
+      possible from reading the source. All three producing nodes already carry
+      the set and derive the identical genesis `1a635915…`, so no new key
+      material is generated and no node needs rekeying. Recorded in
+      `TESTNET-RESET-POLICY.md` §2.1. RFC-POA-GOVERNANCE (KVP-202) stays
+      **Draft** — it governs the *mainnet* initial set, whose ceremony
+      (`AUTHORITY-KEY-CEREMONY.md`, Gate 4) is separate and not required for this
+      testnet reset.
+- [x] **Reset runbook + blast radius signed off — SIGNED OFF 2026-10-05.**
+      `TESTNET-RESET-POLICY.md` §3 is a PoA runbook (pre-flight table §3.0,
       blast radius §3.1, order of operations §3.2, rollback §3.3, key holders
       §3.4, post-reset verification §3.5); §1's obsolete difficulty-retarget text
       is moved into a marked historical blockquote; §4 gained the
       `block_pruning_depth == u64::MAX` safety rule; §5 gained a 2026-10-05 row.
-      What remains is **human sign-off** of the blast radius and order — the
-      runbook cannot sign itself off.
-- [ ] **24h multi-validator soak** (RFC-POA-Migration §0.2 gate 2 / M6 exit
-      criterion). Not yet performed. A reset must not be executed on a PoA
-      mesh that has not held multi-validator consensus for a sustained window;
-      the current mesh is **diverged** (see TASKLIST2 §2.5 / RFC-009), so a soak
-      is only meaningful *after* a clean restart on the mitigation binary.
+      The blast radius (§3.1) and the order of operations (§3.2, seed1 first)
+      carry explicit maintainer sign-off dated 2026-10-05.
+- [◐] **24h multi-validator soak — STARTED 2026-10-05T20:56:41Z** (closes
+      2026-10-06T20:56:41Z if no SEV-1). Baseline recorded in
+      `TESTNET-RESET-POLICY.md` §0.2 gate 2: all three seeds `active`,
+      `NRestarts=0`, `block_pruning_depth = u64::MAX`, same genesis; seed1/seed2
+      blue 2251 / blocks 2821 / 2 peers, seed3 blue 1742 / blocks 1880 / 2 peers
+      (still catching up). **Caveat:** the pre-reset mesh is *diverged*
+      (TASKLIST2 §2.5 / RFC-009), so this soak is evidence for authority
+      liveness and slot-clock stability, **not** for cross-validator state
+      agreement — a consensus-parity soak requires the post-reset chain.
 
 ## 3.2 Infrastructure — should clear first
 - [x] All three seeds running, `NRestarts=0`.

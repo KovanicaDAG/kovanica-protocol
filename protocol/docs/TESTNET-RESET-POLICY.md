@@ -60,8 +60,8 @@ execute, and producing them cannot half-happen and damage a live chain.
 
 | # | Gate | Status | Why it blocks |
 |---|------|--------|--------------|
-| **1** | **Real, random testnet authority keys** — *not* `AUTHORITY_PLACEHOLDER_BASE = 9001` | ☐ open | The placeholder set is publicly derivable, so a soak on it exercises an **unauthenticated** PoA: anyone can forge any authority. A green soak on placeholders is **not** evidence for a green soak on real keys — it cannot detect key compromise, key reuse, or a bad ceremony. Procedure: [`AUTHORITY-KEY-CEREMONY.md`](AUTHORITY-KEY-CEREMONY.md) (written, not yet performed). |
-| **2** | **24h multi-validator soak** (M6 exit criterion) | ☐ open | Short runs do not exercise authority failover, slot-clock drift, or a rotating set over a realistic day. |
+| **1** | **Real, random testnet authority keys** — *not* `AUTHORITY_PLACEHOLDER_BASE = 9001` | ☑ **closed 2026-10-05** | Verified: the three live authority public keys (`d1a14d2c…`, `a5e261ae…`, `a1affed9…`) do **not** match `KeyPair::from_u64(9001 + i)` for any seat, so the deployed set is real/random, not publicly derivable. Recorded in §2.1. |
+| **2** | **24h multi-validator soak** (M6 exit criterion) | ◐ **started 2026-10-05T20:56:41Z** | Authorised by the maintainer authorising the reset (§0.1). Baseline at start: all three seeds `active`, `NRestarts=0`, `block_pruning_depth = u64::MAX`, genesis `1a635915…`; seed1 blue 2251 / blocks 2821 / 2 peers, seed2 blue 2251 / blocks 2821 / 2 peers, seed3 blue 1742 / blocks 1880 / 2 peers (seed3 still catching up). **Caveat:** the pre-reset mesh is *diverged* (RFC-009 / TASKLIST2 §2.5), so this soak is evidence for **authority liveness and slot-clock stability**, not for cross-validator state agreement; a consensus-parity soak requires the post-reset chain. Closes 2026-10-06T20:56:41Z if no SEV-1 occurs. |
 | **3** | **PoA resource footprint** (CPU/RAM) | ☑ **closed 2026-09-26** | Reworded from "CPU/RAM-vs-PoW" — see the decision note below. Baseline recorded: **112.7 us/block, +7.4 KiB/block RSS** over 100 blocks, from `resource_profiling_poa_production` (`kovanica-node/tests/poa_m6_testing.rs:448`, `#[ignore]`d, run manually). The PoA-vs-PoW ratio is formally unrecoverable. |
 | **4** | **Mainnet key ceremony** (per §0.7.2 residuals) | ☐ open | Required before any **mainnet** authority set is frozen. Independent of the testnet reset, but the same ceremony procedure is being written for gate 1 and should not be written twice. Procedure: [`AUTHORITY-KEY-CEREMONY.md`](AUTHORITY-KEY-CEREMONY.md) §7 (gate-4 addenda). |
 
@@ -124,10 +124,34 @@ liveness** problem, not a reset trigger.
 | Wallet keys / mnemonics | ✅ | Client-side; addresses are derived from keys, not chain state |
 | Address format (`kvnc…dag`) | ✅ | Versioned encoding, unchanged by resets |
 | RFC-006 tokenomics constants | ✅ | 90.2M cap, s₀=10 KVNC, era 2M, α=¾, maturity 100, fee 75/25 — frozen. **Unaffected by the PoA-only decision:** the curve is height-indexed and `cumulative_minted` is capped in `apply_block` |
-| PoA authority set | ⚠️ `[TARGET]` | Re-established at the new genesis. Mainnet refuses to boot without an explicit `KOVANICA_AUTHORITIES`. Testnet falls back to the deterministic placeholder set from `AUTHORITY_PLACEHOLDER_BASE = 9001` (publicly derivable, testnet-only) — **but gate 1 above requires replacing that with ceremony keys, and the new genesis must commit those.** Once the real set is committed, the node records the set commitment to `$KOVANICA_DATA/<node>.authorities` and refuses to boot under a different set, so the placeholder→real transition needs a data-dir wipe (i.e. part of this reset, not after it) |
+| PoA authority set | ⚠️ | Re-established at the new genesis. Mainnet refuses to boot without an explicit `KOVANICA_AUTHORITIES`. Testnet's deployed set is the **real, randomly generated** set in `protocol/authority-keys/authorities.conf` (verified 2026-10-05: the live keys are *not* derived from the publicly-derivable `AUTHORITY_PLACEHOLDER_BASE = 9001`) — see §2.1. Once the set is committed, the node records the set commitment to `$KOVANICA_DATA/<node>.authorities` and refuses to boot under a different set, so **changing the set requires a data-dir wipe** (i.e. part of this reset, not after it) |
 | Pre-reset balances | ❌ | Wiped at activation forks (RFC-006 wiped all pre-fork balances; the PoA transition will too) |
 | Treasury vaults | ⚠️ | Re-created from the RFC-006 genesis (8 × 1M vaults) |
 | Node data dirs (`KOVANICA_DATA`) | ❌ | Must be deleted before first sync on the new genesis |
+
+### 2.1 Ratified testnet authority set (2026-10-05)
+
+The `kovanica-testnet` authority set is **ratified** as the three-key set already
+deployed on all three seeds:
+
+- 3 Ed25519 authority public keys, in `protocol/authority-keys/authorities.conf`
+  (public keys only; the per-host signing secrets live in
+  `/etc/kovanica/testnet-authority-N.env`, mode 0600, and are never committed).
+- Threshold **2**; slot duration **3000 ms**.
+- Set commitment (stable across key ordering): `3b030005…`.
+- All three seeds report the identical set and the identical genesis
+  `1a635915…`.
+
+**Security basis:** the live public keys do **not** match
+`KeyPair::from_u64(9001 + i)` for any of the three seats, so the deployed set is
+real/random, not the publicly-derivable placeholder — an attacker cannot forge
+authority signatures by reading the source. No new key material is generated by
+this ratification and no node needs rekeying; the keys are already in place.
+
+**Scope note:** `RFC-POA-GOVERNANCE` (KVP-202) governs the *mainnet* initial
+authority set and remains **Draft**; its ceremony
+(`AUTHORITY-KEY-CEREMONY.md`, Gate 4) is separate and is not required for this
+testnet reset. This section is the testnet-scoped ratification record.
 
 ## 3. Reset runbook (operator-only)
 
@@ -149,6 +173,10 @@ liveness** problem, not a reset trigger.
 
 ### 3.1 Blast radius
 
+> **Signed off 2026-10-05** by the maintainer authorising the reset (§0.1):
+> the blast radius below is approved as written — three `kovanica-testnet`
+> hosts, `KOVANICA_DATA` destroyed per host, mainnet untouched.
+
 - **Hosts:** seed1 `145.223.116.178`, seed2 `76.13.250.65`, seed3 `187.7.27.139`
   — `kovanica-testnet` **only**. Mainnet (`mainnet.kovanica.online`, TCP 9000)
   has no reset path and is not touched.
@@ -162,6 +190,10 @@ liveness** problem, not a reset trigger.
 - **DNS/P2P:** unchanged (DNS-only seeds, testnet TCP 8000).
 
 ### 3.2 Order of operations
+
+> **Signed off 2026-10-05**: the order below is approved as written — seed1
+> starts first and is confirmed producing before seed2 is started, and seed2
+> before seed3.
 
 1. **Announce** the window (≥ 24h) on Discord + docs.kovanica.online.
 2. **Freeze** — stop block production/participant traffic and confirm no external
