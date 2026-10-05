@@ -12,7 +12,7 @@
 #
 # Options:
 #   --name <name>           Seed name (default: seed2; used in unit + data dir)
-#   --peers <host:port>     Bootstrap peers (default: seed2.kovanica.online:8000,seed3.kovanica.online:8000;
+#   --peers <host:port>     Bootstrap peers (default: seed.kovanica.online:8000,seed2.kovanica.online:8000,seed3.kovanica.online:8000;
 #                           pass "off" to start a standalone network)
 #   --authority-key <hex>   32-byte Ed25519 authority signing key (for authority nodes)
 #   --authorities <hex>     Comma-separated authority public keys (genesis set)
@@ -29,7 +29,7 @@ set -euo pipefail
 
 TARGET=""
 NAME="seed2"
-PEERS="seed2.kovanica.online:8000,seed3.kovanica.online:8000"
+PEERS="seed.kovanica.online:8000,seed2.kovanica.online:8000,seed3.kovanica.online:8000"
 AUTHORITY_KEY=""
 AUTHORITIES=""
 THRESHOLD=""
