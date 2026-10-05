@@ -500,6 +500,83 @@ structural. The remaining options are:
 Until one is proven, **block pruning stays disabled** (`BLOCK_PRUNING_DEPTH =
 u64::MAX`, R8) — now with a concrete counterexample rather than an open question.
 
-Reproduction: `crates/kovanica-dag/tests/rfc009_b2_tmp.rs` (temporary probe,
-not committed) and `crates/kovanica-dag/tests/block_pruning_colouring.rs` (the
-R4 gate, whose narrow `build_rich` family does *not* expose this case).
+Reproduction: `crates/kovanica-dag/tests/block_pruning_colouring.rs` — the R4
+gate plus `design_a_rejects_the_section_13_counterexample` and
+`design_a_plus_rejects_a_merge_with_an_anticone_p_ancestor`.
+
+## 14. Design (A) is not enough: the tight condition is (A+)
+
+### The gap in (A)
+
+Design (A) as first proposed required **every parent** of a new block to lie in
+`future(P) ∪ {P}`. That is necessary but *not* sufficient. A mergeset candidate
+need not be a parent: it can be an **ancestor of a parent**. If a block `A` is in
+`future(P)` but descends from a stale `anticone(P)` block `c`, then a new block
+`B` with parent `A` has `c ∈ past(B)`. As long as `c ∉ past(sp(B))`, `c` is a
+mergeset candidate of `B` — and `c ∈ anticone(P)` is exactly the dangerous case
+of §13. So (A) can accept a block whose mergeset still contains an
+`anticone(P)` candidate.
+
+### The decisive experiment
+
+A differential search over **random DAGs that satisfy (A)** (every parent drawn
+from `future(P) ∪ {P}`), rebuilt pruned (depth 3, k=3, n=25) and unpruned, and
+compared block-by-block:
+
+| insert rule | cases | divergences |
+|---|---|---|
+| (A) every parent ∈ `future(P) ∪ {P}` | 8000 | **344** |
+| (A+) every candidate ∈ `future(P) ∪ {P}` | 8000 | **0** |
+
+The first divergence under (A) is `seed 25`, at `b17` (`ref blue_score = 11`,
+pruned `= 12`) — a `future(P)`-parent block whose mergeset reaches an
+`anticone(P)` ancestor.
+
+### The tight condition (necessary and sufficient)
+
+`(B1)`'s drop is exact **iff every mergeset candidate of `B` lies in
+`future(P) ∪ {P}`** — equivalently, `B` has no retained ancestor in
+`anticone(P)`, i.e. `past(B) \ past(P) ⊆ future(P) ∪ {P}`.
+
+*Sufficiency:* for a candidate `c ∈ future(P) ∪ {P}` and any blue
+`b ∈ past(P)`, `P ∈ past(c)` and `b ∈ past(P)`, so `b ∈ past(c)`; `b` is an
+ancestor of `c`, hence inert in `try_colour_blue`. Dropping `b`'s key cannot
+change `c`'s colour.
+*Necessity:* §13 — an `anticone(P)` candidate has a genuine `past(P)` blue in its
+anticone, and the drop under-counts it.
+
+### Implementation
+
+`Dag::insert_with_id_inner` computes the candidate set (`mergeset_blues ∪
+mergeset_reds`, derived from `mergeset_ordered` and independent of the (B1)
+trim) before the pruning check, so the check is direct:
+
+```rust
+if !skip_pruning_check && self.block_pruning_depth != u64::MAX {
+    let p = self.pruning_point();
+    for parent in block.parents() {
+        if *parent != p && !self.is_ancestor(&p, parent) {
+            return Err(DagError::BuildsOnPrunedHistory { id });
+        }
+    }
+    for c in ghostdag.mergeset_blues.iter().chain(&ghostdag.mergeset_reds) {
+        if *c != p && !self.is_ancestor(&p, c) {
+            return Err(DagError::BuildsOnPrunedHistory { id });
+        }
+    }
+}
+```
+
+The parent loop pins the selected parent (which is never itself a candidate) to
+`future(P) ∪ {P}`; the candidate loop enforces the tight condition. Together with
+(B1) this makes the bounded map exact for every accepted block.
+
+### Status
+
+The rule is enforced in `insert`; `insert_for_replay` bypasses it (replay is
+trusted history, R8). A finite `block_pruning_depth` nevertheless **stays
+disabled** network-wide until R7 (rejection equivalence) is established and the
+full differential gate is green — the evidence above is a finite search, not a
+proof. (A+) is a consensus-rule change (it rejects blocks the current code
+accepts), so it needs a reset or activation-height gate before pruning is
+re-enabled. R6 (the total memory bound) also still needs separate verification.

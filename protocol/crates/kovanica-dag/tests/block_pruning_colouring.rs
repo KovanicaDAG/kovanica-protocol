@@ -15,30 +15,35 @@
 //! is evaluated sees O(|past(P)|) phantom anticone blues and is forced red,
 //! diverging from an unpruned node's `blue_score` / `mergeset_blues`.
 //!
-//! These tests are **active regression gates** for the RFC-009 (B1) fix in
-//! `Dag::compute_ghostdag`: once block pruning is enabled, the inherited
-//! `blue_anticone_sizes` map is bounded to the pruning window by dropping keys
-//! in `past(P)` (and any key the oracle can no longer resolve), which removes
-//! the phantom-anticone mechanism above. The second and third tests are the
-//! RFC-009 **R4 differential gate**: the same DAG built with pruning on and off
-//! must agree on colouring and reachability for every non-final block, over a
-//! DAG that contains merges *and* a retained `anticone(P)` block (the case that
-//! makes the naive "strip evicted ids" repair unsound — see
-//! `RFC-009-DESIGN-ANALYSIS.md` §3).
+//! ## The RFC-009 fix: (A) + (B1)
 //!
-//! ⚠️ **Known limitation (RFC-009 (B2) — now a confirmed counterexample).**
-//! Dropping `past(P)` keys is provably sound for every candidate in
-//! `future(P) ∪ {P}`, but for a stale candidate `S ∈ anticone(P)` that forked off
-//! `A ∈ past(P)` the blue blocks in `past(P) \ past(A)` are genuinely in `S`'s
-//! anticone, so the drop *under*-counts there (the opposite direction from the F1
-//! over-count). The gate below exercises one such configuration and (B1) happens
-//! to reproduce the unpruned colouring for it — but that is one construction, not
-//! a proof. A wider differential sweep finds divergences at **every** finite
-//! depth, k=3 included (`RFC-009-DESIGN-ANALYSIS.md` §13). A finite
-//! `block_pruning_depth` therefore **stays disabled** network-wide (RFC-009 R8)
-//! until (B2) is settled by a redesign — option (A) or (C), not by this gate.
+//! Two pieces, together:
+//!
+//! * **(B1)** — once block pruning is enabled, `Dag::compute_ghostdag` bounds
+//!   the inherited `blue_anticone_sizes` map by dropping every key in
+//!   `past(P)` (and any key the oracle can no longer resolve). This removes the
+//!   phantom-anticone mechanism above.
+//! * **(A+)** — `insert` rejects any block that has a parent **or a mergeset
+//!   candidate** outside `future(P) ∪ {P}` (`DagError::BuildsOnPrunedHistory`).
+//!   This makes (B1) *exact*: for a candidate in `future(P) ∪ {P}` every blue in
+//!   `past(P)` is an ancestor (hence inert in `try_colour_blue`), so dropping
+//!   those keys cannot change any colouring. The parent-only check is **not**
+//!   enough — an `anticone(P)` block can be an ancestor of a `future(P)` parent
+//!   and still surface as a candidate; the candidate check is the tight
+//!   condition. Without it a retained `anticone(P)` candidate can be merged and
+//!   (B1) under-counts — the confirmed counterexample of
+//!   `RFC-009-DESIGN-ANALYSIS.md` §13, and the 344/8000 divergences of §14.
+//!
+//! The second and third tests below are the RFC-009 **R4 differential gate**:
+//! the same DAG built with pruning on and off must agree on colouring and
+//! reachability for every non-final block, over a DAG that contains a genuine
+//! multi-parent merge. The fourth and fifth tests pin down the (A) rejection
+//! rule itself.
+//!
+//! A finite `block_pruning_depth` nevertheless **stays disabled** network-wide
+//! (RFC-009 R8) until R1-R7 all hold and the full differential gate is green.
 
-use kovanica_dag::{Block, BlockId, Dag};
+use kovanica_dag::{Block, BlockId, Dag, DagError};
 
 fn new_dag(k: u16) -> (Dag, BlockId) {
     let genesis = Block::genesis(1, 0, 0, b"kovanica-genesis".to_vec());
@@ -47,6 +52,11 @@ fn new_dag(k: u16) -> (Dag, BlockId) {
 }
 
 fn add(dag: &mut Dag, parents: &[BlockId], label: &str) -> BlockId {
+    try_add(dag, parents, label).expect("insert should succeed")
+}
+
+/// Insert one block, returning its id or the rejection error.
+fn try_add(dag: &mut Dag, parents: &[BlockId], label: &str) -> Result<BlockId, DagError> {
     dag.insert(Block::new(
         parents.to_vec(),
         1,
@@ -54,7 +64,6 @@ fn add(dag: &mut Dag, parents: &[BlockId], label: &str) -> BlockId {
         0,
         label.as_bytes().to_vec(),
     ))
-    .expect("insert should succeed")
 }
 
 /// Build chain `c1..=c20`, side block `S` on `c18`, `n = [c20, S]`, then `x`
@@ -63,7 +72,8 @@ fn add(dag: &mut Dag, parents: &[BlockId], label: &str) -> BlockId {
 /// With `prune = true` the block pruning depth is set to 3 before `x` is
 /// inserted, so the prune runs at the end of `x`'s insert and `m`'s colouring
 /// is computed against the pruned DAG. With `prune = false` no eviction
-/// happens and `m`'s colouring is the reference.
+/// happens and `m`'s colouring is the reference. `n` is inserted before the
+/// prune and `m` merges only `future(P)` blocks, so the build is (A)-compliant.
 fn build(prune: bool) -> (Dag, BlockId) {
     let (mut dag, genesis) = new_dag(3);
     let mut prev = genesis;
@@ -85,14 +95,15 @@ fn build(prune: bool) -> (Dag, BlockId) {
     (dag, m)
 }
 
-/// A longer DAG with the two features the R4 gate must cover:
+/// A longer (A)-compliant DAG for the R4 differential gate:
 ///
-/// * **merges** — `n = [c40, S]` and `m = [n, x]` are multi-parent blocks, so
-///   `blue_score` and the linearized chain height genuinely differ; and
-/// * a **retained `anticone(P)` block** — `S` forks off `c20`, so once the
-///   pruning point `P` moves past `c20`, `S` is neither in `past(P)` nor a
-///   descendant of `P`: `prune_old_blocks` retains it, which is precisely the
-///   block that makes stripping `past(P)` keys unsound (design analysis §3).
+/// * a **genuine multi-parent merge** — `m = [x, S2]`, where `S2` forks off a
+///   chain block at/above the pruning point, so `m`'s mergeset is non-empty and
+///   its colouring exercises `try_colour_blue`; and
+/// * a **retained `anticone(P)` block** — `S` forks off `chain[34]`, below the
+///   pruning point, so once `P` moves past `c34` the tip `S` is retained but
+///   lies in `anticone(P)`. Design (A) forbids merging it, which is asserted
+///   separately in `pruning_rejects_merging_a_retained_anticone_block`.
 ///
 /// Returns the DAG plus every id it inserted, so the caller can compare the
 /// blocks the two variants have in common (`Dag` exposes no iterator over
@@ -106,41 +117,24 @@ fn build_rich(prune: bool, depth: u64) -> (Dag, Vec<(String, BlockId)>) {
         ids.push((format!("c{i}"), id));
         chain.push(id);
     }
-    // A stale fork off a chain block *below* the pruning point. It is left as a
-    // **dangling tip** until after the prune: if it were merged before the prune
-    // it would become an ancestor of the pruning point and be evicted as
-    // `past(P)`, which is not the case the R4 gate must cover. Forking off
-    // `chain[34]` (with `P = c35` at depth 5) puts `S` in `anticone(P)` while
-    // still being retained, because a dangling tip is never an ancestor of `P`.
+    // `S` forks off a chain block *below* the pruning point. It is left as a
+    // dangling tip (never merged): after the prune it is retained in
+    // `anticone(P)`, and (A) forbids merging it.
     let s = add(&mut dag, &[chain[34]], "S");
     ids.push(("S".into(), s));
+    // `S2` forks off `chain[36]`, at/above the pruning point, so it stays in
+    // `future(P)` and remains mergeable. It is the off-chain parent of `m`.
+    let s2 = add(&mut dag, &[chain[36]], "S2");
+    ids.push(("S2".into(), s2));
     if prune {
         dag.set_block_pruning_depth(depth);
     }
-    // Inserting `x` is what triggers the prune (it runs at the end of an
-    // insert). `S` is still a dangling tip here — not an ancestor of `P` — so it
-    // is retained in `anticone(P)`: the (B2) case.
+    // Inserting `x` triggers the prune (it runs at the end of an insert).
     let x = add(&mut dag, &[chain[40]], "x");
     ids.push(("x".into(), x));
-    // Now merge the stale fork, which makes `S` a mergeset candidate coloured
-    // against the pruned DAG — the F1 condition.
-    // The pruning point in effect when `m` is coloured (captured before the
-    // insert, since the prune runs at the end of every insert).
-    let p_at_merge = dag.pruning_point();
-    let m = add(&mut dag, &[x, s], "m");
+    // An (A)-compliant multi-parent merge: both parents are in `future(P)`.
+    let m = add(&mut dag, &[x, s2], "m");
     ids.push(("m".into(), m));
-    if dag.in_anticone(&p_at_merge, &s) {
-        ids.push(("S@anticoneP".into(), s));
-    }
-    // `S` is a mergeset candidate for `m` — this instant is the (B2) case the R4
-    // gate must cover. Record that `S` was still present *now*: the prune runs at
-    // the end of every insert, so once the follow-on blocks land `S` falls into
-    // `past(P)` and is legitimately evicted, making an end-of-build check
-    // impossible. The colouring that matters is stored in `m`'s `GhostdagData`,
-    // which survives `S`'s eviction.
-    if dag.contains(&s) {
-        ids.push(("S@merge".into(), s));
-    }
     let mut prev = m;
     for i in 0..5 {
         let id = add(&mut dag, &[prev], &format!("p{i}"));
@@ -219,16 +213,11 @@ fn block_pruning_preserves_colouring_for_every_retained_block() {
     }
 
     assert!(compared > 0, "no retained block was compared");
-    // The gate is only meaningful if the DAG actually exercised the F1 case:
-    // `S` must have been in the pruning point's anticone at the instant the
-    // merging block `m` was coloured — the (B2) stale-candidate case. `S` is
-    // legitimately evicted afterwards (the prune runs at the end of every
-    // insert), so this is the merge-time marker captured in `build_rich`, not an
-    // end-of-build containment check.
+    // The gate is only meaningful if the DAG actually exercised a merge against
+    // the pruned DAG; `m` is the (A)-compliant multi-parent block.
     assert!(
-        ids_pru.iter().any(|(label, _)| label == "S@anticoneP"),
-        "the anticone(P) block S was not in the pruning point's anticone when the \
-         merging block was coloured; the R4 (B2) case is not covered"
+        ids_pru.iter().any(|(label, _)| label == "m"),
+        "the merging block m was not inserted; the differential gate is vacuous"
     );
 }
 
@@ -258,91 +247,197 @@ fn block_pruning_preserves_reachability_for_retained_blocks() {
     }
 }
 
-/// RFC-009 §13 counterexample — design (B1) is unsound at **every** depth.
-///
-/// Minimal reproduction of the confirmed (B2) counterexample. With `k = 3` and
-/// pruning depth 3 enabled before `b3`, blocks `b0..b7` insert; the incremental
-/// prunes evict `b1` (end of `b5`), `b3` (end of `b6`) and `{b2, b4}` (end of
-/// `b7`). `b7` (selected parent `b6`) merges `b4`, which forks off the evicted
-/// `b1`; the unpruned reference colours `b4` **red** (`b7.blue_score == 7`,
-/// `mergeset_blues = 0`, `mergeset_reds = 1`), but the (B1) pruned build
-/// colours it **blue** (`blue_score == 8`, `mergeset_blues = 1`,
-/// `mergeset_reds = 0`): blues evicted into `past(P)` — in `b4`'s anticone and
-/// over `k` together — were dropped from the inherited `blue_anticone_sizes`.
-/// `b8`/`b9` are not part of the repro: their parents are evicted, so the build
-/// stops at `b7`, where the divergence already appears.
-///
-/// Ignored until the bounded-colouring redesign (option (A) or (C)) lands; then
-/// this test must be un-ignored and must pass. `block_pruning_depth` therefore
-/// **stays disabled** network-wide (RFC-009 R8).
+/// RFC-009 design **(A)**: a block whose parent lies in `anticone(P)` — a stale
+/// fork retained by the pruning window but not a descendant of the pruning
+/// point — is rejected with `BuildsOnPrunedHistory`, *even though the parent is
+/// still present*. This is what keeps every mergeset candidate inside
+/// `future(P) ∪ {P}`, which is what makes the bounded (B1) colouring map exact.
 #[test]
-#[ignore = "RFC-009 (B2) confirmed counterexample: un-ignore when the bounded-colouring redesign lands"]
-fn known_counterexample_b1_diverges_at_depth_3() {
-    let build = |prune: bool| -> (Dag, Vec<BlockId>) {
-        let (mut dag, genesis) = new_dag(3);
-        let mut ids = vec![genesis];
-        // Parent indices into `ids` (genesis-first), per RFC-009 §13.
-        let script: [&[usize]; 8] = [
-            &[0],    // b0
-            &[1],    // b1  (evicted at the end of b5's insert)
-            &[1],    // b2  (evicted at the end of b7's insert)
-            &[1, 3], // b3  (pruning enabled just before this insert; evicted at b6)
-            &[1, 2], // b4  (forks off the evicted b1; evicted at the end of b7)
-            &[2, 4], // b5
-            &[4, 6], // b6
-            &[5, 7], // b7  (merges b4; colouring diverges)
-        ];
-        for (i, parents) in script.iter().enumerate() {
-            if prune && i == 3 {
-                dag.set_block_pruning_depth(3);
-            }
-            let ps: Vec<BlockId> = parents.iter().map(|&p| ids[p]).collect();
-            let id = add(&mut dag, &ps, &format!("b{i}"));
-            ids.push(id);
-        }
-        (dag, ids)
-    };
+fn pruning_rejects_merging_a_retained_anticone_block() {
+    let (mut dag, genesis) = new_dag(3);
+    let mut chain = vec![genesis];
+    for i in 1..=40 {
+        chain.push(add(&mut dag, &[chain[i - 1]], &format!("c{i}")));
+    }
+    let s = add(&mut dag, &[chain[34]], "S");
+    dag.set_block_pruning_depth(5);
+    let x = add(&mut dag, &[chain[40]], "x");
 
-    let (dag_ref, ids_ref) = build(false);
-    let (dag_pru, ids_pru) = build(true);
+    let p = dag.pruning_point();
+    assert!(dag.contains(&s), "S must be retained (a dangling tip)");
+    assert!(
+        dag.in_anticone(&p, &s),
+        "S must lie in the pruning point's anticone"
+    );
 
-    // The reference must genuinely exercise the case: `b4` is red in the merge.
-    let b7_ref = dag_ref.ghostdag(&ids_ref[8]).expect("reference colouring");
+    let err = try_add(&mut dag, &[x, s], "m")
+        .expect_err("merging a retained anticone(P) block must be rejected");
+    assert!(
+        matches!(err, DagError::BuildsOnPrunedHistory { .. }),
+        "expected BuildsOnPrunedHistory, got {err:?}"
+    );
+}
+
+/// RFC-009 §13 counterexample, now closed by design (A).
+///
+/// The `b0..b7` construction is the minimal DAG where design (B1)'s bounded map
+/// diverges from an unpruned node *if* an `anticone(P)` block (`b4`) is allowed
+/// to be merged: the reference colours `b4` **red** in `b7`'s mergeset
+/// (`b7.blue_score == 7`, `mergeset_blues = 0`), while (B1) alone colours it
+/// **blue** (`blue_score == 8`). Design (A) rejects the merging block `b7` (its
+/// parent `b4` forks off the evicted `b1`) with `BuildsOnPrunedHistory`, so the
+/// divergent colouring is never computed.
+#[test]
+fn design_a_rejects_the_section_13_counterexample() {
+    // Parent indices into a genesis-first id list.
+    let script: [&[usize]; 8] = [
+        &[0],    // b0
+        &[1],    // b1
+        &[1],    // b2
+        &[1, 3], // b3  (pruning enabled just before this insert)
+        &[1, 2], // b4  (forks off b1; ends up in anticone(P))
+        &[2, 4], // b5
+        &[4, 6], // b6
+        &[5, 7], // b7  (merges b4 ∈ anticone(P) → rejected by (A))
+    ];
+
+    // Reference: no pruning, every block accepted; `b4` is red in `b7`'s mergeset.
+    let (mut dag_ref, genesis) = new_dag(3);
+    let mut ids = vec![genesis];
+    for (i, parents) in script.iter().enumerate() {
+        let ps: Vec<BlockId> = parents.iter().map(|&p| ids[p]).collect();
+        ids.push(add(&mut dag_ref, &ps, &format!("b{i}")));
+    }
+    let b7_ref = dag_ref.ghostdag(&ids[8]).expect("reference colouring");
     assert_eq!(b7_ref.blue_score, 7, "reference b7 blue_score changed");
     assert_eq!(
         b7_ref.mergeset_blues.len(),
         0,
-        "reference b4 must be red in b7's mergeset"
+        "reference must colour b4 red in b7's mergeset"
     );
 
-    // Every retained block must match the unpruned reference (R2/R4). This is
-    // the assertion that currently fails under (B1) at `b7`.
-    let mut compared = 0;
-    for (i, id) in ids_pru.iter().enumerate() {
-        if !dag_pru.contains(id) {
-            continue;
+    // Pruned: the same script must be rejected at `b7` by design (A).
+    let (mut dag_pru, genesis) = new_dag(3);
+    let mut ids_pru = vec![genesis];
+    let mut rejection = None;
+    for (i, parents) in script.iter().enumerate() {
+        if i == 3 {
+            dag_pru.set_block_pruning_depth(3);
         }
-        let label = if i == 0 {
-            "genesis".to_string()
-        } else {
-            format!("b{}", i - 1)
-        };
-        let r = dag_ref.ghostdag(id).expect("reference colouring");
-        let p = dag_pru.ghostdag(id).expect("pruned colouring");
-        assert_eq!(r.blue_score, p.blue_score, "{label}: blue_score diverged");
-        assert_eq!(
-            r.selected_parent, p.selected_parent,
-            "{label}: selected_parent diverged"
-        );
-        assert_eq!(
-            r.mergeset_blues, p.mergeset_blues,
-            "{label}: mergeset_blues diverged"
-        );
-        assert_eq!(
-            r.mergeset_reds, p.mergeset_reds,
-            "{label}: mergeset_reds diverged"
-        );
-        compared += 1;
+        let ps: Vec<BlockId> = parents.iter().map(|&p| ids_pru[p]).collect();
+        match try_add(&mut dag_pru, &ps, &format!("b{i}")) {
+            Ok(id) => ids_pru.push(id),
+            Err(e) => {
+                rejection = Some((i, e));
+                break;
+            }
+        }
     }
-    assert!(compared > 0, "no retained block was compared");
+
+    let (i, err) = rejection.expect("design (A) must reject the counterexample merge");
+    assert_eq!(i, 7, "the block that merges b4 ∈ anticone(P) is b7");
+    assert!(
+        matches!(err, DagError::BuildsOnPrunedHistory { .. }),
+        "expected BuildsOnPrunedHistory, got {err:?}"
+    );
+}
+
+/// RFC-009 §14: design (A)'s *parent-only* check is **not** sufficient.
+///
+/// Every parent in this 25-block script lies in `future(P) ∪ {P}`, yet `b17`
+/// merges a block that has an `anticone(P)` ancestor, so `b17`'s mergeset
+/// contains an `anticone(P)` candidate. With the parent-only (A) check and the
+/// bounded (B1) map, that candidate is under-counted and coloured blue where an
+/// unpruned node colours it red (`ref blue_score = 11`, pruned `= 12`). A
+/// differential search over (A)-compliant DAGs found 344/8000 such divergences;
+/// adding the candidate check (design (A+)) drove it to 0/8000.
+///
+/// This script is seed 25 of that search. The (A+) check rejects the block that
+/// would introduce the `anticone(P)` candidate, and every block accepted before
+/// the rejection matches the unpruned reference exactly.
+#[test]
+fn design_a_plus_rejects_a_merge_with_an_anticone_p_ancestor() {
+    let script: [&[usize]; 25] = [
+        &[0],
+        &[0, 1],
+        &[1, 2],
+        &[0, 2],
+        &[1],
+        &[0, 4],
+        &[1, 3],
+        &[5],
+        &[1],
+        &[2, 6, 9],
+        &[4, 6],
+        &[4, 6],
+        &[10, 12],
+        &[6],
+        &[10, 13],
+        &[10],
+        &[16],
+        &[10, 15, 17],
+        &[18],
+        &[18, 19],
+        &[20],
+        &[18, 19],
+        &[20, 21, 22],
+        &[20, 23],
+        &[23, 24],
+    ];
+
+    // Reference: full build, no pruning — b17 is blue_score 11.
+    let (mut dag_ref, genesis) = new_dag(3);
+    let mut ids_ref = vec![genesis];
+    for (i, parents) in script.iter().enumerate() {
+        let ps: Vec<BlockId> = parents.iter().map(|&p| ids_ref[p]).collect();
+        ids_ref.push(add(&mut dag_ref, &ps, &format!("b{i}")));
+    }
+    assert_eq!(
+        dag_ref.ghostdag(&ids_ref[18]).unwrap().blue_score,
+        11,
+        "reference b17 blue_score changed"
+    );
+
+    // Pruned (depth 3): (A+) must reject the anticone(P)-ancestor merge.
+    let (mut dag_pru, genesis) = new_dag(3);
+    dag_pru.set_block_pruning_depth(3);
+    let mut ids_pru = vec![genesis];
+    let mut rejected_at = None;
+    for (i, parents) in script.iter().enumerate() {
+        let ps: Vec<BlockId> = parents.iter().map(|&p| ids_pru[p]).collect();
+        match try_add(&mut dag_pru, &ps, &format!("b{i}")) {
+            Ok(id) => ids_pru.push(id),
+            Err(DagError::BuildsOnPrunedHistory { .. }) => {
+                rejected_at = Some(i);
+                break;
+            }
+            Err(e) => panic!("unexpected error at b{i}: {e:?}"),
+        }
+    }
+    assert!(
+        rejected_at.is_some(),
+        "design (A+) must reject a merge whose mergeset has an anticone(P) candidate"
+    );
+
+    // Every block accepted before the rejection matches the reference.
+    for (i, id) in ids_pru.iter().enumerate().skip(1) {
+        if !dag_pru.contains(id) {
+            continue; // evicted by pruning — nothing to compare
+        }
+        let r = dag_ref.ghostdag(id).unwrap();
+        let p = dag_pru.ghostdag(id).unwrap();
+        assert_eq!(r.blue_score, p.blue_score, "b{} blue_score diverged", i - 1);
+        assert_eq!(
+            r.mergeset_blues,
+            p.mergeset_blues,
+            "b{} mergeset_blues diverged",
+            i - 1
+        );
+        assert_eq!(
+            r.mergeset_reds,
+            p.mergeset_reds,
+            "b{} mergeset_reds diverged",
+            i - 1
+        );
+    }
 }

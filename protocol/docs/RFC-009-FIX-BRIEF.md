@@ -150,9 +150,12 @@ There is an `#[ignore]`d regression test waiting to be un-ignored:
    incremental blue-anticone structure. This is the main genuinely-open decision.
    *(2026-10-06: design (B1) is now a confirmed counterexample — it diverges from
    an unpruned node at every finite depth, k=3 included; see
-   `RFC-009-DESIGN-ANALYSIS.md` §13. The concrete path is option (A): strengthen
-   the insert rule to require **every** parent in `future(P) ∪ {P}` — a
-   consensus-rule change, reset/activation gated.)*
+   `RFC-009-DESIGN-ANALYSIS.md` §13. The concrete path is option **(A+)**: reject
+   any block with a parent **or a mergeset candidate** outside `future(P) ∪ {P}`
+   — a consensus-rule change, reset/activation gated. The parent-only form of (A)
+   is *insufficient* (§14: 344/8000 random (A)-compliant DAGs still diverge; the
+   candidate check drives it to 0/8000). Implemented in `Dag::insert_with_id_inner`;
+   enforced tests in `block_pruning_colouring.rs`.)*
 2. **Invariant replacement** — whether `len == blue_score` survives (R3).
 3. **Re-enable depths** — RFC-008's testnet 1000 / mainnet 10,000 are prior
    proposals, not decisions.

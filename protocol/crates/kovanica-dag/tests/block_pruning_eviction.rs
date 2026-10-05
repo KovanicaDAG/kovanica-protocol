@@ -49,8 +49,10 @@ fn new_dag(k: u16) -> (Dag, BlockId) {
 /// Insert `n` blocks described by `cs` (parent *indices* into
 /// `[genesis, b0, b1, …]`). When `prune` is set, `set_block_pruning_depth(depth)`
 /// is called immediately before the `prune_at`-th insert, so the prune runs at
-/// the end of that insert. Stops at the first rejected insert (e.g.
-/// `BuildsOnPrunedHistory`) and returns the ids inserted so far, genesis first.
+/// the end of that insert. Blocks go in via `insert_for_replay`, which bypasses
+/// the (A+) insert rule so the DAG is built in full and the eviction path is
+/// exercised regardless of the consensus rule. Stops at the first rejected
+/// insert and returns the ids inserted so far, genesis first.
 fn build(
     k: u16,
     cs: &[Vec<usize>],
@@ -65,7 +67,11 @@ fn build(
             dag.set_block_pruning_depth(depth);
         }
         let ps: Vec<BlockId> = parents.iter().map(|&p| ids[p]).collect();
-        match dag.insert(Block::new(ps, 1, 0, 0, format!("b{i}").into_bytes())) {
+        // `insert_for_replay` bypasses the (A+) insert rule so this test can
+        // exercise `remove_blocks` on a DAG the current consensus rule would
+        // reject — eviction correctness is independent of the insert rule (which
+        // `block_pruning_colouring.rs` covers).
+        match dag.insert_for_replay(Block::new(ps, 1, 0, 0, format!("b{i}").into_bytes()), None) {
             Ok(id) => ids.push(id),
             Err(_) => break,
         }
@@ -217,7 +223,7 @@ fn eviction_is_downward_closed_across_a_reorg() {
         }
         let ps: Vec<BlockId> = parents.iter().map(|&p| ids[p]).collect();
         let id = dag
-            .insert(Block::new(ps, 1, 0, 0, format!("b{i}").into_bytes()))
+            .insert_for_replay(Block::new(ps, 1, 0, 0, format!("b{i}").into_bytes()), None)
             .expect("pruning must not reject or panic on this DAG");
         ids.push(id);
     }

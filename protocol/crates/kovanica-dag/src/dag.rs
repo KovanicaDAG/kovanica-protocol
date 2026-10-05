@@ -101,11 +101,18 @@
 //!
 //! ### Insert-time invariant
 //!
-//! When block pruning is enabled, a new block's **selected parent** must be in
-//! `future(P) ∪ {P}` (i.e. `sp == P` or `P` is an ancestor of `sp`); otherwise
-//! the insert is rejected with [`DagError::BuildsOnPrunedHistory`]. This keeps
-//! the evicted set inside the new block's past, so mergeset walks can treat
-//! evicted blocks as boundaries without consulting the oracle for them.
+//! When block pruning is enabled, **every parent and every mergeset candidate**
+//! of a new block must be in `future(P) ∪ {P}` (i.e. `== P` or `P` is an
+//! ancestor); otherwise the insert is rejected with
+//! [`DagError::BuildsOnPrunedHistory`]. Requiring all parents (not only the
+//! selected parent) is RFC-009 design **(A+)**. The parent check alone is *not*
+//! sufficient: an `anticone(P)` block can be an ancestor of a `future(P)` parent
+//! and still surface as a mergeset candidate, and for such a candidate the
+//! `past(P)` blues that eviction removes are *not* inert — (B1) under-counts and
+//! colours it blue where an unpruned node colours it red (the §13 counterexample
+//! and the 344/8000 divergences of §14). Checking the candidates themselves is
+//! the tight condition: (B1) is exact **iff** every candidate lies in
+//! `future(P) ∪ {P}`. See `docs/RFC-009-DESIGN-ANALYSIS.md` §13-§14.
 //!
 //! ### Snapshots
 //!
@@ -902,8 +909,10 @@ impl Dag {
 
     /// Like [`insert_with_id`], but skips the block-pruning invariant check
     /// (`BuildsOnPrunedHistory`). Used during log/snapshot replay where the
-    /// block is known-valid history and its selected parent may be in the
-    /// pruned region (e.g., anticone blocks linearized last).
+    /// block is known-valid history and its parents may lie in the pruned
+    /// region (e.g., anticone blocks linearized last). Because this bypasses
+    /// design (A+), a replay must not run with a finite `block_pruning_depth`
+    /// (RFC-009 R8).
     pub fn insert_for_replay(
         &mut self,
         block: Block,
@@ -958,15 +967,47 @@ impl Dag {
             }
         }
 
-        // Block-pruning invariant, if enabled: the new block's selected parent
-        // must be in future(P) ∪ {P} (P = pruning point). This keeps the evicted
-        // set (past(P)) inside the new block's past, so mergeset walks can treat
-        // evicted blocks as boundaries. Checked before the block is wired in, so
-        // a rejected block leaves the DAG unchanged.
+        // Block-pruning invariant, if enabled: **every** parent of the new block
+        // and **every mergeset candidate** must be in future(P) ∪ {P}
+        // (P = pruning point). Checked before the block is wired in, so a rejected
+        // block leaves the DAG unchanged.
+        //
+        // RFC-009 design (A+). Checking only the parents is NOT sufficient: an
+        // `anticone(P)` block can be an *ancestor* of a `future(P)` parent and still
+        // surface as a mergeset candidate. A differential search over DAGs whose
+        // parents are all in `future(P) ∪ {P}` found 344/8000 divergences with the
+        // parent-only check and 0/8000 once candidates are checked too (§14).
+        //
+        // Why candidates are the tight condition: design (B1)'s bounded
+        // `blue_anticone_sizes` drops `past(P)` keys, which is exact exactly when
+        // every candidate `c` lies in `future(P) ∪ {P}` — then every `past(P)` blue
+        // `b` satisfies `b ∈ past(P) ⊆ past(c)` (for `c ∈ future(P)`), so `b` is in
+        // `c`'s past, not its anticone, and `try_colour_blue` treats it as inert.
+        // An `anticone(P)` candidate instead has genuine `past(P)` blues in its
+        // anticone that the drop removes, under-counting it and colouring it blue
+        // where an unpruned node colours it red (the confirmed §13 counterexample).
+        //
+        // The candidate set is `mergeset_blues ∪ mergeset_reds` from the colouring
+        // computed above; it comes from `mergeset_ordered` (reachability), so the
+        // (B1) trim changes only the blue/red split, never the set. The parent loop
+        // additionally pins the selected parent (which is not itself a candidate) to
+        // `future(P) ∪ {P}`, so the inherited map comes from a valid future block.
+        // See `docs/RFC-009-DESIGN-ANALYSIS.md` §13-§14.
         if !skip_pruning_check && self.block_pruning_depth != u64::MAX {
             let p = self.pruning_point();
-            if sp != p && !self.is_ancestor(&p, &sp) {
-                return Err(DagError::BuildsOnPrunedHistory { id });
+            for parent in block.parents() {
+                if *parent != p && !self.is_ancestor(&p, parent) {
+                    return Err(DagError::BuildsOnPrunedHistory { id });
+                }
+            }
+            for c in ghostdag
+                .mergeset_blues
+                .iter()
+                .chain(&ghostdag.mergeset_reds)
+            {
+                if *c != p && !self.is_ancestor(&p, c) {
+                    return Err(DagError::BuildsOnPrunedHistory { id });
+                }
             }
         }
 

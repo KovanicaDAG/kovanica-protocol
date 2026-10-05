@@ -64,15 +64,18 @@ impl Dag {
         // byte-identical to the previous behaviour. That is why this can land
         // while `BLOCK_PRUNING_DEPTH = u64::MAX` without changing the live chain.
         //
-        // ⚠️ UNSOUND (B2 confirmed — RFC-009 §13): a candidate in `anticone(P)`
-        // may genuinely have a `past(P)` block in its anticone, and this drop
-        // under-counts it, so a stale candidate can be coloured blue that must be
-        // red. A wider differential sweep found divergences from an unpruned node
-        // at *every* finite depth, k=3 included (238/2400 at depth 3, still 8/2400
-        // at depth 8). A bounded map cannot be produced by dropping `past(P)`
-        // keys: design (A) (forbid `anticone(P)` candidates — a consensus-rule
-        // change) or (C) is required. Until then `block_pruning_depth` must stay
-        // `u64::MAX` (R8). See `docs/RFC-009-DESIGN-ANALYSIS.md` §13.
+        // ⚠️ Requires RFC-009 design (A+): on its own this drop is UNSOUND — a
+        // candidate in `anticone(P)` may genuinely have a `past(P)` block in its
+        // anticone, and the drop under-counts it (confirmed counterexample, §13).
+        // With (A+) enforced at insert (every parent **and every mergeset
+        // candidate** of a new block must be in `future(P) ∪ {P}`), each
+        // `past(P)` blue is an ancestor of every candidate and therefore inert —
+        // so the drop is exact. The parent-only check is not enough: an
+        // `anticone(P)` block can be an ancestor of a `future(P)` parent and still
+        // surface as a candidate (344/8000 divergences, §14). Without (A+) (e.g.
+        // `insert_for_replay` skipping the check) this must not run against a
+        // finite depth; `block_pruning_depth` stays `u64::MAX` until R1-R7 hold
+        // (R8). See `docs/RFC-009-DESIGN-ANALYSIS.md` §13-§14.
         //
         // Cost: O(|map|) oracle queries per insert, only while pruning is enabled.
         let pruning_point = self.pruning_point();
@@ -81,8 +84,9 @@ impl Dag {
             // `is_ancestor(b, P)` is exactly `b ∈ past(P)`: those keys are inert
             // for every candidate in `future(P) ∪ {P}` and are the ones that grow
             // without bound. Blocks in `anticone(P)` (and `P` itself) are kept —
-            // they may still be live for a stale candidate, and the selected
-            // parent in particular is in *every* mergeset candidate's anticone.
+            // they are still present in the DAG (and the selected parent in
+            // particular is in *every* mergeset candidate's anticone), even though
+            // (A+) prevents them from becoming candidates themselves.
             // Already-evicted ids are dropped too: they are in `past(P)` and, being
             // absent, would otherwise be reported as phantom anticone blues by
             // `in_anticone` (the F1 mechanism).
