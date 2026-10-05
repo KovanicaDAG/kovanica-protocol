@@ -4,7 +4,11 @@ Discovered while SSH-verifying seed2/seed3 after the PoA-only cutover
 (branch `consensus/poa-only-migration`, PR #15). These were **not** in
 `TASKLIST.md`; they surfaced from live infrastructure.
 
-> Status: **ALL RESOLVED except 2.5, which is now BLOCKING** (see 2.5)
+> Status: **ALL RESOLVED except 2.5.** 2.5's root cause is a consensus-critical
+> defect (RFC-009 / F1). The interim mitigation — block pruning disabled
+> network-wide + an operational replay bound — shipped in `6d0581e` and must be
+> deployed to every node before the reset (TASKLIST3 §3.3). The real fix is
+> RFC-009 R1-R8.
 
 ## 2.1 seed3 provisioning — ✅ RESOLVED
 - [x] Diagnose why seed3 never served a request. **Root cause was not
@@ -81,9 +85,15 @@ misled.
       untouched because the unbond maturity gate and other callers depend on
       it and changing it is consensus-adjacent. Needs its own change.
 
-## 2.5 Unbounded log replay — ⛔ NOW BLOCKING
+## 2.5 Unbounded log replay — ⚠️ ROOT-CAUSED; mitigation shipped, real fix deferred to RFC-009
 This is no longer a finding. It **took seed1 down** and is the reason all three
 seeds are now on a short chain.
+
+The root cause turned out to be a **consensus-critical defect** (F1: block
+pruning corrupts GHOSTDAG colouring), not a memory-tuning problem — so the
+memory fix and the correctness fix are the same problem. The interim mitigation
+shipped in `6d0581e`; the real fix is tracked in
+`protocol/docs/RFC-009-BlockPruning-Colouring.md` (R1-R8).
 
 - [x] **Confirmed live and load-bearing.** seed1 could not replay its 9.3MB
       `alpha.log` inside a 10G budget: memory climbed 3.1G → 5.3G → 6.8G →
@@ -184,10 +194,21 @@ seeds are now on a short chain.
       ceiling (exit 134 = SIGABRT) with a `FATAL: … refusing to be OOM-killed`
       message. `cargo clippy -p kovanica-node --all-targets` clean. This is a
       backstop, not the fix.
-- [ ] **Bound replay without evicting mid-replay.** The safe directions are
-      operational rather than algorithmic: replay from a finality checkpoint /
-      snapshot instead of genesis (the node already has `LoadTier::Snapshot` and
-      `Store::open_checkpoint`), and/or refuse-and-resync an oversized log rather
-      than replaying it unbounded. Note `Node::load_with_poa` (used by the
-      `LoadTier::Snapshot` branch) still passes **no** pruning policy, so the
-      snapshot tier replays unbounded too — a secondary gap to close either way.
+- [x] **Bound replay without evicting mid-replay — log tier.** Rather than
+      evicting DAG blocks mid-replay (disproven, see the F1 item), replay is now
+      bounded operationally on the `LoadTier::Log` path: a **pre-flight estimate**
+      (`estimate_replay_peak_bytes`, fitted to the measured quadratic curve)
+      refuses a log whose projected peak exceeds the process memory ceiling, with
+      operator guidance to restore from a snapshot or wipe-and-resync, and the
+      **`replay-watchdog`** aborts cleanly if the estimate is wrong. Shipped in
+      `6d0581e`. Verified: the real 13.5 MB log is refused with
+      `projected replay peak is ~59569 MiB but the memory limit is 4096 MiB`,
+      while a 1000-record log still loads and serves.
+- [ ] **Bound replay — snapshot tier, and a real memory bound.** Still open:
+      `Node::load_with_poa` (used by the `LoadTier::Snapshot` branch) passes
+      **no** pruning policy, so the snapshot tier replays without a policy at
+      all — a secondary gap. And the operational bound above is a guard, not a
+      fix: replay memory still grows with the chain until RFC-009 R1-R8 land,
+      because block pruning is disabled network-wide. Replay from a finality
+      checkpoint / snapshot (`Store::open_checkpoint`) is the intended
+      structural answer.
