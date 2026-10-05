@@ -1,6 +1,11 @@
 # Kovanica PoA Migration - Task List
 
-> **Status: Phase 1 ✅ · Phase 3 (metrics) ✅ · Phase 4 ✅ · Phase 2 (seed3 ops) ⛔ BLOCKED**
+> **Status: Phase 1 ✅ · Phase 3 (metrics) ✅ · Phase 4 ✅ · Phase 2 (seed3 ops) ✅ DONE**
+>
+> **Superseded in part.** The seed3 items below were closed by operator work
+> that surfaced after this file was written — see `TASKLIST2.md` (what was
+> actually wrong and how it was fixed), `TASKLIST3.md` (reset pre-flight gate)
+> and `TASKLIST4.md` (deferred follow-ups). Read those alongside this one.
 >
 > Landed on branch `consensus/poa-only-migration` (commit `4488f84` + follow-up
 > commits). Every box ticked below was verified by an actual run or grep, not
