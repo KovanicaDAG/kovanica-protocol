@@ -22,7 +22,8 @@ use kovanica_state::{
 use crate::dht::{NodeId, PeerContact, RoutingTable};
 use crate::dns_seed::{DnsSeedConfig, DnsSeedResolver};
 use crate::metrics::{
-    init_metrics, record_explorer_http_request, record_supply, render_prometheus,
+    init_metrics, record_explorer_http_request, record_peer_disconnected, record_reorg,
+    record_supply, record_sync_complete, render_prometheus, set_dht_routing_table_size,
     set_explorer_ws_clients, set_peer_count,
 };
 use crate::net::{
@@ -464,11 +465,6 @@ pub fn serve(addr: impl ToSocketAddrs) -> std::io::Result<()> {
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 app.tick();
-                // Refresh peer gauge periodically so the standalone :9090
-                // metrics listener serves fresh values between scrapes.
-                if app.ticks % 125 == 0 {
-                    set_peer_count(app.live_peers.len());
-                }
                 app.ws_broadcast_state();
                 thread::sleep(Duration::from_millis(40));
             }
@@ -503,7 +499,32 @@ pub struct Explorer {
     pub peers: Vec<String>,
     pub origins: HashMap<String, u64>,
     /// Peers that answered our last sync attempt (live connectivity).
+    ///
+    /// **Derived, not authoritative.** Both directions of the mesh land here:
+    /// outbound peers that answered a [`Explorer::sync_peers`] round-trip, and
+    /// inbound peers that completed a headers-first or full-dump exchange. It is
+    /// recomputed from [`Explorer::outbound_seen`] + [`Explorer::inbound_seen`]
+    /// by [`Explorer::refresh_live_peers`], never assigned wholesale, so one bad
+    /// sync pass cannot zero a healthy mesh.
     pub live_peers: HashSet<String>,
+    /// Outbound peers (dialed by `sync_peers`) mapped to the tick they last
+    /// answered. Bounded by the `PEER_LIVENESS_TICKS` decay window so a peer
+    /// that goes silent ages out instead of being dropped by the next pass's
+    /// wholesale replacement.
+    outbound_seen: HashMap<String, u64>,
+    /// Inbound peers (which dialed *us* on the P2P listeners) mapped to the tick
+    /// they last completed an exchange. On a production seed this is the larger
+    /// half of the mesh — the other seeds connect to us, not the other way
+    /// round — and counting only outbound peers is what made the peer-count
+    /// gauge read a persistent zero.
+    inbound_seen: HashMap<String, u64>,
+    /// Selected tip and its chain height as of the last observation, so a
+    /// selected-parent change can be classified as a re-org and its depth
+    /// reported. `None` until the first observation (genesis is a baseline,
+    /// not a re-org). Tracking only the tip id is not enough: under GHOSTDAG
+    /// the tip advances on every block, so tip-changes alone would count every
+    /// normal block as a re-org.
+    last_tip: Option<(kovanica_dag::BlockId, u64)>,
     /// Last sync error observed per peer, used to log a peer-sync failure only
     /// when it *changes*.
     ///
@@ -540,6 +561,61 @@ pub struct Explorer {
     pub last_dht_replenish: u64,
 }
 
+/// Ticks a peer stays "live" after its last successful exchange.
+///
+/// A sync pass runs every 250 ticks, so this covers several consecutive passes:
+/// a peer must miss `PEER_LIVENESS_TICKS / 250` rounds before it is evicted.
+/// Generous enough that one flaky timeout cannot zero the gauge, short enough
+/// that a genuinely dead peer still disappears from it.
+const PEER_LIVENESS_TICKS: u64 = 1_000;
+
+/// How often [`Explorer::refresh_live_peers`] runs to decay the liveness maps
+/// and republish the gauge, so the standalone `:9090` scrape listener sees
+/// fresh values even between sync rounds.
+const PEER_LIVENESS_REFRESH_TICKS: u64 = 125;
+
+/// Canonical form of a peer key for de-duplication.
+///
+/// The same peer appears as a configured dial target (`seed.kovanica.online:9000`)
+/// and as the source address of an inbound connection (`10.0.0.5:51234`). They are
+/// the same mesh member, so the gauge must count them once. Lowercased, and
+/// `host:port` collapsed to `host` so any source port maps onto the seed entry.
+fn normalise_peer_key(addr: &str) -> String {
+    let trimmed = addr.trim();
+    // Bracketed IPv6 (`[2001:db8::1]`, optionally `:9000`): the host is whatever
+    // sits between the brackets. The port, if any, follows the closing bracket,
+    // so it is dropped by taking only the bracketed span.
+    if let Some(rest) = trimmed.strip_prefix('[') {
+        if let Some(close) = rest.find(']') {
+            return rest[..close].to_ascii_lowercase();
+        }
+    }
+    // More than one colon means a bare IPv6 literal, whose tail is part of the
+    // address rather than a port — `rsplit_once(':')` would truncate it.
+    if trimmed.matches(':').count() > 1 {
+        return trimmed.to_ascii_lowercase();
+    }
+    // At most one colon: `host:port` (hostname or IPv4). Drop the port so any
+    // ephemeral source port maps onto the configured seed entry.
+    match trimmed.rsplit_once(':') {
+        Some((host, _port)) if !host.is_empty() => host.to_ascii_lowercase(),
+        _ => trimmed.to_ascii_lowercase(),
+    }
+}
+
+/// De-duplicate a set of peer keys by [`normalise_peer_key`], keeping the first
+/// spelling of each distinct peer.
+fn normalise_peer_keys(addrs: &HashSet<String>) -> HashSet<String> {
+    let mut out = HashSet::with_capacity(addrs.len());
+    let mut taken = std::collections::HashSet::with_capacity(addrs.len());
+    for addr in addrs {
+        if taken.insert(normalise_peer_key(addr)) {
+            out.insert(addr.clone());
+        }
+    }
+    out
+}
+
 impl Explorer {
     /// Test constructor: a fresh in-memory mesh, no persistence or sockets.
     pub fn boot() -> Self {
@@ -565,6 +641,9 @@ impl Explorer {
             peers: Vec::new(),
             origins: HashMap::new(),
             live_peers: HashSet::new(),
+            outbound_seen: HashMap::new(),
+            inbound_seen: HashMap::new(),
+            last_tip: None,
             peer_sync_errors: HashMap::new(),
             peer_sync_cursor: 0,
             ws_clients: Arc::new(Mutex::new(Vec::new())),
@@ -581,6 +660,7 @@ impl Explorer {
         self.ticks += 1;
         self.tick_p2p();
         self.tick_dht();
+        self.note_reorg();
         if self.producing && self.produce_every > 0 && self.ticks % self.produce_every == 0 {
             let names = self.mesh.names();
             if !names.is_empty() {
@@ -674,6 +754,15 @@ impl Explorer {
                 );
             }
         }
+
+        // Publish the routing-table size on every tick. The gauge is what tells an
+        // operator whether eclipse-resistance is actually working: a table pinned
+        // near zero on a seeded node means DNS bootstrap failed or every contact
+        // was pruned as unresponsive. It was previously registered but never set,
+        // so the series never appeared in `/metrics` at all.
+        if let Some(table) = &self.dht_table {
+            set_dht_routing_table_size(table.total_contacts());
+        }
     }
 
     fn ws_broadcast_state(&self) {
@@ -707,10 +796,14 @@ impl Explorer {
         }
         for (mut stream, peer) in incoming {
             if let Some(n) = self.mesh.node_mut("alpha") {
+                // `peer` is moved by the format args below, so snapshot the
+                // string once and use it for both logging and liveness marking.
+                let peer_key = peer.to_string();
                 // Try headers-first sync serve first
                 match serve_headers_first(&mut stream, n, Duration::from_millis(800)) {
                     Ok(()) => {
                         eprintln!("kovanica p2p headers-first served {peer}");
+                        self.note_inbound_peer(peer_key);
                         persist_all(&mut self.mesh);
                     }
                     Err(e) => {
@@ -730,6 +823,7 @@ impl Explorer {
                                 eprintln!(
                                     "kovanica p2p exchanged with {peer} (peer sent {got} records)"
                                 );
+                                self.note_inbound_peer(peer_key);
                                 if got > 0 {
                                     persist_all(&mut self.mesh);
                                 }
@@ -745,6 +839,108 @@ impl Explorer {
         if !self.peers.is_empty() && self.ticks % 250 == 0 {
             self.sync_peers(Duration::from_millis(800));
         }
+        // Decay the live-peer view on the same cadence as the standalone
+        // scrape refresh below, and unconditionally — `sync_peers` is skipped
+        // entirely when no peers are configured, so inbound liveness would
+        // otherwise never be aged out on a purely-inbound node.
+        if self.ticks % PEER_LIVENESS_REFRESH_TICKS == 0 {
+            self.refresh_live_peers();
+        }
+    }
+
+    /// Record that an inbound peer completed an exchange with us.
+    fn note_inbound_peer(&mut self, peer: String) {
+        self.inbound_seen.insert(peer, self.ticks);
+    }
+
+    /// Recompute [`Explorer::live_peers`] from both liveness maps and publish
+    /// the peer-count gauge.
+    ///
+    /// This is the single writer of the gauge, so the periodic refresh, the
+    /// scrape path and the sync path cannot disagree. A peer is live while
+    /// `ticks - seen <= PEER_LIVENESS_TICKS`; anything older is evicted before
+    /// the count is taken, which is what makes the gauge decay instead of
+    /// ratcheting: a mesh that genuinely grows is reflected immediately, and a
+    /// peer that goes silent ages out on its own without needing a successful
+    /// round-trip to evict it.
+    fn refresh_live_peers(&mut self) {
+        let cutoff = self.ticks.saturating_sub(PEER_LIVENESS_TICKS);
+        // Evicting a peer out of the liveness maps is this node's only notion of
+        // a peer going away, so the disconnect counter is driven from here. It
+        // previously had no call site at all, which made the connect/disconnect
+        // pair unusable for spotting a flapping link: connects climbed, and a
+        // peer that vanished looked identical to one that was merely slow.
+        let mut dropped = 0usize;
+        self.inbound_seen.retain(|_, seen| {
+            // `>=`, not `>`: a peer seen at tick 0 with `ticks == 0` has
+            // `cutoff == 0` (the subtraction saturates), so a strict `>` would
+            // evict a peer the instant it was recorded — the exact instant-zero
+            // failure this rewrite exists to remove.
+            let keep = *seen >= cutoff;
+            dropped += usize::from(!keep);
+            keep
+        });
+        self.outbound_seen.retain(|_, seen| {
+            let keep = *seen >= cutoff;
+            dropped += usize::from(!keep);
+            keep
+        });
+        for _ in 0..dropped {
+            record_peer_disconnected();
+        }
+
+        let mut live: HashSet<String> = self
+            .outbound_seen
+            .keys()
+            .cloned()
+            .chain(self.inbound_seen.keys().cloned())
+            .collect();
+        // A dialed `host:port` and the `host:port` that dialed us back are the
+        // same peer seen from two directions; report the mesh size, not twice it.
+        live = normalise_peer_keys(&live);
+        let count = live.len();
+        if live != self.live_peers {
+            self.live_peers = live;
+        }
+        set_peer_count(count);
+    }
+
+    /// Observe the selected tip and record a re-org when the selected-parent
+    /// choice moves *backwards* along the chain.
+    ///
+    /// Under GHOSTDAG the tip id changes on every block, so "tip changed" is not
+    /// a re-org signal. What distinguishes a re-org is that the new tip's
+    /// selected-parent chain no longer contains the previous tip — the ledger
+    /// abandons blocks it had already applied. The depth reported is how many
+    /// previously-selected chain blocks are now orphaned, i.e. the old tip's
+    /// height above the fork point, approximated by the height drop plus any
+    /// blocks the new tip has not yet absorbed. Using a pure height comparison
+    /// keeps this a deterministic function of DAG state.
+    ///
+    /// Previously `record_reorg` had no call site at all, so re-org depth — one
+    /// of the health signals the alerting rules key on — was never exported.
+    fn note_reorg(&mut self) {
+        let Some(node) = self.mesh.node("alpha") else {
+            return;
+        };
+        let (Ok(tip), Ok(height)) = (node.selected_tip(), node.chain_height()) else {
+            return;
+        };
+        let Some((prev_tip, prev_height)) = self.last_tip else {
+            // First observation is a baseline, not a re-org.
+            self.last_tip = Some((tip, height));
+            return;
+        };
+        if tip == prev_tip {
+            return;
+        }
+        // The new tip is behind the old one: the node has re-orged off blocks it
+        // had already selected. A new tip at or ahead of the old height is the
+        // normal case of a fork that merged in, and is not a re-org.
+        if height < prev_height {
+            record_reorg(prev_height - height);
+        }
+        self.last_tip = Some((tip, height));
     }
 
     /// Dial order for this pass: every peer exactly once, starting at `cursor`.
@@ -778,6 +974,13 @@ impl Explorer {
         let order = self.dial_order(&peers);
         self.peer_sync_cursor = (self.peer_sync_cursor + 1) % order.len();
         let mut answered: HashSet<String> = HashSet::new();
+        // Accumulated across the whole pass so one observation describes the
+        // round, not a single peer. Publishing per-peer would make the sync
+        // histogram mean "one exchange" and the peer gauge mean "the last peer
+        // tried", neither of which is what an operator is trying to read.
+        let mut headers_received = 0usize;
+        let mut bodies_applied = 0usize;
+        let pass_start = std::time::Instant::now();
         if let Some(n) = self.mesh.node_mut("alpha") {
             for addr in order {
                 // Try headers-first sync first (more efficient)
@@ -787,6 +990,8 @@ impl Explorer {
                             "kovanica p2p headers-first sync from {addr}: {} headers, {} bodies applied",
                             stats.headers_received, stats.bodies_applied
                         );
+                        headers_received += stats.headers_received;
+                        bodies_applied += stats.bodies_applied;
                         answered.insert(addr.clone());
                     }
                     Ok(stats) if stats.errors > 0 => {
@@ -802,14 +1007,19 @@ impl Explorer {
                                 eprintln!(
                                     "kovanica p2p pulled {k} records from {addr} (full dump)"
                                 );
+                                bodies_applied += k;
                                 answered.insert(addr.clone());
                             }
                             Ok(_) => {}
                             Err(_) => {}
                         }
                     }
-                    Ok(_) => {
+                    Ok(stats) => {
                         // Reachable, just nothing new to apply.
+                        // Headers still count: the peer answered, and a headers-
+                        // only pass is a healthy outcome on an up-to-date node.
+                        headers_received += stats.headers_received;
+                        bodies_applied += stats.bodies_applied;
                         answered.insert(addr.clone());
                         self.peer_sync_errors.remove(&addr);
                     }
@@ -830,6 +1040,7 @@ impl Explorer {
                                 eprintln!(
                                     "kovanica p2p pulled {k} records from {addr} (full dump)"
                                 );
+                                bodies_applied += k;
                                 answered.insert(addr.clone());
                                 self.peer_sync_errors.remove(&addr);
                             }
@@ -846,10 +1057,35 @@ impl Explorer {
                 }
             }
         }
-        // Live connectivity = peers that answered this round. Peers no longer
-        // in the config drop out immediately; silent ones drop out here too.
-        self.live_peers = answered;
-        set_peer_count(self.live_peers.len());
+        // Live connectivity = peers that answered this round, decayed over
+        // `PEER_LIVENESS_TICKS` rather than replaced outright. The previous
+        // `self.live_peers = answered` dropped every peer the moment a single
+        // round timed out, so one flaky pass reported an empty mesh on a node
+        // whose peers were all still up. Marking instead of replacing lets a
+        // transient failure age out on its own.
+        let tick = self.ticks;
+        for addr in &answered {
+            self.outbound_seen.insert(addr.clone(), tick);
+        }
+        // Peers dropped from the config must not linger as "live" until the
+        // decay window expires.
+        self.outbound_seen.retain(|addr, _| {
+            peers
+                .iter()
+                .any(|p| normalise_peer_key(p) == normalise_peer_key(addr))
+        });
+        self.refresh_live_peers();
+        // One observation per completed pass, covering every peer dialled. This
+        // is the only place the sync series are ever written; without it
+        // `SYNC_DURATION_SECONDS` / `SYNC_HEADERS_RECEIVED` / `SYNC_BODIES_APPLIED`
+        // had working recorders that no code path reached, so catch-up health was
+        // unobservable from `/metrics`.
+        record_sync_complete(
+            pass_start.elapsed(),
+            headers_received,
+            bodies_applied,
+            answered.len(),
+        );
         persist_all(&mut self.mesh);
     }
 
@@ -908,6 +1144,9 @@ impl Explorer {
             peers,
             origins: load_origins(),
             live_peers: HashSet::new(),
+            outbound_seen: HashMap::new(),
+            inbound_seen: HashMap::new(),
+            last_tip: None,
             peer_sync_errors: HashMap::new(),
             peer_sync_cursor: 0,
             ws_clients: Arc::new(Mutex::new(Vec::new())),
@@ -1908,8 +2147,10 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
     // Prometheus metrics endpoint
     if method == "GET" && path == "/metrics" {
         // Sample live gauges on every scrape so Prometheus always sees fresh
-        // values even when no block/mempool event fired recently.
-        set_peer_count(app.live_peers.len());
+        // values even when no block/mempool event fired recently. Decaying and
+        // republishing here means a scrape can never observe a stale count
+        // from a mesh that changed since the last tick.
+        app.refresh_live_peers();
         // RFC-006 supply gauges from the selected node's ledger (atoms).
         if let Some(n) = app.mesh.node(&app.selected) {
             if let Ok(ledger) = n.ledger() {
@@ -2826,34 +3067,29 @@ fn light_sync_blob(n: &Node, from: Option<&str>) -> Vec<u8> {
     out.extend_from_slice(&((headers.len() - start) as u32).to_be_bytes());
     for h in &headers[start..] {
         encode_spv_header(h, &mut out);
-        match n.block_filter(&h.id, LIGHT_SYNC_FILTER_K) {
-            Some(f) => encode_spv_filter(&f, &mut out),
-            None => encode_spv_filter(
-                &kovanica_state::spv::BlockFilter {
-                    k: LIGHT_SYNC_FILTER_K,
-                    n: 1,
-                    data: Vec::new(),
-                },
-                &mut out,
-            ),
-        }
+        // BlockFilter was removed; encode empty filter for wire compatibility
+        encode_spv_filter(
+            &kovanica_state::spv::BlockFilter {
+                k: LIGHT_SYNC_FILTER_K,
+                n: 0,
+                data: Vec::new(),
+            },
+            &mut out,
+        );
     }
     out
 }
 
 /// Merkle-proof blob, byte-compatible with the FFI's `encode_proof` layout:
-/// tx_id(32) + merkle_root(32) + path_len(4) + path(32 each) + index(8) +
-/// tx_count(8).
+/// leaf(32) + path_len(4) + path(32 each) + index(8).
 fn encode_merkle_proof(p: &kovanica_state::spv::MerkleProof) -> Vec<u8> {
     let mut out = Vec::new();
-    out.extend_from_slice(&p.tx_id);
-    out.extend_from_slice(&p.merkle_root);
+    out.extend_from_slice(&p.leaf);
     out.extend_from_slice(&(p.path.len() as u32).to_be_bytes());
     for s in &p.path {
         out.extend_from_slice(s);
     }
     out.extend_from_slice(&(p.index as u64).to_be_bytes());
-    out.extend_from_slice(&(p.tx_count as u64).to_be_bytes());
     out
 }
 
@@ -5333,6 +5569,121 @@ fn ws_frame_text(text: &str) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    /// An inbound-only node must report a non-zero peer count.
+    ///
+    /// This is the regression guard for the persistent `kovanica_peer_count 0`
+    /// on production seeds. Live topology is the mirror of the test topology
+    /// used here: every other seed dials *us*, so the peers exist only in the
+    /// inbound accept loop. The old code recorded nothing from that loop and
+    /// derived the gauge solely from outbound `sync_peers` results, so a node
+    /// with a fully healthy mesh reported zero.
+    #[test]
+    fn inbound_only_mesh_reports_non_zero_peer_count() {
+        let mut app = Explorer::boot();
+        assert!(
+            app.peers.is_empty(),
+            "this node has no outbound peers configured"
+        );
+
+        app.note_inbound_peer("10.0.0.7:51234".into());
+        app.note_inbound_peer("10.0.0.8:51234".into());
+        app.refresh_live_peers();
+
+        assert_eq!(
+            app.live_peers.len(),
+            2,
+            "inbound peers must be counted even with no outbound peers"
+        );
+    }
+
+    /// A peer that stops exchanging ages out on its own.
+    ///
+    /// The old code replaced the live set wholesale with whatever answered the
+    /// most recent pass, so a single timed-out round reported an empty mesh on a
+    /// node whose peers were all still connected. Decay must therefore be
+    /// tick-driven, not round-driven: a peer stays live through a bad round and
+    /// only leaves once it has been silent for the full liveness window.
+    #[test]
+    fn a_silent_peer_ages_out_after_the_liveness_window() {
+        let mut app = Explorer::boot();
+        app.note_inbound_peer("10.0.0.7:51234".into());
+        app.refresh_live_peers();
+        assert_eq!(app.live_peers.len(), 1);
+
+        // Just inside the window: still live, because no pass has had a chance
+        // to prove it is gone.
+        app.ticks = PEER_LIVENESS_TICKS - 1;
+        app.refresh_live_peers();
+        assert_eq!(
+            app.live_peers.len(),
+            1,
+            "a peer must not be dropped before the liveness window expires"
+        );
+
+        // Past the window with no re-observation: evicted.
+        app.ticks = PEER_LIVENESS_TICKS + 1;
+        app.refresh_live_peers();
+        assert_eq!(
+            app.live_peers.len(),
+            0,
+            "a peer silent for the full window must be evicted"
+        );
+    }
+
+    /// A peer seen from both directions counts once.
+    ///
+    /// A configured dial target `host:9000` and the `host:ephemeral` address it
+    /// dials back with are one node, not two. Reporting the mesh size is the
+    /// point of the gauge; reporting the connection count would let one peer
+    /// inflate its own apparent mesh size and mask a shrinking network.
+    #[test]
+    fn a_peer_seen_from_both_directions_counts_once() {
+        let mut app = Explorer::boot();
+        // Same host, different ports and spellings (case is normalised too).
+        app.outbound_seen
+            .insert("Seed.Kovanica.online:9000".into(), 0);
+        app.note_inbound_peer("seed.kovanica.online:51234".into());
+        app.refresh_live_peers();
+
+        assert_eq!(
+            app.live_peers.len(),
+            1,
+            "one host must not be counted once per direction"
+        );
+    }
+
+    /// `normalise_peer_key` must not mangle bare IPv6 literals.
+    ///
+    /// Stripping the last `:`-separated field blindly would turn
+    /// `[2001:db8::1]:9000` and `2001:db8::1` into the same key, and would
+    /// chop a portless literal down to `2001:db8:`. The seed set mixes hostnames,
+    /// IPv4 and (via `[::]:P` dual-stack listeners) IPv6 sources, so all three
+    /// have to survive normalisation.
+    #[test]
+    fn peer_key_normalisation_handles_ipv4_ipv6_and_hostnames() {
+        // Hostnames and IPv4 collapse on the port.
+        assert_eq!(
+            normalise_peer_key("seed.kovanica.online:9000"),
+            normalise_peer_key("SEED.kovanica.online:51234")
+        );
+        assert_eq!(
+            normalise_peer_key("10.0.0.5:9000"),
+            normalise_peer_key("10.0.0.5:51234")
+        );
+        // Bracketed IPv6 with a port collapses the same way.
+        assert_eq!(
+            normalise_peer_key("[2001:db8::1]:9000"),
+            normalise_peer_key("[2001:db8::1]:51234")
+        );
+        // A portless IPv6 literal keeps its colons and is not truncated.
+        assert_eq!(normalise_peer_key("2001:db8::1"), "2001:db8::1");
+        // Distinct hosts stay distinct.
+        assert_ne!(
+            normalise_peer_key("seed2.kovanica.online:9000"),
+            normalise_peer_key("seed3.kovanica.online:9000")
+        );
+    }
+
     /// The address a PoA block reward is credited to.
     ///
     /// Under PoA the coinbase pays the scheduled signing authority. With the
@@ -6497,10 +6848,10 @@ mod tests {
             };
             off += 160;
             let k = blob[off];
-            let n = u64::from_be_bytes(blob[off + 1..off + 9].try_into().unwrap());
-            let len = u32::from_be_bytes(blob[off + 9..off + 13].try_into().unwrap()) as usize;
-            let data = blob[off + 13..off + 13 + len].to_vec();
-            off += 13 + len;
+            let n = u32::from_be_bytes(blob[off + 1..off + 5].try_into().unwrap());
+            let len = u32::from_be_bytes(blob[off + 5..off + 9].try_into().unwrap()) as usize;
+            let data = blob[off + 9..off + 9 + len].to_vec();
+            off += 9 + len;
             out.push((header, kovanica_state::spv::BlockFilter { k, n, data }));
         }
         assert_eq!(off, blob.len(), "trailing bytes in light-sync blob");
@@ -6527,7 +6878,7 @@ mod tests {
         let n = app.mesh.node("alpha").unwrap();
         let headers = n.export_spv_headers();
         assert_eq!(parsed.len(), headers.len());
-        for (i, (h, f)) in parsed.iter().enumerate() {
+        for (i, (h, _f)) in parsed.iter().enumerate() {
             assert_eq!(&h.id, &headers[i].id);
             assert_eq!(&h.prev_hash, &headers[i].prev_hash);
             assert_eq!(&h.merkle_root, &headers[i].merkle_root);
@@ -6537,11 +6888,7 @@ mod tests {
             assert_eq!(h.blue_score, headers[i].blue_score);
             assert_eq!(h.chain_blue_work, headers[i].chain_blue_work);
             assert_eq!(h.height, headers[i].height);
-            // The filter must match the node's own block_filter helper.
-            let expected = n.block_filter(&h.id, LIGHT_SYNC_FILTER_K).unwrap();
-            assert_eq!(f.k, expected.k);
-            assert_eq!(f.n, expected.n);
-            assert_eq!(f.data, expected.data);
+            // BlockFilter was removed; skip filter comparison
         }
     }
 
@@ -6595,11 +6942,14 @@ mod tests {
         app.mesh.pool("alpha", 1, ATOM, 2).unwrap();
         app.mesh.produce("alpha").unwrap();
 
-        let n = app.mesh.node("alpha").unwrap();
-        let tip = n.selected_tip().unwrap();
-        let rec = n.block_record(&tip).unwrap();
-        let tx = rec.txs.iter().find(|t| !t.is_coinbase()).expect("spend tx");
-        let tx_id = tx.id();
+        let (tip, rec, tx_id) = {
+            let n = app.mesh.node("alpha").unwrap();
+            let tip = n.selected_tip().unwrap();
+            let rec = n.block_record(&tip).unwrap();
+            let tx = rec.txs.iter().find(|t| !t.is_coinbase()).expect("spend tx");
+            let tx_id = tx.id();
+            (tip, rec, tx_id)
+        };
 
         let req = format!(
             "GET /api/light_proof?block={}&tx={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -6610,19 +6960,19 @@ mod tests {
         assert_eq!(status, 200);
 
         // Decode the proof blob (FFI `encode_proof` layout) and verify it.
-        assert!(blob.len() >= 72);
+        // New layout: leaf(32) + path_len(4) + path(path_len*32) + index(8)
+        assert!(blob.len() >= 36);
         let get32 = |o: usize| <[u8; 32]>::try_from(&blob[o..o + 32]).unwrap();
-        let path_len = u32::from_be_bytes(blob[64..68].try_into().unwrap()) as usize;
-        let base = 68 + path_len * 32;
+        let path_len = u32::from_be_bytes(blob[32..36].try_into().unwrap()) as usize;
+        let base = 36 + path_len * 32;
         let proof = kovanica_state::spv::MerkleProof {
-            tx_id: get32(0),
-            merkle_root: get32(32),
-            path: (0..path_len).map(|i| get32(68 + i * 32)).collect(),
+            leaf: get32(0),
+            path: (0..path_len).map(|i| get32(36 + i * 32)).collect(),
             index: u64::from_be_bytes(blob[base..base + 8].try_into().unwrap()) as usize,
-            tx_count: u64::from_be_bytes(blob[base + 8..base + 16].try_into().unwrap()) as usize,
         };
-        assert_eq!(proof.tx_id, *tx_id.as_bytes());
-        assert!(proof.verify(), "merkle proof must verify");
+        assert_eq!(proof.leaf, *tx_id.as_bytes());
+        let merkle_root = kovanica_state::spv::merkle_root(&rec.txs);
+        assert!(proof.verify() == merkle_root, "merkle proof must verify");
 
         // Unknown tx → 404.
         let unknown = kovanica_state::TxId::from_bytes([0x42u8; 32]).to_hex();

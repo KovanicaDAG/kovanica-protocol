@@ -365,14 +365,12 @@ pub fn encode_msg(msg: &RelayMsg) -> Vec<u8> {
             match proof {
                 Some(p) => {
                     buf.push(1u8);
-                    buf.extend_from_slice(&p.tx_id);
-                    buf.extend_from_slice(&p.merkle_root);
+                    buf.extend_from_slice(&p.leaf);
                     buf.extend_from_slice(&(p.path.len() as u64).to_le_bytes());
                     for sibling in &p.path {
                         buf.extend_from_slice(sibling);
                     }
                     buf.extend_from_slice(&(p.index as u64).to_le_bytes());
-                    buf.extend_from_slice(&(p.tx_count as u64).to_le_bytes());
                 }
                 None => {
                     buf.push(0u8);
@@ -592,8 +590,7 @@ pub fn decode_msg(bytes: &[u8]) -> Result<RelayMsg, NetError> {
             let proof = match has_proof {
                 0 => None,
                 1 => {
-                    let tx_id = r.read_array::<32>()?;
-                    let proof_merkle_root = r.read_array::<32>()?;
+                    let leaf = r.read_array::<32>()?;
                     let path_len = r.read_count(32)?;
                     if path_len > MAX_MERKLE_PATH {
                         return Err(NetError::Decode("merkle path too long".into()));
@@ -603,14 +600,7 @@ pub fn decode_msg(bytes: &[u8]) -> Result<RelayMsg, NetError> {
                         path.push(r.read_array::<32>()?);
                     }
                     let index = u64::from_le_bytes(r.read_array::<8>()?) as usize;
-                    let proof_tx_count = u64::from_le_bytes(r.read_array::<8>()?) as usize;
-                    Some(MerkleProof {
-                        tx_id,
-                        merkle_root: proof_merkle_root,
-                        path,
-                        index,
-                        tx_count: proof_tx_count,
-                    })
+                    Some(MerkleProof { leaf, path, index })
                 }
                 _ => return Err(NetError::Decode("invalid has_proof flag".into())),
             };
@@ -874,11 +864,9 @@ mod tests {
         );
 
         let proof = MerkleProof {
-            tx_id: *tx.id().as_bytes(),
-            merkle_root: [5u8; 32],
+            leaf: *tx.id().as_bytes(),
             path: vec![[6u8; 32], [7u8; 32]],
             index: 1,
-            tx_count: 4,
         };
 
         let msg = RelayMsg::MerkleBlock {

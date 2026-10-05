@@ -17,15 +17,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ed25519_dalek::{Signer, SigningKey};
 use kovanica_dag::{
     AuthorityError, AuthorityPublicKey, AuthoritySet, AuthorityUpdateTx, Block, BlockId, Dag,
-    PoAConfig, StakeMerkleProof, POA_NOMINAL_WORK,
+    PoAConfig, POA_NOMINAL_WORK,
 };
 use kovanica_state::multisig::{verify_threshold_signatures, MultisigScript};
 use kovanica_state::{
-    apply_block_at_height, decode_block_payload, encode_block_payload, verify, Address, AssetCreationParams, AssetId,
-    AssetKind, HalvingSchedule, HtlcScript, KeyPair, Ledger, LedgerError, LedgerInsertError,
-    LedgerStore, LogoUri, MetadataUri, OutPoint, Sig, StealthAddress, Transaction, TxId, TxInput,
-    TxOutput, UtxoSet, VaultScript, ASSET_CREATION_FEE, COINBASE_MATURITY, DEFAULT_HALVING_ERA,
-    FEE_PRODUCER_DEN, FEE_PRODUCER_NUM, MAX_MINT_PRICE, MIN_MINT_PRICE,
+    apply_block_at_height, decode_block_payload, encode_block_payload, verify, Address,
+    AssetCreationParams, AssetId, AssetKind, HalvingSchedule, HtlcScript, KeyPair, Ledger,
+    LedgerError, LedgerInsertError, LedgerStore, LogoUri, MetadataUri, OutPoint, Sig,
+    StealthAddress, Transaction, TxId, TxInput, TxOutput, UtxoSet, VaultScript, ASSET_CREATION_FEE,
+    COINBASE_MATURITY, DEFAULT_HALVING_ERA, FEE_PRODUCER_DEN, FEE_PRODUCER_NUM, MAX_MINT_PRICE,
+    MIN_MINT_PRICE,
 };
 use kovanica_types::Hash32;
 use kovanica_wallet::Wallet;
@@ -1099,41 +1100,6 @@ impl Node {
     pub fn poa_config(&self) -> Option<PoAConfig> {
         self.ledger.as_ref().and_then(Ledger::poa_config)
     }
-
-    /// Get the stake merkle proof for the authority scheduled at `slot`.
-    /// Returns the stake merkle proof for SW-PoA SPV verification.
-    pub fn get_stake_proof(&self, slot: u64) -> Result<StakeMerkleProof, NodeError> {
-        let ledger = self.ledger.as_ref().ok_or(NodeError::NotInitialized)?;
-        let poa = ledger.poa_config().ok_or(NodeError::NotInitialized)?;
-        let authority = poa.authority_set.active_authority(slot);
-        let proof = poa
-            .authority_set
-            .stake_merkle_proof(authority)
-            .ok_or(NodeError::NotInitialized)?;
-        Ok(proof)
-    }
-
-    /// Get the full authority stake set for an epoch (for light client caching).
-    /// An epoch is typically 100k slots.
-    pub fn get_epoch_authority_set(
-        &self,
-        _epoch: u64,
-    ) -> Result<Vec<(AuthorityPublicKey, u64)>, NodeError> {
-        let ledger = self.ledger.as_ref().ok_or(NodeError::NotInitialized)?;
-        let poa = ledger.poa_config().ok_or(NodeError::NotInitialized)?;
-        let authorities = poa.authority_set.authorities().to_vec();
-        let stakes = poa
-            .authority_set
-            .stakes()
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|| vec![1u64; authorities.len()]);
-        Ok(authorities
-            .into_iter()
-            .zip(stakes.iter().copied())
-            .collect())
-    }
-
-    /// Apply an on-chain authority set update (RFC-POA §1, KVP-201).
     ///
     /// Validates the update against the current authority set and replaces
     /// it on success. Returns the new AuthoritySet.
@@ -1924,7 +1890,7 @@ impl Node {
         if change > 0 {
             outputs.push(TxOutput::native(change, from));
         }
-        
+
         // Build creation params for the tag
         let creation_params = AssetCreationParams {
             mint_price_per_unit,
@@ -3445,22 +3411,6 @@ impl Node {
             .collect()
     }
 
-    /// The compact block filter for a known block: one entry per distinct
-    /// output address in its payload. `k` is the Golomb-Rice parameter (8 is
-    /// the reference choice; higher = denser, larger).
-    pub fn block_filter(&self, id: &BlockId, k: u8) -> Option<kovanica_state::spv::BlockFilter> {
-        let ledger = self.ledger.as_ref()?;
-        let block = ledger.dag().block(id)?;
-        let txs = decode_block_payload(block.payload()).ok()?;
-        let mut addrs: Vec<[u8; 32]> = txs
-            .iter()
-            .flat_map(|tx| tx.outputs().iter().map(|o| *o.owner.payload()))
-            .collect();
-        addrs.sort_unstable();
-        addrs.dedup();
-        Some(kovanica_state::spv::BlockFilter::from_addresses(&addrs, k))
-    }
-
     /// A Merkle-inclusion proof for `tx_id` inside block `id`, for light
     /// clients to verify against the block header's merkle root.
     pub fn merkle_proof(
@@ -3473,6 +3423,24 @@ impl Node {
         let txs = decode_block_payload(block.payload()).ok()?;
         let index = txs.iter().position(|tx| &tx.id() == tx_id)?;
         kovanica_state::spv::generate_merkle_proof(&txs, index)
+    }
+
+    /// Create a Golomb-Rice block filter from the distinct output addresses
+    /// in a block's payload. Returns `None` if the block is not found or
+    /// has no payload.
+    pub fn block_filter(&self, id: &BlockId) -> Option<kovanica_state::spv::BlockFilter> {
+        let ledger = self.ledger.as_ref()?;
+        let block = ledger.dag().block(id)?;
+        let txs = decode_block_payload(block.payload()).ok()?;
+        let mut addresses: Vec<[u8; 32]> = txs
+            .iter()
+            .flat_map(|tx| tx.outputs().iter().map(|o| *o.owner.payload()))
+            .collect();
+        addresses.sort_unstable();
+        addresses.dedup();
+        Some(kovanica_state::spv::BlockFilter::from_addresses(
+            &addresses, 8,
+        ))
     }
 
     /// Reconstruct the transaction history of `owner` by scanning stored
@@ -4299,8 +4267,8 @@ mod tests {
         assert!(mb.proof.is_some());
         assert!(mb.matched_tx.is_some());
         let proof = mb.proof.as_ref().unwrap();
-        assert_eq!(proof.tx_id, *sent.tx.as_bytes());
-        assert!(proof.verify());
+        assert_eq!(proof.leaf, *sent.tx.as_bytes());
+        assert!(proof.verify() == mb.merkle_root);
 
         // Non-matching transaction
         let unknown_tx = TxId::from_bytes([99u8; 32]);

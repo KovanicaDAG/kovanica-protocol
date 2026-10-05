@@ -97,11 +97,9 @@ fn sample_messages() -> Vec<RelayMsg> {
             merkle_root: [0xCC; 32],
             tx_count: 1,
             proof: Some(MerkleProof {
-                tx_id: *sample_tx.id().as_bytes(),
-                merkle_root: [0xCC; 32],
+                leaf: *sample_tx.id().as_bytes(),
                 path: vec![[0xDD; 32], [0xEE; 32]],
                 index: 0,
-                tx_count: 1,
             }),
             matched_tx: Some(sample_tx),
         },
@@ -276,68 +274,64 @@ fn test_adversarial_merkle_proof_verification() {
             let proof = generate_merkle_proof(&txs, index)
                 .expect("proof generation must succeed for valid index");
 
-            assert_eq!(proof.merkle_root, root);
+            assert_eq!(proof.verify(), root);
             assert_eq!(proof.index, index);
-            assert_eq!(proof.tx_count, count);
-            assert!(proof.verify(), "Valid proof must verify");
 
-            // Attack 1: Mutate tx_id (single bit flip across all 32 bytes)
+            // Attack 1: Mutate leaf (single bit flip across all 32 bytes)
             for byte_idx in 0..32 {
                 for bit in 0..8 {
                     let mut bad_proof = proof.clone();
-                    bad_proof.tx_id[byte_idx] ^= 1 << bit;
-                    assert!(
-                        !bad_proof.verify(),
-                        "Proof with bit flip at tx_id byte {} bit {} must fail",
+                    bad_proof.leaf[byte_idx] ^= 1 << bit;
+                    assert_ne!(
+                        bad_proof.verify(),
+                        root,
+                        "Proof with bit flip at leaf byte {} bit {} must fail",
                         byte_idx,
                         bit
                     );
                 }
             }
 
-            // Attack 2: Mutate merkle_root (single bit flip)
-            for byte_idx in 0..32 {
-                let mut bad_proof = proof.clone();
-                bad_proof.merkle_root[byte_idx] ^= 0x01;
-                assert!(
-                    !bad_proof.verify(),
-                    "Proof with altered merkle_root must fail"
-                );
-            }
-
-            // Attack 3: Mutate sibling path elements
+            // Attack 2: Mutate sibling path elements
             for (sibling_idx, _) in proof.path.iter().enumerate() {
                 let mut bad_proof = proof.clone();
                 bad_proof.path[sibling_idx][0] ^= 0xFF;
-                assert!(
-                    !bad_proof.verify(),
+                assert_ne!(
+                    bad_proof.verify(),
+                    root,
                     "Proof with corrupted sibling at depth {} must fail",
                     sibling_idx
                 );
             }
 
-            // Attack 4: Mutate leaf index bits (flip least-significant bit for even counts)
+            // Attack 3: Mutate leaf index bits (flip least-significant bit for even counts)
             if count > 1 {
                 let mut bad_proof = proof.clone();
                 bad_proof.index = index ^ 1;
-                assert!(
-                    !bad_proof.verify(),
+                assert_ne!(
+                    bad_proof.verify(),
+                    root,
                     "Proof with flipped index {} -> {} must fail",
                     index,
                     bad_proof.index
                 );
             }
 
-            // Attack 5: Truncate or extend sibling path
+            // Attack 4: Truncate or extend sibling path
             if !proof.path.is_empty() {
                 let mut truncated = proof.clone();
                 truncated.path.pop();
-                assert!(!truncated.verify(), "Proof with truncated path must fail");
+                assert_ne!(
+                    truncated.verify(),
+                    proof.verify(),
+                    "Proof with truncated path must fail"
+                );
 
                 let mut extended = proof.clone();
                 extended.path.push([0x42; 32]);
-                assert!(
-                    !extended.verify(),
+                assert_ne!(
+                    extended.verify(),
+                    proof.verify(),
                     "Proof with extra sibling in path must fail"
                 );
             }
@@ -361,21 +355,18 @@ fn test_merkle_odd_leaf_count_and_index_bounds_analysis() {
     let proof1 = generate_merkle_proof(&txs, 1).unwrap();
     let proof2 = generate_merkle_proof(&txs, 2).unwrap();
 
-    assert_eq!(proof0.merkle_root, root);
-    assert_eq!(proof1.merkle_root, root);
-    assert_eq!(proof2.merkle_root, root);
-    assert!(proof0.verify());
-    assert!(proof1.verify());
-    assert!(proof2.verify());
+    assert_eq!(proof0.verify(), root);
+    assert_eq!(proof1.verify(), root);
+    assert_eq!(proof2.verify(), root);
 
     // In a 3-leaf tree, index 2 has duplicate sibling at level 0 (T2, T2).
     // An adversarial proof with index = 3 evaluates H(T2, T2) identically.
     let mut forged_idx3 = proof2.clone();
     forged_idx3.index = 3;
-    // Without upper-bound index validation in MerkleProof::verify, forged_idx3.verify() returns true
+    // Without upper-bound index validation in MerkleProof::verify, forged_idx3.verify() returns root
     // This empirically proves that MerkleProof::verify only validates path arithmetic,
     // and higher-level verifiers must enforce proof.index < proof.tx_count.
-    assert!(forged_idx3.verify());
+    assert_eq!(forged_idx3.verify(), root);
 }
 
 #[test]

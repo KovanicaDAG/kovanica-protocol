@@ -504,9 +504,7 @@ impl AssetCreationParams {
         }
         let mut pos = Self::MAGIC.len();
 
-        let mint_price_per_unit = u64::from_le_bytes(
-            tag[pos..pos + 8].try_into().ok()?,
-        );
+        let mint_price_per_unit = u64::from_le_bytes(tag[pos..pos + 8].try_into().ok()?);
         pos += 8;
 
         let has_logo = tag.get(pos)? == &1;

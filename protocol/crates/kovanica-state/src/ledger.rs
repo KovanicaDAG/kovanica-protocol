@@ -267,9 +267,9 @@ pub struct SupplyMetrics {
 }
 
 use crate::tx::{
-    decode_block_payload, encode_block_payload, AssetCreationParams, AssetId, AssetKind, AssetRegistryEntry,
-    DecodeError, LogoScheme, LogoUri, MetadataScheme, MetadataUri, OutPoint, Transaction, TxId,
-    TxOutput,
+    decode_block_payload, encode_block_payload, AssetCreationParams, AssetId, AssetKind,
+    AssetRegistryEntry, DecodeError, LogoScheme, LogoUri, MetadataScheme, MetadataUri, OutPoint,
+    Transaction, TxId, TxOutput,
 };
 use crate::utxo::{UtxoEntry, UtxoSet};
 use crate::validation::TxStructureValidator;
@@ -1830,7 +1830,7 @@ pub fn apply_dag(dag: &Dag, subsidy: u64) -> LedgerRun {
                     MINT_PRICE_ACTIVATION_SCORE,
                     ASSET_LOGO_ACTIVATION_SCORE,
                 ) {
-                Ok(summary) => {
+                    Ok(summary) => {
                         cumulative_minted = cumulative_minted.saturating_add(summary.minted);
                         run.accepted.push(id);
                     }
@@ -2575,7 +2575,7 @@ impl Ledger {
             let is_coinbase = tx.is_coinbase();
             // Decode creation params from the tag (KVP-107).
             let creation_params = AssetCreationParams::decode(tx.tag());
-            
+
             // Only process if it's a coinbase block OR if the tx carries creation params.
             if is_coinbase {
                 if !is_coinbase_block {
@@ -2584,7 +2584,7 @@ impl Ledger {
             } else if creation_params.is_none() {
                 continue; // Regular tx without creation params - nothing to register
             }
-            
+
             for output in tx.outputs() {
                 if let Some(asset_id) = output.asset_id {
                     if asset_id.is_native() {
@@ -4552,7 +4552,13 @@ mod tests {
             ASSET_LOGO_ACTIVATION_SCORE,
         )
         .unwrap_err();
-        assert!(matches!(err, LedgerError::InvalidAssetLogo { field: "logo_uri", .. }));
+        assert!(matches!(
+            err,
+            LedgerError::InvalidAssetLogo {
+                field: "logo_uri",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -4609,7 +4615,13 @@ mod tests {
             ASSET_LOGO_ACTIVATION_SCORE,
         )
         .unwrap_err();
-        assert!(matches!(err, LedgerError::InvalidAssetLogo { field: "metadata_uri", .. }));
+        assert!(matches!(
+            err,
+            LedgerError::InvalidAssetLogo {
+                field: "metadata_uri",
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -4721,7 +4733,7 @@ mod tests {
             0,
             0,
             0,
-            1,   // blue_score
+            1, // blue_score
             0,
             0,
             0,
@@ -4772,8 +4784,7 @@ mod tests {
         );
 
         // Create a Ledger to test update_asset_registry
-        let mut ledger =
-            Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
+        let mut ledger = Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
         ledger.update_asset_registry(std::slice::from_ref(&cb), true);
 
         let entry = ledger.asset_registry.get(&asset_id).unwrap();
@@ -4783,9 +4794,15 @@ mod tests {
         assert_eq!(entry.max_supply, u64::MAX);
         assert_eq!(entry.mint_price_per_unit, 100_000_000);
         assert!(entry.logo_uri.is_some());
-        assert_eq!(entry.logo_uri.as_ref().unwrap().uri, "ipfs://QmFungibleLogo");
+        assert_eq!(
+            entry.logo_uri.as_ref().unwrap().uri,
+            "ipfs://QmFungibleLogo"
+        );
         assert!(entry.metadata_uri.is_some());
-        assert_eq!(entry.metadata_uri.as_ref().unwrap().uri, "ipfs://QmFungibleMetadata");
+        assert_eq!(
+            entry.metadata_uri.as_ref().unwrap().uri,
+            "ipfs://QmFungibleMetadata"
+        );
         assert_eq!(entry.creator, Some([5u8; 32]));
     }
 
@@ -4812,8 +4829,7 @@ mod tests {
             encoded_tag,
         );
 
-        let mut ledger =
-            Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
+        let mut ledger = Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
         ledger.update_asset_registry(std::slice::from_ref(&cb), true);
 
         let entry = ledger.asset_registry.get(&asset_id).unwrap();
@@ -4822,7 +4838,10 @@ mod tests {
         assert_eq!(entry.max_supply, 1);
         assert_eq!(entry.mint_price_per_unit, 500_000_000);
         assert!(entry.logo_uri.is_some());
-        assert_eq!(entry.logo_uri.as_ref().unwrap().uri, "https://example.com/nft-logo.png");
+        assert_eq!(
+            entry.logo_uri.as_ref().unwrap().uri,
+            "https://example.com/nft-logo.png"
+        );
         assert!(entry.metadata_uri.is_none());
         assert_eq!(entry.creator, Some([7u8; 32]));
     }
@@ -4840,8 +4859,7 @@ mod tests {
             legacy_tag,
         );
 
-        let mut ledger =
-            Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
+        let mut ledger = Ledger::new(3, HalvingSchedule::new(100, 1_000), &[]).expect("genesis");
         ledger.update_asset_registry(std::slice::from_ref(&cb), true);
 
         let entry = ledger.asset_registry.get(&asset_id).unwrap();

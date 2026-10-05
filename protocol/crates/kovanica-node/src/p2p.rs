@@ -32,7 +32,7 @@ use crate::dht::{NodeId, PeerContact, RoutingTable};
 use crate::metrics::{
     record_dht_bootstrap, record_dht_find_node, record_dht_pruned, record_dht_query_received,
     record_dht_query_sent, record_p2p_message_received, record_p2p_message_sent,
-    record_peer_connected, set_peer_count,
+    record_peer_connected,
 };
 use crate::node::{BlockRecord, Node, NodeError};
 use crate::p2p_hardening::{P2pHardening, P2pHardeningConfig, PeerStats};
@@ -289,7 +289,15 @@ impl Mesh {
         if inserted {
             self.enqueue_hello(from, to);
             record_peer_connected();
-            set_peer_count(self.total_peer_count());
+            // Deliberately does NOT publish the peer-count gauge.
+            // `Mesh::peers` is the in-process logical mesh (self plus demo
+            // nodes); a production node's real peers are TCP connections owned
+            // by `Explorer`, which tracks inbound and outbound liveness
+            // separately. Two writers to one global gauge meant whichever fired
+            // last won, so a single demo `connect` could clobber the true mesh
+            // size — and on a seed, `Mesh` holds ~1 entry while the real mesh is
+            // larger. `Explorer::refresh_live_peers` is the sole owner of
+            // `set_peer_count`; the counter above is additive and stays here.
 
             // A verified handshake exchanges NodeId and address, so both sides
             // register each other as DHT contacts (Kademlia refreshes buckets
