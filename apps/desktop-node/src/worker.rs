@@ -13,8 +13,9 @@ use std::time::Duration;
 
 use kovanica_dag::{Block, BlockId};
 use kovanica_node::net;
-use kovanica_node::spv::{BlockFilter, BlockHeader, MerkleProof, SpvClient};
+use kovanica_node::spv::{BlockHeader, MerkleProof, SpvClient};
 use kovanica_node::{Node, NodeError};
+use kovanica_state::spv::BlockFilter;
 use kovanica_state::{Address, AssetKind, KeyPair, OutPoint, Sig, Transaction, TxId, TxOutput};
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
@@ -153,7 +154,7 @@ impl SpvStore {
         self.headers
             .iter()
             .filter_map(|(h, f)| {
-                if f.contains(owner) {
+                if f.matches(owner) {
                     Some(h.id.to_string())
                 } else {
                     None
@@ -1044,11 +1045,13 @@ fn spv_verify(store: &SpvStore, block_id: &str, tx_id: &str) -> Result<bool, Str
         .take(1024 * 1024)
         .read_to_end(&mut blob)
         .map_err(|e| format!("read proof blob: {e}"))?;
-    let proof = parse_merkle_proof(&blob)?;
-    if proof.merkle_root != header.merkle_root {
+    let parsed = parse_merkle_proof(&blob)?;
+    if parsed.merkle_root != header.merkle_root {
         return Ok(false);
     }
-    Ok(proof.verify())
+    // Internal check: leaf + path must hash to the packed root (which we just
+    // tied to the header's root above).
+    Ok(parsed.proof.verify() == parsed.merkle_root)
 }
 
 /// Parse a 32-byte block-id hex string.
@@ -1063,7 +1066,7 @@ fn parse_block_id(s: &str) -> Result<BlockId, String> {
 
 /// KVLS v1 wire format (owned by the FFI layer): magic `KVLS` + version 1 +
 /// count, then per entry a 160-byte big-endian header + a Golomb-Rice filter
-/// (`k` u8, `n` u64 BE, `len` u32 BE, `data`). Byte-compatible with
+/// (`k` u8, `n` u32 BE, `len` u32 BE, `data`). Byte-compatible with
 /// `kovanica-ffi`'s `parse_light_sync` and the explorer's `/api/light_sync`.
 fn parse_light_sync(blob: &[u8]) -> Result<Vec<(BlockHeader, BlockFilter)>, String> {
     let err = || "undecodable light-sync blob".to_string();
@@ -1120,16 +1123,18 @@ fn parse_light_sync(blob: &[u8]) -> Result<Vec<(BlockHeader, BlockFilter)>, Stri
             authority_set_hash: [0u8; 32],
             hash_without_authority_sig: [0u8; 32],
         };
-        let fend = off.checked_add(13).ok_or_else(err)?;
+        let fend = off.checked_add(9).ok_or_else(err)?;
         let f = blob.get(off..fend).ok_or_else(err)?;
         let k = f[0];
-        let n = u64::from_be_bytes(
-            f.get(1..9)
+        // Filter header: `k` u8, `n` u32 BE, `len` u32 BE — matches the
+        // explorer's `encode_spv_filter` and the FFI's `decode_filter`.
+        let n = u32::from_be_bytes(
+            f.get(1..5)
                 .and_then(|s| s.try_into().ok())
                 .ok_or_else(err)?,
         );
         let len = u32::from_be_bytes(
-            f.get(9..13)
+            f.get(5..9)
                 .and_then(|s| s.try_into().ok())
                 .ok_or_else(err)?,
         ) as usize;
@@ -1147,10 +1152,21 @@ fn parse_light_sync(blob: &[u8]) -> Result<Vec<(BlockHeader, BlockFilter)>, Stri
     Ok(out)
 }
 
+/// A parsed proof blob: the proof itself plus the root and tx count the
+/// explorer packed alongside it. The post-migration `MerkleProof` carries only
+/// `leaf`/`path`/`index` — its `verify()` returns the recomputed root, so the
+/// caller compares that against `merkle_root` (and the header's root) instead
+/// of getting a bool back.
+struct ParsedProof {
+    proof: MerkleProof,
+    merkle_root: [u8; 32],
+    tx_count: usize,
+}
+
 /// Explorer `/api/light_proof` proof blob (mirrors `encode_merkle_proof`):
 /// `tx_id` (32) + `merkle_root` (32) + `path_len` u32 + path + `index` u64 +
 /// `tx_count` u64.
-fn parse_merkle_proof(blob: &[u8]) -> Result<MerkleProof, String> {
+fn parse_merkle_proof(blob: &[u8]) -> Result<ParsedProof, String> {
     if blob.len() < 72 {
         return Err("undecodable proof blob".into());
     }
@@ -1172,11 +1188,13 @@ fn parse_merkle_proof(blob: &[u8]) -> Result<MerkleProof, String> {
     let index = u64::from_be_bytes(blob[off..off + 8].try_into().expect("sliced 8")) as usize;
     let tx_count =
         u64::from_be_bytes(blob[off + 8..off + 16].try_into().expect("sliced 8")) as usize;
-    Ok(MerkleProof {
-        tx_id: take32(&blob[0..32]),
+    Ok(ParsedProof {
+        proof: MerkleProof {
+            leaf: take32(&blob[0..32]),
+            path,
+            index,
+        },
         merkle_root: take32(&blob[32..64]),
-        path,
-        index,
         tx_count,
     })
 }
@@ -1290,11 +1308,15 @@ mod tests {
         blob.extend_from_slice(&0u64.to_be_bytes()); // index
         blob.extend_from_slice(&1u64.to_be_bytes()); // tx_count
 
-        let proof = parse_merkle_proof(&blob).expect("parses");
-        assert!(proof.path.is_empty());
-        assert_eq!(proof.index, 0);
-        assert_eq!(proof.tx_count, 1);
-        assert!(proof.verify(), "leaf proves its own root");
+        let parsed = parse_merkle_proof(&blob).expect("parses");
+        assert!(parsed.proof.path.is_empty());
+        assert_eq!(parsed.proof.index, 0);
+        assert_eq!(parsed.tx_count, 1);
+        assert_eq!(
+            parsed.proof.verify(),
+            parsed.merkle_root,
+            "leaf proves its own root"
+        );
         assert!(parse_merkle_proof(b"").is_err());
         assert!(parse_merkle_proof(&blob[..40]).is_err());
     }
