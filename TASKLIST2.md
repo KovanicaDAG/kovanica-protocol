@@ -80,10 +80,15 @@ misled.
       dashboard compatibility; verified no `alerting_rules.yml` consumer first.
 - [x] Documented all three quantities at the definition site.
 - [x] Regression test asserting the two series are not aliases.
-- [ ] **Follow-up (in TASKLIST4):** `Node::chain_height()` returns
+- [x] **Follow-up (in TASKLIST4):** `Node::chain_height()` returns
       `tip_blue_score()`, not chain height — another misnomer. Value left
       untouched because the unbond maturity gate and other callers depend on
       it and changing it is consensus-adjacent. Needs its own change.
+      **Done in `c015aab`** — see TASKLIST4 §4.2: `Node::chain_height()` is
+      documented in place with all three semantics, a new
+      `Ledger::tip_chain_height()` feeds all nine maturity sites (the measure
+      consensus actually uses), and the public value stays unchanged for its
+      existing callers. Classification: client-only / ledger-safe.
 
 ## 2.5 Unbounded log replay — ⚠️ ROOT-CAUSED; mitigation shipped, real fix deferred to RFC-009
 This is no longer a finding. It **took seed1 down** and is the reason all three
@@ -124,7 +129,7 @@ shipped in `6d0581e`; the real fix is tracked in
       (1k/2k/4k/8k/16k) pinned the curve.
 - [x] seed1 restored by wiping its log (backup taken first) and resyncing —
       re-derived the identical genesis, no fork.
-- [ ] **Fix the amplification — REOPENED, now known to be a consensus-correctness
+- [x] **Fix the amplification — REOPENED, now known to be a consensus-correctness
       problem, not a memory optimisation.** Two independent approaches were tried
       and both were **disproven with reproductions**:
       1. *Shrink the map.* Dropping the selected-chain ("spine") entries of
@@ -142,7 +147,14 @@ shipped in `6d0581e`; the real fix is tracked in
          evicted block that is a **true ancestor** of the candidate.
       See the new item below: this is a live bug in block pruning itself, and it
       is the reason the map cannot simply be bounded.
-- [ ] **⚠️ CONSENSUS BUG (live, latent): block pruning corrupts GHOSTDAG
+      **Resolved in `d131790` (RFC-009 sparse map):** the stored
+      `blue_anticone_sizes` is now built sparse — colouring enumerates the blue
+      set through a selected-parent chain walk instead of iterating an inherited
+      O(depth) map — so per-block storage is O(k) and the O(N²) amplification is
+      gone (`rfc009_memory_bound.rs` asserts `m_large <= 8`). Both designs
+      disproven above are superseded by the sparse representation; the (B1) trim
+      was dropped in its favour.
+- [x] **⚠️ CONSENSUS BUG (live, latent): block pruning corrupts GHOSTDAG
       colouring.** **Documented in
       [`protocol/docs/RFC-009-BlockPruning-Colouring.md`](protocol/docs/RFC-009-BlockPruning-Colouring.md)**
       (Draft, consensus-critical); RFC-008 is corrected in place and its
@@ -185,6 +197,20 @@ shipped in `6d0581e`; the real fix is tracked in
       (`block_pruning_depth = u64::MAX`) so the unsound path cannot run, and bound
       replay another way (see next item). This trades memory for correctness and
       must be paired with a real fix before the chain grows large.
+      **Fixed in `d131790` (RFC-009 sparse map), not just mitigated.** The
+      phantom-anticone mechanism is gone: `count` skips ids absent from
+      `self.nodes` (eviction removes only `past(P) \ {genesis}`, and every
+      (A+)-admissible candidate lies in `future(P) ∪ {P}`, so an evicted id is
+      always a true ancestor and never in-anticone — the skip is exact), the map
+      starts empty (`HashMap::with_capacity(k+1)`), and colouring enumerates the
+      blue set through the selected-parent chain walk. The R4 differential gate
+      (`block_pruning_colouring.rs`) is un-ignored and green; the R7
+      rejection-equivalence suite is green; full workspace 944 passed / 0 failed
+      / 7 ignored, clippy 0/0. **Caveat:** `d131790` is on
+      `consensus/poa-only-migration` only — PR #15 is still open — and the live
+      guarantee remains the interim mitigation (`block_pruning_depth =
+      u64::MAX`, re-confirmed on `/api/head` 2026-10-06) until RFC-009
+      activation A3→A4 ships the fix to the network.
 - [x] Add a memory-growth guard/alert so a replay storm is visible before the
       cgroup kill rather than after. **Done:** a `replay-watchdog` thread
       samples RSS every 10 s during replay, publishes
@@ -212,9 +238,14 @@ shipped in `6d0581e`; the real fix is tracked in
       (The snapshot format does not carry `block_pruning_depth`, so the loader
       still cannot apply a pruning policy — but with block pruning disabled
       network-wide that makes no difference today; recorded as a format gap.)
-- [ ] **A real memory bound (RFC-009 R1-R8).** Still open by design: the
-      operational bound above is a guard, not a fix. Replay memory still grows
-      with the chain until the k-cluster evaluation is reworked so colouring does
-      not need the full historical blue map, which is also what would let block
-      pruning be re-enabled safely. Replaying from a finality checkpoint /
-      snapshot (`Store::open_checkpoint`) is the intended structural answer.
+- [x] **A real memory bound (RFC-009 R1-R8).** **Done in `d131790`.** The
+      k-cluster evaluation no longer needs the full historical blue map —
+      colouring walks the selected-parent chain instead of iterating an inherited
+      O(depth) map — so stored maps are O(k) and replay memory grows linearly,
+      not quadratically, on top of the operational guard (pre-flight estimate +
+      `replay-watchdog`). R1–R8 are green (RFC-009-ACTIVATION-PLAN A0: full
+      workspace 944 passed / 0 failed / 7 ignored, clippy 0/0). Re-enabling
+      block pruning network-wide is no longer open design work — it is sequenced
+      as activation A3→A4 (testnet depth 1000). A finality-checkpoint replay
+      (`Store::open_checkpoint`, wired for the snapshot tier) remains available
+      as a separate, non-blocking enhancement.

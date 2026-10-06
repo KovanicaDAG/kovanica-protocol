@@ -52,7 +52,7 @@ Each item states why it was deferred.
       `kovanica_replay_rss_bytes`, logs progress, and aborts cleanly with a named
       diagnostic at 90% of the cgroup/host ceiling (verified firing at 3740 MiB
       against a 3686 MiB ceiling instead of being silently OOM-killed).
-- [ ] **The real fix is RFC-009 R1-R8, not a guard.** Block pruning is disabled
+- [x] **The real fix is RFC-009 R1-R8, not a guard.** Block pruning is disabled
       network-wide (`BLOCK_PRUNING_DEPTH = u64::MAX`) because of the F1 defect
       (pruning corrupts GHOSTDAG colouring — `RFC-009-BlockPruning-Colouring.md`),
       so replay memory still grows with the chain. Reworking the k-cluster
@@ -72,6 +72,16 @@ Each item states why it was deferred.
       R4 gate exercises that configuration and (B1) reproduces the unpruned
       colouring for it, but one construction is not a proof. Block pruning
       therefore stays disabled until (B2) is settled (RFC-009 R8).
+      **Settled in `d131790` (RFC-009 sparse map).** The (B1) trim was dropped
+      in favour of a sparse representation: colouring enumerates the blue set via
+      the selected-parent chain walk, `count` skips evicted ids (exact — eviction
+      removes only `past(P) \ {genesis}`, which is always ancestral to an
+      (A+)-admissible candidate, never in its anticone), so the (B2) under-count
+      class disappears with the design rather than needing a proof. R4
+      differential gate un-ignored and green, R7 rejection-equivalence green,
+      workspace 944 passed / 0 failed / 7 ignored, clippy 0/0. Block pruning
+      still stays disabled network-wide — now because activation is sequenced
+      (RFC-009-ACTIVATION-PLAN A3→A4), not because the defect is open.
 
 ## 4.4 Deferred: RFC-POA 0.7.2 governance residuals
 Per KVP-202, still `[OPEN]` / `[TARGET]` and **not** to be implemented on the

@@ -59,6 +59,14 @@ existing PoW-era chain.
 
 ## 3.3 Code — must be on every node before the reset
 - [x] PoA-only cutover merged (PR #15): no PoW / hybrid / staked-VRF paths.
+      ⚠️ **Wording correction 2026-10-06:** the *code* is on every node —
+      deployed build sha `9f52d9dd…` (commit `255fbfb`, an ancestor of
+      `consensus/poa-only-migration`), and live `/api/head` reports
+      `admission: poa`, `poa_enabled: true`, slot 3000 ms — but **PR #15 itself
+      is still OPEN against `main`** (blocked on a red `desktop-node` clippy
+      job: `kovanica-desktop` still builds the pre-migration `MerkleProof` API
+      that commit `4488f84` rewrote). The actual merge is tracked in TASKLIST4
+      §4.5.
 - [x] PoA fail-closed at the node boundary (commit `d00cd7a`): a node with no
       authority set refuses unsigned blocks instead of silently downgrading.
 - [x] `POA_NOMINAL_WORK` retained — removing it reopens 6.1(b) work inflation.

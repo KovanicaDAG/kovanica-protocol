@@ -124,5 +124,15 @@ was applied. **The new `protocol` job will be red until this is resolved.**
 - [x] Rust canonical + SDK + web consumers green.
 - [x] CI consolidated into one path-filtered root workflow; old gates archived.
 - [ ] Android + iOS consumers executed (blocked on toolchains).
-- [ ] Pre-existing clippy/fmt red gate resolved or explicitly waived.
-- [ ] Extension vector `todo` resolved once a real derivation exists.
+      Android half is now green — CI runs `./gradlew :app:testDebugUnitTest`
+      (golden-vector KATs) in the `android` job; **iOS still has no consumer**
+      loading `vectors.json`, so the combined item stays open.
+- [x] Pre-existing clippy/fmt red gate resolved or explicitly waived.
+      **Resolved** — the `main` CI workflow (incl. the `protocol` fmt/clippy/
+      test job) reports `success` on the latest runs as of 2026-10-06; the
+      DECISIONS #9 lints are gone.
+- [x] Extension vector `todo` resolved once a real derivation exists.
+      **Resolved** — the extension now derives via the shared
+      `@kovanica/sdk-wasm` (`af1ada5`), and
+      `apps/extension/tests/shared-vectors.test.mjs` was run on 2026-10-06:
+      **12 passed / 0 failed / 0 todo**.
