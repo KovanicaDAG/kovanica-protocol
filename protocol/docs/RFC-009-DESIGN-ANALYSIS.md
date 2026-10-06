@@ -677,3 +677,57 @@ R6 and R7 now hold on finite-search evidence. R8 still gates: a finite
 `block_pruning_depth` stays disabled network-wide until the whole differential
 suite is green in CI and the change is carried through a reset or
 activation-height gate.
+
+## 16. R8: load-path guards and the snapshot tier
+
+R8 requires that no replay/snapshot/checkpoint path silently re-enable block
+pruning, and that the snapshot tier's missing `block_pruning_depth` handling be
+resolved.
+
+### What each load path does with the pruning policy
+
+| Path | Entry point | Block-pruning policy |
+|------|-------------|----------------------|
+| Log replay | `LedgerStore::open*` | Accepts a `PruningPolicy` and applies it **before** replay; mid-replay eviction is bounded by the `remaining` parent-count sweep (`prune_replay_final`). Already correct. |
+| Snapshot | `Ledger::read_snapshot_impl` | **v3 stores and restores `block_pruning_depth`** (see below). |
+| Checkpoint | `Ledger::read_checkpoint_impl` | Deliberately **not** persisted: the checkpoint starts with block pruning disabled and documents that the caller re-applies its profile depth via `Node::set_block_pruning_depth`. It never *re-enables* pruning, so it is R8-safe. |
+
+### Snapshot format v3
+
+The snapshot header was `magic(4) + version(2) + subsidy(8) + halving_era(8) +
+finality_depth(8) + payload_pruning_depth(8)` (38 bytes). `LEDGER_VERSION` is now
+`3` and the header carries `block_pruning_depth(8)` (46 bytes).
+`read_snapshot_impl` accepts v2 and v3 (`2..=LEDGER_VERSION`), defaulting a v2
+snapshot to `block_pruning_depth = u64::MAX`, and restores the policy **after**
+the replay (replaying under a finite depth would evict mid-rebuild).
+
+### The snapshot cannot represent a block-pruned DAG
+
+The snapshot does not store deltas; it rebuilds them by replaying each block's
+payload (`insert_raw_block`). A block whose parent was evicted is encoded as a
+stub, so re-admission fails with `Dag(MissingParent)`; and even if the stub were
+reconstructed, an evicted block's payload is pruned, so its delta could not be
+rebuilt. The ledger snapshot tier therefore **fundamentally requires an unpruned
+DAG**.
+
+Rather than emit a snapshot that cannot be reloaded, `Ledger::write_snapshot`
+now returns `Result<Vec<u8>, LedgerSnapshotError>` and refuses with
+`LedgerSnapshotError::BlockPruningUnsupported` when
+`self.dag.pruning_point() != self.dag.genesis()` (i.e. the DAG has evicted
+blocks). A node that wants both block pruning and a fast-restore artifact must
+use the checkpoint or log tier.
+
+### Tests
+
+`crates/kovanica-state/tests/rfc009_snapshot_pruning.rs`:
+`snapshot_round_trip_preserves_a_finite_block_pruning_depth` (finite depth, no
+eviction, round-trips), `snapshot_write_is_refused_after_block_pruning_evicts`
+(the guard), and `snapshot_round_trip_preserves_disabled_block_pruning`.
+
+### Status
+
+With R8 the load paths are guarded: the log path already applied the policy, the
+snapshot stores/restores it and refuses an unrepresentable DAG, and the
+checkpoint stays disabled-by-default and never re-enables pruning. A finite
+`block_pruning_depth` remains disabled network-wide until (A+) — a consensus-rule
+change — is carried through a reset or activation-height gate.

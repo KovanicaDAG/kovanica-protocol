@@ -649,7 +649,7 @@ fn htlc_snapshot_roundtrip() {
         .insert(vec![ledger.dag().selected_tip()], 1, 0, 0, &[redeem])
         .unwrap();
 
-    let buf = ledger.write_snapshot();
+    let buf = ledger.write_snapshot().unwrap();
     let restored = Ledger::read_snapshot(&buf).unwrap();
 
     let restored_utxo = restored.state(&restored.dag().selected_tip()).unwrap();

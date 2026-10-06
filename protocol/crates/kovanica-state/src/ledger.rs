@@ -3216,9 +3216,21 @@ impl Ledger {
     /// state is *not* stored — it is recomputed on load by replaying blocks
     /// through [`Ledger::insert`], so nothing derived is trusted from disk.
     ///
-    /// The snapshot also stores the runtime `finality_depth` and `payload_pruning_depth`
-    /// so they are restored automatically.
-    pub fn write_snapshot(&self) -> Vec<u8> {
+    /// The snapshot also stores the runtime `finality_depth`,
+    /// `payload_pruning_depth`, and `block_pruning_depth` so they are restored
+    /// automatically (RFC-009 R8).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LedgerSnapshotError::BlockPruningUnsupported`] if the DAG has
+    /// evicted any blocks. The replay-based format cannot represent a
+    /// block-pruned DAG: a present block whose parent was evicted would fail to
+    /// re-admit, and the evicted blocks' payloads are gone so their deltas could
+    /// not be rebuilt. A pruning node must use the checkpoint or log tier.
+    pub fn write_snapshot(&self) -> Result<Vec<u8>, LedgerSnapshotError> {
+        if self.dag.pruning_point() != self.dag.genesis() {
+            return Err(LedgerSnapshotError::BlockPruningUnsupported);
+        }
         let mut buf = Vec::new();
         buf.extend_from_slice(&LEDGER_MAGIC);
         buf.extend_from_slice(&LEDGER_VERSION.to_le_bytes());
@@ -3226,15 +3238,17 @@ impl Ledger {
         buf.extend_from_slice(&self.schedule.halving_era.to_le_bytes());
         buf.extend_from_slice(&self.finality_depth.to_le_bytes());
         buf.extend_from_slice(&self.payload_pruning_depth.to_le_bytes());
+        buf.extend_from_slice(&self.block_pruning_depth.to_le_bytes());
         buf.extend_from_slice(&self.dag.write_snapshot());
-        buf
+        Ok(buf)
     }
 
     /// Rebuild a ledger from a snapshot by replaying its blocks. The full state
     /// (and each block's view state) is recomputed, so the restored ledger is
-    /// identical to the original — except that it restores at **unbounded
-    /// finality** (the snapshot stores blocks, not the runtime finality policy);
-    /// re-apply [`Ledger::with_finality`]'s depth after loading if wanted.
+    /// identical to the original. The stored runtime policy — `finality_depth`,
+    /// `payload_pruning_depth`, and `block_pruning_depth` — is restored too
+    /// (RFC-009 R8); block pruning is applied *after* the replay so every block
+    /// re-admits with its original id.
     ///
     /// For snapshots that contain **PoA blocks**, use
     /// [`Ledger::read_snapshot_with_poa`] — replay must run under the same
@@ -3263,13 +3277,22 @@ impl Ledger {
         if bytes.len() < 4 || bytes[..4] != LEDGER_MAGIC {
             return Err(LedgerSnapshotError::BadMagic);
         }
-        if bytes.len() < 38 {
-            // magic(4) + version(2) + genesis_subsidy(8) + halving_era(8) + finality_depth(8) + payload_pruning_depth(8) = 38
+        if bytes.len() < 6 {
             return Err(LedgerSnapshotError::Dag(SnapshotError::UnexpectedEof));
         }
         let version = u16::from_le_bytes([bytes[4], bytes[5]]);
-        if version != LEDGER_VERSION {
+        // v2 = 38-byte header (magic + version + subsidy + era + finality_depth
+        // + payload_pruning_depth); v3 appends `block_pruning_depth` (R8). A v2
+        // snapshot is read with block pruning disabled, which is what it was
+        // written with.
+        if !(2..=LEDGER_VERSION).contains(&version) {
             return Err(LedgerSnapshotError::UnsupportedVersion(version));
+        }
+        let header_len = if version >= 3 { 46 } else { 38 };
+        if bytes.len() < header_len {
+            // magic(4) + version(2) + genesis_subsidy(8) + halving_era(8) + finality_depth(8)
+            // + payload_pruning_depth(8) [+ block_pruning_depth(8)] = 38 (v2) or 46 (v3)
+            return Err(LedgerSnapshotError::Dag(SnapshotError::UnexpectedEof));
         }
         let genesis_subsidy =
             u64::from_le_bytes(bytes[6..14].try_into().expect("14 - 6 == 8 bytes"));
@@ -3278,9 +3301,14 @@ impl Ledger {
             u64::from_le_bytes(bytes[22..30].try_into().expect("30 - 22 == 8 bytes"));
         let payload_pruning_depth =
             u64::from_le_bytes(bytes[30..38].try_into().expect("38 - 30 == 8 bytes"));
+        let block_pruning_depth = if version >= 3 {
+            u64::from_le_bytes(bytes[38..46].try_into().expect("46 - 38 == 8 bytes"))
+        } else {
+            u64::MAX
+        };
         let schedule = HalvingSchedule::new(genesis_subsidy, halving_era);
 
-        let snapshot = decode_snapshot(&bytes[38..]).map_err(LedgerSnapshotError::Dag)?;
+        let snapshot = decode_snapshot(&bytes[header_len..]).map_err(LedgerSnapshotError::Dag)?;
         let mut blocks = snapshot.blocks.into_iter();
         let genesis = blocks.next().ok_or(LedgerSnapshotError::Empty)?;
         let genesis_txs =
@@ -3295,11 +3323,18 @@ impl Ledger {
         }
         for block in blocks {
             // Identity-preserving replay: the snapshot's blocks must re-admit
-            // with the exact ids their children reference.
+            // with the exact ids their children reference. Block pruning is
+            // deliberately left disabled during replay (R8); the policy is
+            // applied to the fully-built DAG below.
             ledger
                 .insert_raw_block(block)
                 .map_err(LedgerSnapshotError::Rebuild)?;
         }
+        // R8: restore the block-pruning policy *after* replay. Replaying under a
+        // finite depth would evict blocks mid-rebuild; the snapshot is instead
+        // reconstructed in full and the policy is then applied to the complete
+        // DAG, exactly as a live node would after loading.
+        ledger.set_block_pruning_depth(block_pruning_depth);
         Ok(ledger)
     }
 
@@ -4181,8 +4216,9 @@ impl From<LedgerInsertError> for LedgerCheckpointError {
 
 /// Magic prefix identifying a Kovanica ledger snapshot (`"KVLG"`).
 const LEDGER_MAGIC: [u8; 4] = *b"KVLG";
-/// Ledger snapshot format version. v2 added `finality_depth` and `payload_pruning_depth`.
-const LEDGER_VERSION: u16 = 2;
+/// Ledger snapshot format version. v2 added `finality_depth` and
+/// `payload_pruning_depth`; v3 added `block_pruning_depth`.
+const LEDGER_VERSION: u16 = 3;
 
 /// Why a ledger snapshot could not be decoded or replayed.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4201,6 +4237,9 @@ pub enum LedgerSnapshotError {
     Rebuild(LedgerInsertError),
     /// The snapshot contained no genesis block.
     Empty,
+    /// The DAG has evicted blocks, which the replay-based snapshot cannot
+    /// represent (RFC-009 R8). Use the checkpoint or log tier instead.
+    BlockPruningUnsupported,
 }
 
 impl core::fmt::Display for LedgerSnapshotError {
@@ -4215,6 +4254,9 @@ impl core::fmt::Display for LedgerSnapshotError {
             LedgerSnapshotError::Genesis(e) => write!(f, "genesis: {e}"),
             LedgerSnapshotError::Rebuild(e) => write!(f, "replaying block: {e}"),
             LedgerSnapshotError::Empty => f.write_str("snapshot has no genesis block"),
+            LedgerSnapshotError::BlockPruningUnsupported => f.write_str(
+                "snapshot cannot represent a block-pruned DAG; use the checkpoint or log tier",
+            ),
         }
     }
 }

@@ -838,7 +838,7 @@ fn test_native_token_snapshot_roundtrip() {
         .unwrap();
 
     // Write snapshot
-    let buf = ledger.write_snapshot();
+    let buf = ledger.write_snapshot().unwrap();
 
     // Read snapshot into new ledger
     let restored = Ledger::read_snapshot(&buf).unwrap();

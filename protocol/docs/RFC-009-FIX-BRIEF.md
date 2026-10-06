@@ -129,6 +129,13 @@ There is an `#[ignore]`d regression test waiting to be un-ignored:
 - **R8 — Load paths guarded.** No replay/snapshot/checkpoint path may re-enable
   block pruning until R1-R7 hold. Resolve the snapshot tier's missing
   `block_pruning_depth` handling in the same change (see §7).
+  *(Met 2026-10-06: the snapshot format is v3 and stores/restores
+  `block_pruning_depth`; `write_snapshot` refuses a block-pruned DAG with
+  `LedgerSnapshotError::BlockPruningUnsupported` because the replay-based format
+  cannot represent one; the checkpoint deliberately stays disabled-by-default and
+  documents that the caller re-applies the policy; the log path already applies
+  it. Permanent test `crates/kovanica-state/tests/rfc009_snapshot_pruning.rs`.
+  See `RFC-009-DESIGN-ANALYSIS.md` §16.)*
 
 ## 5. Constraints
 

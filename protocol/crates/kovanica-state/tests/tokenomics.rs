@@ -694,7 +694,7 @@ fn snapshot_roundtrip_preserves_supply() {
         tip = ledger.insert(vec![tip], 1, 0, 0, &[cb]).unwrap();
     }
 
-    let snap = ledger.write_snapshot();
+    let snap = ledger.write_snapshot().unwrap();
     let restored = Ledger::read_snapshot(&snap).unwrap();
 
     assert_eq!(

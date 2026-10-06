@@ -3931,7 +3931,10 @@ impl Node {
 
     /// Write the ledger snapshot to `path`.
     pub fn save(&self, path: &str) -> Result<(), NodeError> {
-        let bytes = self.ledger()?.write_snapshot();
+        let bytes = self
+            .ledger()?
+            .write_snapshot()
+            .map_err(|e| NodeError::Snapshot(e.to_string()))?;
         fs::write(path, bytes).map_err(|e| NodeError::Io(e.to_string()))
     }
 

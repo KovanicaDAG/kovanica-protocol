@@ -197,7 +197,7 @@ fn arbitrary_ledger(u: &mut Unstructured) -> Result<(Ledger, Vec<u8>), Arbitrary
     let schedule = HalvingSchedule::new(u.int_in_range(1..=10_000)?, u.int_in_range(1..=100)?);
     let k = u.int_in_range(1..=10)?;
     let ledger = Ledger::new(k, schedule, &[coinbase]).map_err(|_| ArbitraryError::EmptyChoose)?;
-    let bytes = ledger.write_snapshot();
+    let bytes = ledger.write_snapshot().unwrap();
     Ok((ledger, bytes))
 }
 
@@ -323,7 +323,7 @@ mod proptest_helpers {
             // The snapshot format is canonical: re-serialising a restored
             // ledger yields identical bytes.
             let restored = Ledger::read_snapshot(&bytes).unwrap();
-            assert_eq!(restored.write_snapshot(), bytes);
+            assert_eq!(restored.write_snapshot().unwrap(), bytes);
         }
     }
 

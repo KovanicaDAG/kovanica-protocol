@@ -911,7 +911,7 @@ fn vault_snapshot_roundtrip() {
     let (mut ledger, coin) = vault_funded_ledger(&script, 1_000);
     extend_chain(&mut ledger, 5); // tip height 5
 
-    let snap = ledger.write_snapshot();
+    let snap = ledger.write_snapshot().unwrap();
     let mut restored = Ledger::read_snapshot(&snap).expect("snapshot readable");
     let utxo = restored.state(&restored.dag().selected_tip()).unwrap();
     assert_eq!(utxo.balance(&script.address()), 1_000);

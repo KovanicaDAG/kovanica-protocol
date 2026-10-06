@@ -1222,7 +1222,7 @@ fn test_multisig_ledger_snapshot_and_replay_roundtrip() {
         .unwrap();
 
     // Snapshot write & read
-    let snapshot_bytes = ledger.write_snapshot();
+    let snapshot_bytes = ledger.write_snapshot().unwrap();
     let restored_ledger = Ledger::read_snapshot(&snapshot_bytes).expect("valid snapshot restore");
 
     assert_eq!(
