@@ -14,7 +14,7 @@ Caddy is not the live edge. Live map as of 2026-09-30:
 | `kovanica.online`, `testnet`, `mainnet` | `127.0.0.1:3010` |
 | `explorer` `/api/`, `api.kovanica.online` | `127.0.0.1:8080` (node) |
 | `explorer` `/` | `127.0.0.1:3010` |
-| `dash.kovanica.online` | `127.0.0.1:3001` (developer dashboard) |
+| `dash.kovanica.online` | `127.0.0.1:3010` (web app `/dash`) |
 | `docs.kovanica.online` | `127.0.0.1:3010` |
 
 `kovanica-seed1.service` and `kovanica-seed2.service` are disabled on this host.
@@ -26,10 +26,10 @@ seed2 and seed3 run on their own machines.
 | `kovanica.online` | Landing | Pure landing page |
 | `testnet.kovanica.online` | Testnet app | Explorer, wallet, network tabs |
 | `mainnet.kovanica.online` | Mainnet app | Same app, mainnet (launching soon) |
+| `dash.kovanica.online` | Network dashboard | Live node stats, block height, metrics, testnet/mainnet switch |
 | `playground.kovanica.online` | Playground | Onboarding, API console, snippets |
 | `docs.kovanica.online` | Docs | Documentation |
 | `api.kovanica.online` | API reference | API reference page |
-| `faucet.testnet.kovanica.online` | Faucet | Testnet faucet |
 | `explorer.kovanica.online` | Legacy | Redirects to testnet |
 
 The Rust node serves `/api/*` on `127.0.0.1:8080` (systemd `kovanica-explorer`).
@@ -37,6 +37,25 @@ Caddy proxies `/api/*` to the node; all other paths go to the web app.
 
 Kovanica owns `127.0.0.1:3000` (web), `127.0.0.1:8080` (node API),
 `0.0.0.0:9000` (P2P). Leave dashboard / trader / postgres / docker alone.
+
+## Dashboard (`dash.kovanica.online`)
+
+The dashboard is the same Vite app as every other surface — host routing in
+`src/lib/host.ts` maps `dash.*` → role `dash`, and the bare path redirects to
+`/dash` (`src/routes/__root.tsx`). The page lives in
+`src/components/dashboard/` and comes with the default build:
+
+- **Live stats** — polls `/api/head` every 2.5s, `/api/bootstrap` every 5s,
+  `/api/state` every 15s through the same-source proxy the app already uses.
+  Block height renders as a rolling sparkline (`recharts`).
+- **Testnet/mainnet switch** — the in-page `SourceSwitch` toggles the API
+  source in-app; no hard hostname redirect on `dash.*`.
+- **Mainnet gate** — with `source = mainnet` the page shows the "Mainnet is
+  launching soon" panel (there is no public mainnet endpoint yet;
+  `NETWORK_PROXIES.mainnet` is empty).
+
+DNS: one `A` record `dash.kovanica.online` → VPS IP, same nginx pattern as the
+other surfaces (TLS terminates at nginx, upstream `127.0.0.1:3010`).
 
 > > **Consensus decision (ratified 2026-09-25): Kovanica is PoA-only.**
 > > Proof-of-Work is being removed from the protocol. See

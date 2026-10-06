@@ -14,7 +14,7 @@ This document is the single source of truth for how the Kovanica public domains 
 | **kovanica.online**               | Project landing / marketing site             | Pure homepage. No live network UI. |
 | **testnet.kovanica.online**       | Full Testnet surface                         | Explorer, wallet, protocol tools, faucet |
 | **mainnet.kovanica.online**       | Full Mainnet surface                         | Ready. Identical UI to testnet. |
-| **faucet.testnet.kovanica.online**| Testnet faucet                               | Testnet only |
+| **dash.kovanica.online**          | Network dashboard                            | Live node stats, block height, metrics, testnet/mainnet switch |
 | **api.kovanica.online**           | Public HTTP API entry                        | Shared for now |
 | **explorer.kovanica.online**      | Block explorer                               | Shared (pre-mainnet) |
 | **wallet.kovanica.online**        | Web wallet                                   | Shared (pre-mainnet) |
@@ -22,7 +22,6 @@ This document is the single source of truth for how the Kovanica public domains 
 | **status.kovanica.online**        | Network health / monitoring                  | Height, supply, uptime |
 | **seed.kovanica.online**            | Primary P2P seed (TCP 9000)                | DNS-only (grey cloud); Hostinger VPS `srv1745734` |
 | **seed2.kovanica.online**           | Secondary seed (TCP 9000)                  | DNS-only; Hostinger KVM2 VPS `76.13.250.65` (`srv1991525`) |
-| **kovi.kovanica.online**          | Reserved / brand short link                  | Kept |
 | **monitor / pool / opencode**     | Internal / experimental                      | — |
 
 ---
@@ -61,7 +60,7 @@ The network switcher performs a **hard redirect** (changes hostname) so that coo
 Active Redirect Rules (in priority order):
 
 1. `map.kovanica.online` → `api.kovanica.online`
-2. `kovanica.kovanica.online` → `faucet.testnet.kovanica.online`
+2. `kovanica.kovanica.online` → `testnet.kovanica.online`
 3. `www.kovanica.online` → `kovanica.online`
 4. Selected paths on the root (`/explorer`, `/wallet`, `/faucet`, `/stealth`, `/htlc`, `/vaults`, `/multisig` …) → `testnet.kovanica.online`
 

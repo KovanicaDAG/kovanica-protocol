@@ -20,6 +20,7 @@ import { Button } from "@/components/ui/button";
 import { WalletDownloads } from "@/components/wallet/wallet-downloads";
 import { useLedger } from "@/lib/ledger/store";
 import { useHydrated } from "@/lib/use-hydrated";
+import { LiveStats } from "./live-stats";
 
 const QUICK = [
   { to: "/explorer" as const, label: "Explorer", icon: Compass },
@@ -41,7 +42,7 @@ export function HomeTestnet() {
 
   return (
     <main className="relative mx-auto flex w-full max-w-5xl flex-1 flex-col px-4 pb-12 pt-6 md:px-8 md:pt-10">
-      <p className="text-center font-mono text-[11px] tracking-brand text-subtle uppercase">
+      <p className="text-center font-mono text-[11px] tracking-brand text-gold uppercase">
         testnet · KVNC
       </p>
       <h1 className="mt-2 text-center font-display text-3xl tracking-tight text-fg italic md:text-5xl">
@@ -52,8 +53,12 @@ export function HomeTestnet() {
         KVP-103…105 tools.
       </p>
 
+      <div className="mt-8 w-full max-w-xl self-center">
+        <LiveStats />
+      </div>
+
       <div className="mt-6 flex flex-col items-stretch justify-center gap-3 sm:flex-row sm:items-center sm:justify-center">
-        <Button asChild className="h-11 px-5">
+        <Button asChild variant="gold" className="h-11 px-5">
           <Link to="/explorer">Open explorer</Link>
         </Button>
         <Button asChild variant="outline" className="h-11 px-5">
@@ -86,7 +91,7 @@ export function HomeTestnet() {
               <li key={item.to}>
                 <Link
                   to={item.to}
-                  className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center transition-colors hover:bg-surface-2"
+                  className="flex flex-col items-center gap-2 rounded-xl border border-border bg-surface p-4 text-center transition-colors hover:border-gold/40 hover:bg-surface-2"
                 >
                   <Icon className="size-5 text-blue" />
                   <span className="text-sm font-medium text-fg">{item.label}</span>

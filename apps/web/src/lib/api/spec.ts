@@ -4,7 +4,6 @@ import {
   HALVING_ERA,
   K,
   LIVE_EXPLORER,
-  LIVE_KOVI,
   LIVE_MAP,
   LIVE_SITE,
   LIVE_WALLET,
@@ -25,7 +24,6 @@ Engine is the Rust node; this app speaks the same HTTP contract.
 || Explorer | ${LIVE_EXPLORER} |
 || Wallet | ${LIVE_WALLET} |
 || Map | ${LIVE_MAP} |
-|| Kovi | ${LIVE_KOVI} |
 || Site | ${LIVE_SITE} |
 || Network | \`${NETWORK_ID}\` |
 || Premine | ${FOUNDER_AMOUNT / ATOM} KVNC (founder / treasury) |

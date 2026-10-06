@@ -19,7 +19,7 @@
 | **Bootstrap seeds** | `seed2.kovanica.online:8000`, `seed3.kovanica.online:8000` |
 | **Explorer** | https://explorer.kovanica.online |
 | **Wallet** | https://wallet.kovanica.online |
-| **Faucet** | https://faucet.testnet.kovanica.online (1 KVNC, rate-limited) |
+| **Faucet** | https://testnet.kovanica.online/faucet (1 KVNC, rate-limited) |
 | **Public API** | https://api.kovanica.online |
 
 ### Tokenomics (RFC-006)

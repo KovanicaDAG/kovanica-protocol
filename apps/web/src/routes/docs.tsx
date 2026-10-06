@@ -126,7 +126,7 @@ function DocsBody() {
           <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm leading-relaxed text-muted">
             <li>
               Get testnet KVNC from the{" "}
-              <a className="text-fg underline-offset-2 hover:underline" href={SURFACE.faucet}>
+              <a className="text-fg underline-offset-2 hover:underline" href={`${SURFACE.testnet}/faucet`}>
                 faucet
               </a>{" "}
               (5 KVNC lifetime cap per address).

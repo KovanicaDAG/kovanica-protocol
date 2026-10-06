@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as ApiReferenceRouteImport } from './routes/api-reference'
+import { Route as DashRouteImport } from './routes/dash'
 import { Route as DocsRouteImport } from './routes/docs'
 import { Route as ExplorerRouteImport } from './routes/explorer'
 import { Route as FaucetRouteImport } from './routes/faucet'
@@ -48,6 +49,11 @@ const IndexRoute = IndexRouteImport.update({
 const ApiReferenceRoute = ApiReferenceRouteImport.update({
   id: '/api-reference',
   path: '/api-reference',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashRoute = DashRouteImport.update({
+  id: '/dash',
+  path: '/dash',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DocsRoute = DocsRouteImport.update({
@@ -195,6 +201,7 @@ const WalletNftAssetIdRoute = WalletNftAssetIdRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/api-reference': typeof ApiReferenceRoute
+  '/dash': typeof DashRoute
   '/docs': typeof DocsRoute
   '/explorer': typeof ExplorerRouteWithChildren
   '/faucet': typeof FaucetRoute
@@ -227,6 +234,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/api-reference': typeof ApiReferenceRoute
+  '/dash': typeof DashRoute
   '/docs': typeof DocsRoute
   '/explorer': typeof ExplorerRouteWithChildren
   '/faucet': typeof FaucetRoute
@@ -260,6 +268,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/api-reference': typeof ApiReferenceRoute
+  '/dash': typeof DashRoute
   '/docs': typeof DocsRoute
   '/explorer': typeof ExplorerRouteWithChildren
   '/faucet': typeof FaucetRoute
@@ -294,6 +303,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/api-reference'
+    | '/dash'
     | '/docs'
     | '/explorer'
     | '/faucet'
@@ -326,6 +336,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/api-reference'
+    | '/dash'
     | '/docs'
     | '/explorer'
     | '/faucet'
@@ -358,6 +369,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/'
     | '/api-reference'
+    | '/dash'
     | '/docs'
     | '/explorer'
     | '/faucet'
@@ -391,6 +403,7 @@ export interface FileRouteTypes {
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   ApiReferenceRoute: typeof ApiReferenceRoute
+  DashRoute: typeof DashRoute
   DocsRoute: typeof DocsRoute
   ExplorerRoute: typeof ExplorerRouteWithChildren
   FaucetRoute: typeof FaucetRoute
@@ -424,6 +437,13 @@ declare module '@tanstack/react-router' {
       path: '/api-reference'
       fullPath: '/api-reference'
       preLoaderRoute: typeof ApiReferenceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dash': {
+      id: '/dash'
+      path: '/dash'
+      fullPath: '/dash'
+      preLoaderRoute: typeof DashRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/docs': {
@@ -679,6 +699,7 @@ const WalletRouteWithChildren =
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   ApiReferenceRoute: ApiReferenceRoute,
+  DashRoute: DashRoute,
   DocsRoute: DocsRoute,
   ExplorerRoute: ExplorerRouteWithChildren,
   FaucetRoute: FaucetRoute,

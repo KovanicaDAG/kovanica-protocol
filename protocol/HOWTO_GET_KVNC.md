@@ -61,7 +61,7 @@ Follow the instructions in the Kovanica Wallet app to create a new wallet.
 ### Step 2: Request Funds from the Faucet
 
 #### Via Web UI
-1. Visit https://faucet.testnet.kovanica.online
+1. Visit https://testnet.kovanica.online/faucet
 2. Paste your KVNC address
 3. Complete any CAPTCHA if required
 4. Click "Request Tokens"
@@ -239,7 +239,7 @@ details.
 ## Troubleshooting
 
 ### Faucet Not Responding
-- Check if https://faucet.testnet.kovanica.online is reachable
+- Check if https://testnet.kovanica.online/faucet is reachable
 - Try the API method directly: `curl -v http://127.0.0.1:8080/api/faucet?...`
 - Ensure you're using a valid KVNC address format
 

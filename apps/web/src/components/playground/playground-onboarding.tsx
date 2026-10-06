@@ -23,7 +23,7 @@ const STEPS: Step[] = [
     title: "Get testnet funds",
     description: "Use the faucet to get free KVNC on testnet.",
     action: "Open Faucet",
-    href: SURFACE.faucet,
+    href: `${SURFACE.testnet}/faucet`,
   },
   {
     id: "balance",

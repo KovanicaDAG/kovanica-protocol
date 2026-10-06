@@ -207,7 +207,7 @@ Always stop the service before replacing the binary.
 - `explorer.kovanica.online` -- Block explorer (shared)
 - `wallet.kovanica.online` -- Web wallet (shared)
 - `api.kovanica.online` -- Public HTTP API
-- `faucet.testnet.kovanica.online` -- Testnet faucet
+- `dash.kovanica.online` -- Network dashboard
 - `docs.kovanica.online` -- Specifications
 - `seed.kovanica.online` -- Primary P2P seed (grey-cloud)
 - `seed2.kovanica.online` -- Secondary P2P seed (grey-cloud)

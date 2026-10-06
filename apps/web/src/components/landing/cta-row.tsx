@@ -12,7 +12,7 @@ const GITHUB = "https://github.com/KovanicaDAG";
 export function CtaRow() {
   return (
     <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-center">
-      <Button asChild className="h-12 px-6">
+      <Button asChild variant="gold" className="h-12 px-6">
         <a href={TESTNET}>Open Testnet</a>
       </Button>
 

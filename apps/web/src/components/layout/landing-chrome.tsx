@@ -11,7 +11,7 @@ export function LandingChrome({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
       <header
         className="sticky top-0 z-30 flex h-14 shrink-0 items-center justify-between gap-3 border-b border-border bg-bg/95 px-4 backdrop-blur-sm md:h-16 md:px-6"
-        style={{ borderTop: "1px solid #f59e0b" }}
+        style={{ borderTop: "1px solid #F2A900" }}
       >
         <a href={SURFACE.landing} className="flex min-w-0 items-baseline gap-2">
           <span className="font-display text-xl tracking-tight text-fg italic md:text-2xl">
@@ -41,6 +41,12 @@ export function LandingChrome({ children }: { children: React.ReactNode }) {
             className="hidden h-9 items-center rounded-md px-2.5 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg sm:inline-flex"
           >
             GitHub
+          </a>
+          <a
+            href={SURFACE.dash}
+            className="hidden h-9 items-center rounded-md px-2.5 text-sm font-medium text-muted transition-colors hover:bg-surface-2 hover:text-fg xl:inline-flex"
+          >
+            Dashboard
           </a>
           <a
             href={SURFACE.testnet}

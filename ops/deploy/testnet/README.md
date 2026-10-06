@@ -7,7 +7,7 @@ Network ID: `kovanica-testnet`
 - **Live**: Yes
 - **Explorer**: https://testnet.kovanica.online
 - **API**: https://testnet.kovanica.online/api
-- **Faucet**: https://faucet.testnet.kovanica.online
+- **Faucet**: https://testnet.kovanica.online/faucet
 
 ## Network Parameters
 

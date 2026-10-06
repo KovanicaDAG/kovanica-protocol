@@ -4,7 +4,6 @@
 export const LIVE_EXPLORER = "https://explorer.kovanica.online";
 export const LIVE_WALLET = "https://wallet.kovanica.online";
 export const LIVE_MAP = "https://map.kovanica.online";
-export const LIVE_KOVI = "https://kovi.kovanica.online";
 export const LIVE_SITE = "https://kovanica.online";
 export const NETWORK_ID = "kovanica-testnet";
 export const MAINNET_ID = "kovanica-mainnet";
@@ -224,7 +223,6 @@ export function getSpecText(network: PublicSource): string {
   const liveExplorer = isMainnet ? "" : "https://explorer.kovanica.online";
   const liveWallet = isMainnet ? "" : "https://wallet.kovanica.online";
   const liveMap = isMainnet ? "" : "https://map.kovanica.online";
-  const liveKovi = isMainnet ? "" : "https://kovi.kovanica.online";
   const liveSite = isMainnet ? "" : "https://kovanica.online";
   const networkId = isMainnet ? MAINNET_ID : NETWORK_ID;
   const upstreamMessage = isMainnet
@@ -241,7 +239,6 @@ Engine is the Rust node; this app speaks the same HTTP contract.
 ||| Explorer | ${liveExplorer} ||
 ||| Wallet | ${liveWallet} ||
 ||| Map | ${liveMap} ||
-||| Kovi | ${liveKovi} ||
 ||| Site | ${liveSite} ||
 ||| Network | \`${networkId}\` ||
 ||| Premine | ${FOUNDER_AMOUNT / ATOM} KVNC (founder / treasury) ||

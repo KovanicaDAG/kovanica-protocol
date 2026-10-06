@@ -13,15 +13,7 @@
 import { HomeLanding } from "./home";
 import { HomeTestnet } from "./testnet-home";
 import { HomeMainnet } from "./mainnet-home";
-
-export type HostRole =
-  | "landing"
-  | "testnet"
-  | "mainnet"
-  | "docs"
-  | "api"
-  | "faucet"
-  | "shared";
+import { type HostRole } from "@/lib/host";
 
 /**
  * Minimal client-side role detection when SSR host helpers are not in scope.
@@ -36,7 +28,7 @@ export function hostRoleFromHostname(hostname: string): HostRole {
   if (h.startsWith("mainnet.")) return "mainnet";
   if (h.startsWith("docs.")) return "docs";
   if (h.startsWith("api.")) return "api";
-  if (h.startsWith("faucet.")) return "faucet";
+  if (h.startsWith("dash.")) return "dash";
   return "shared";
 }
 

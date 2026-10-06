@@ -4,7 +4,7 @@ import { DagMark } from "@/components/brand/dag-mark";
 import { SURFACE } from "@/lib/surfaces";
 
 /**
- * Designed "launching soon" shell for mainnet.kovanica.online — green
+ * Designed "launching soon" shell for mainnet.kovanica.online — gold
  * identity, no app routes, reversible gate (swap for the real app when the
  * mainnet node opens).
  */
@@ -13,7 +13,7 @@ export function MainnetLaunching() {
     <div className="flex min-h-dvh flex-col bg-bg text-fg">
       <header
         className="flex h-14 shrink-0 items-center justify-between border-b border-border bg-bg/95 px-4 backdrop-blur-sm md:h-16 md:px-6"
-        style={{ borderTop: "1px solid #16a765" }}
+        style={{ borderTop: "1px solid #F2A900" }}
       >
         <a href={SURFACE.landing} className="flex min-w-0 items-baseline gap-2">
           <span className="font-display text-xl tracking-tight text-fg italic md:text-2xl">
@@ -31,7 +31,7 @@ export function MainnetLaunching() {
           className="pointer-events-none absolute inset-x-0 top-0 h-[420px]"
           style={{
             background:
-              "radial-gradient(ellipse at top, rgba(22,167,101,0.10), transparent 60%)",
+              "radial-gradient(ellipse at top, rgba(242,169,0,0.10), transparent 60%)",
           }}
         />
         <div className="relative mx-auto w-full max-w-md text-center">
@@ -46,7 +46,7 @@ export function MainnetLaunching() {
             protocol is live on testnet.
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <Button asChild className="h-11 px-6">
+            <Button asChild variant="gold" className="h-11 px-6">
               <a href={`${SURFACE.testnet}/explorer`}>Open Testnet Explorer</a>
             </Button>
             <Button asChild variant="outline" className="h-11 px-6">
@@ -74,6 +74,9 @@ export function MainnetLaunching() {
             </a>
             <a className="transition-colors hover:text-fg" href={SURFACE.api}>
               api
+            </a>
+            <a className="transition-colors hover:text-fg" href={SURFACE.dash}>
+              dash
             </a>
           </span>
         </div>

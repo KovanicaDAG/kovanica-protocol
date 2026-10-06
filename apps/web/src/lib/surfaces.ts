@@ -8,9 +8,8 @@ export const SURFACE = {
   landing: "https://kovanica.online",
   testnet: "https://testnet.kovanica.online",
   mainnet: "https://mainnet.kovanica.online",
-  faucet: "https://faucet.testnet.kovanica.online",
+  dash: "https://dash.kovanica.online",
   api: "https://api.kovanica.online",
   docs: "https://docs.kovanica.online",
-  kovi: "https://kovi.kovanica.online",
   pool: "https://pool.kovanica.online",
 } as const;
