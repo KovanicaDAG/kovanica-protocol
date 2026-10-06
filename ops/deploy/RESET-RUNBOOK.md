@@ -189,6 +189,55 @@ journalctl -u kovanica-testnet-seed@1 --since -10m \
 ss -ltnp | grep -E ':300[12]'
 ```
 
+## Step 6 — v1.1.0 protocol rollout (reset day)
+
+The v1.1.0 release (tag `v1.1.0`) carries the RFC-009 consensus changes and is
+**reset-gated**: do not run the new binary against the current chain.
+Rollout happens as part of the reset sequence, seed1 first.
+
+1. **Build once, distribute the artifact** — build the release binary from the
+   tag on a build host (not on the seeds), then copy it to each seed:
+
+   ```bash
+   git -C /root/kovanica-protocol fetch origin --tags
+   git -C /root/kovanica-protocol checkout v1.1.0
+   cd /root/kovanica-protocol/protocol
+   cargo build --release --workspace --locked
+   install -m 0755 target/release/kovanica-node /usr/local/bin/kovanica-node
+   # repeat the install on seed2/seed3 once they are on the same OS image
+   ```
+
+2. **Reset seed1 first** (Step 3 order). With `KOVANICA_ALLOW_RESET=0` restored
+   and seed1 producing, confirm the RFC-009 expectations:
+
+   ```bash
+   curl -s http://127.0.0.1:3001/api/bootstrap | jq \
+     '{genesis,finality_depth,payload_pruning_depth,block_pruning_depth,min_fee,k}'
+   ```
+
+   Expected on testnet: genesis `1a635915…`, `finality_depth 100`,
+   `payload_pruning_depth 1000`, `block_pruning_depth 18446744073709551615`
+   (eviction remains disabled), `min_fee 2000`, `k 3`.
+
+3. **Then seed2, then new seed3** — they sync, they do not reset
+   (`ALLOW_RESET=0`). New seed3 (VPS `187.7.27.139`) needs its DNS-only
+   (grey-cloud) A record live *before* seeds are told to peer with it; use
+   `scripts/deploy-seed.sh root@<host> --name seed2 --peers seed2.kovanica.online:8000`
+   for the non-genesis seeds.
+
+4. **RFC-009 activation note** — the A+ mergeset admission rule is gated on a
+   finite `finality_depth` and non-replay, so it is live the moment 1.1.0
+   binaries produce on all three seeds. Eviction stays off (`u64::MAX`): a
+   finite `block_pruning_depth` must not be enabled until R1–R7 and R4's
+   differential test are green.
+
+5. **Env-file decoy cleanup** — the depth knobs in
+   `/etc/kovanica/testnet-seed<N>.env`
+   (`KOVANICA_FINALITY_DEPTH`, `KOVANICA_PAYLOAD_PRUNING_DEPTH`,
+   `KOVANICA_BLOCK_PRUNING_DEPTH`) are read by **no code path** — depths are
+   compiled-in constants. Remove them during the reset window so operators do
+   not believe they can tune pruning from env.
+
 ## Classification
 
 Nothing here changes consensus. These are deployment and operator-surface

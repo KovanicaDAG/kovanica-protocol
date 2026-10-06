@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/kovanica-dag", "crates/kovanica-state", "crates/kovanica-wallet", "crates/kovanica-node", "crates/kovanica-cli", "crates/kovanica-ffi", "crates/kovanica-chat"]
 
 [workspace.package]
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/KovanicaDAG/kovanica-protocol"
