@@ -206,9 +206,10 @@ shipped in `6d0581e`; the real fix is tracked in
       blue set through the selected-parent chain walk. The R4 differential gate
       (`block_pruning_colouring.rs`) is un-ignored and green; the R7
       rejection-equivalence suite is green; full workspace 944 passed / 0 failed
-      / 7 ignored, clippy 0/0. **Caveat:** `d131790` is on
-      `consensus/poa-only-migration` only — PR #15 is still open — and the live
-      guarantee remains the interim mitigation (`block_pruning_depth =
+      / 7 ignored, clippy 0/0. **Update 2026-10-06:** PR #15 merged to
+      `main` (merge commit `b6a8f9e`), so `d131790` is no longer
+      branch-only; the live guarantee remains the interim mitigation
+      (`block_pruning_depth =
       u64::MAX`, re-confirmed on `/api/head` 2026-10-06) until RFC-009
       activation A3→A4 ships the fix to the network.
 - [x] Add a memory-growth guard/alert so a replay storm is visible before the

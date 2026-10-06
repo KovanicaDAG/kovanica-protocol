@@ -97,8 +97,10 @@ section is about the *mainnet* set, and `RFC-POA-GOVERNANCE` / KVP-202 stays
 Draft until those six inputs are settled.)
 
 ## 4.5 Deferred: housekeeping
-- [ ] Merge PR #15 after review. (**No longer a draft** — it is open against
-      `main` from `consensus/poa-only-migration`; needs a human reviewer.)
+- [x] Merge PR #15 after review. **Merged 2026-10-06T12:00:44Z** as merge
+      commit `b6a8f9e` (head `a3c5b4e`). CI run 37457996683 was green on
+      every job before the merge — the red `desktop-node (fmt / clippy /
+      test)` check was cleared by the `worker.rs` SPV-API port (`a3c5b4e`).
 - [x] `deploy-seed.sh` default peers now include `seed1` (fixed 2026-10-05).
       `protocol/scripts/deploy-seed.sh` defaulted to
       `seed2.kovanica.online:8000,seed3.kovanica.online:8000`, omitting the
