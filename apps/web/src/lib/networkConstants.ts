@@ -150,19 +150,35 @@ export type ApiHead = {
   blocks: number;
   min_fee: number;
   atom: number;
+  finality_depth: number;
 };
-export type ApiBootstrap = ApiHead & {
-  listen: string;
-  peers: string[];
+export type ApiBootstrap = {
+  network: string;
+  genesis: string;
+  tip: string;
+  admission: string;
+  poa_enabled: boolean;
+  atom: number;
   token: string;
   k: number;
   subsidy: number;
+  min_fee: number;
+  finality_depth: number;
+  block_pruning_depth: number;
+  payload_pruning_depth: number;
   founder_amount: number;
   founder_seed: number;
+  max_supply: number;
+  burned: number;
+  circulating: number;
+  native_minted: number;
+  total: number;
+  listen: string;
+  peers: string[];
+  operator_wallet_address?: string;
+  light_config?: unknown;
   source?: ApiSource;
   upstream?: { ok: true; head: ApiHead } | { ok: false; error: string };
-  finality_depth?: number;
-  payload_pruning_depth?: number;
 };
 export type ApiUtxos = {
   address: string;

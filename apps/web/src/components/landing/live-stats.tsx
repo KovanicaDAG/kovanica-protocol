@@ -1,27 +1,27 @@
 import { useEffect, useState } from "react";
 import { api, useApiSource } from "@/lib/api/client";
-import { type ApiBootstrap } from "@/lib/api/contract";
+import { type ApiHead } from "@/lib/api/contract";
 import { shortId } from "@/lib/ledger/hash";
 
 /**
  * LiveStats — compact live-network strip for marketing surfaces.
- * Client-only, polls /api/bootstrap every 5s, renders nothing on SSR.
+ * Client-only, polls /api/head every 5s, renders nothing on SSR.
  * Degrades to hidden when offline or when the source has no endpoint.
  */
 export function LiveStats() {
   const source = useApiSource();
-  const [bootstrap, setBootstrap] = useState<ApiBootstrap | null>(null);
+  const [head, setHead] = useState<ApiHead | null>(null);
 
   useEffect(() => {
     if (source === "mainnet") {
-      setBootstrap(null);
+      setHead(null);
       return;
     }
     let alive = true;
     const load = async () => {
       try {
-        const b = await api<ApiBootstrap>("/api/bootstrap");
-        if (alive) setBootstrap(b);
+        const h = await api<ApiHead>("/api/head");
+        if (alive) setHead(h);
       } catch {
         // marketing strip degrades gracefully
       }
@@ -34,13 +34,13 @@ export function LiveStats() {
     };
   }, [source]);
 
-  if (!bootstrap) return null;
+  if (!head) return null;
 
   const cells = [
-    { label: "Blocks", value: bootstrap.blocks.toLocaleString() },
-    { label: "Tip", value: shortId(bootstrap.tip) },
-    { label: "Min fee", value: `${bootstrap.min_fee.toLocaleString()} atoms` },
-    { label: "Finality", value: `${bootstrap.finality_depth ?? 100} blue` },
+    { label: "Blocks", value: head.blocks.toLocaleString() },
+    { label: "Tip", value: shortId(head.tip) },
+    { label: "Min fee", value: `${head.min_fee.toLocaleString()} atoms` },
+    { label: "Finality", value: `${head.finality_depth ?? 100} blue` },
   ];
 
   return (

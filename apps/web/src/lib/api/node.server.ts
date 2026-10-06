@@ -184,19 +184,35 @@ export function localHead(): ApiHead {
     blocks: n.blocks,
     min_fee: MIN_FEE,
     atom: ATOM,
+    finality_depth: 100,
   };
 }
 
 export function localBootstrap(upstream: ApiBootstrap["upstream"]): ApiBootstrap {
   return {
     ...localHead(),
-    listen: "local",
-    peers: [],
+    network: NETWORK_ID,
+    genesis: localHead().genesis,
+    tip: localHead().tip,
+    admission: "local",
+    poa_enabled: false,
+    atom: ATOM,
     token: TOKEN,
     k: K,
     subsidy: SUBSIDY,
+    min_fee: MIN_FEE,
+    finality_depth: 100,
+    block_pruning_depth: 18446744073709551615,
+    payload_pruning_depth: 1000,
     founder_amount: FOUNDER_AMOUNT,
     founder_seed: FOUNDER_SEED,
+    max_supply: 90_200_000 * ATOM,
+    burned: 0,
+    circulating: 0,
+    native_minted: 0,
+    total: 0,
+    listen: "local",
+    peers: [],
     source: "local",
     upstream,
   };
