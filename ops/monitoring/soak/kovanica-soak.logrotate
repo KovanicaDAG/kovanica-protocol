@@ -1,0 +1,9 @@
+/var/log/kovanica/soak-*.log /var/log/kovanica/soak-*.alert {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+}

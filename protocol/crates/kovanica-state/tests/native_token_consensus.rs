@@ -382,7 +382,9 @@ fn test_native_token_coinbase_mixed_allowed() {
         b"cb".to_vec(),
     );
 
-    let res = apply_block(&mut utxo, &[coinbase], 1_000);
+    // Subsidy must cover creation fee (1000 KVNC = 100_000_000_000 atoms) + claimed native (500)
+    let subsidy = 100_000_000_500;
+    let res = apply_block(&mut utxo, &[coinbase], subsidy);
     assert!(res.is_ok());
     assert_eq!(utxo.balance(&alice.address()), 500);
     assert_eq!(utxo.balance_of_asset(&alice.address(), Some(asset)), 500);
@@ -836,7 +838,7 @@ fn test_native_token_snapshot_roundtrip() {
         .unwrap();
 
     // Write snapshot
-    let buf = ledger.write_snapshot();
+    let buf = ledger.write_snapshot().unwrap();
 
     // Read snapshot into new ledger
     let restored = Ledger::read_snapshot(&buf).unwrap();

@@ -69,11 +69,11 @@ fn block_detail_includes_header_and_topology() {
     assert!(json["work"].as_u64().unwrap() >= 1);
     assert!(!json["parents"].as_array().unwrap().is_empty());
     assert!(!json["txs"].as_array().unwrap().is_empty());
-    assert!(
-        json["kind"].as_str().unwrap() == "pow"
-            || json["kind"].as_str().unwrap() == "staked"
-            || json["kind"].as_str().unwrap() == "poa"
-    );
+    // PoA is the only admission regime (RFC-POA §0), so the block detail
+    // endpoint must label the block "poa". It previously also accepted
+    // "pow" and "staked", which let a regression reintroducing a removed
+    // admission path pass this assertion silently.
+    assert_eq!(json["kind"].as_str().unwrap(), "poa");
     assert!(["genesis", "chain", "blue", "red"].contains(&json["colour"].as_str().unwrap()));
     assert!(["tip", "confirmed", "accepted", "pending"]
         .contains(&json["confirming_status"].as_str().unwrap()));

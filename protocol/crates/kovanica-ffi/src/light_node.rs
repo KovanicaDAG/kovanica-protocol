@@ -372,7 +372,7 @@ pub struct PrepareMintAssetResult {
     pub outpoint_index: u32,
 }
 
-/// A Kovanica light node: ledger + mempool + hybrid validator identity.
+/// A Kovanica light node: ledger + mempool + authority identity.
 ///
 /// Sync model for mobile: call [`Self::export_blocks`] to hand peers your
 /// blocks, feed peer bytes into [`Self::receive_blocks`]. Everything else —
@@ -815,31 +815,6 @@ impl LightNode {
     // SPV: light sync, filters, inclusion proofs
     // ------------------------------------------------------------------
 
-    /// The compact filter of a known block as a blob
-    /// (`k || n || len || data`). Match addresses with
-    /// [`Self::filter_matches`].
-    pub fn block_filter(&self, block_id_hex: String) -> Result<Vec<u8>, LightNodeError> {
-        let id = parse_block_id(&block_id_hex)?;
-        let node = self.lock();
-        let filter = node
-            .block_filter(&id, FILTER_K)
-            .ok_or_else(|| invalid("unknown block"))?;
-        Ok(encode_filter(&filter))
-    }
-
-    /// Whether `address` MIGHT appear in the filtered block (Golomb-Rice
-    /// false positives are possible; a miss is definitive).
-    pub fn filter_matches(
-        &self,
-        filter_blob: Vec<u8>,
-        address: String,
-    ) -> Result<bool, LightNodeError> {
-        let filter = decode_filter(&filter_blob)?;
-        let addr = kovanica_state::Address::parse(&address)
-            .map_err(|e| invalid(format!("bad address: {e}")))?;
-        Ok(filter.contains(addr.payload()))
-    }
-
     /// Batch form of [`Self::filter_matches`]: does the filter match ANY of
     /// `addresses`? Decodes the filter once — use this when watching several
     /// addresses per block (multi-address watch wallets).
@@ -855,7 +830,7 @@ impl LightNode {
                 kovanica_state::Address::parse(a).map_err(|e| invalid(format!("bad address: {e}")))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(addrs.iter().any(|addr| filter.contains(addr.payload())))
+        Ok(addrs.iter().any(|addr| filter.matches(addr.payload())))
     }
 
     /// Reconstruct the transaction history of `address` by scanning stored
@@ -953,7 +928,7 @@ impl LightNode {
         Ok(light
             .headers
             .get(&id)
-            .map(|e| e.filter.contains(addr.payload())))
+            .map(|e| e.filter.matches(addr.payload())))
     }
 
     /// A Merkle-inclusion proof for `tx_id` inside block `block_id_hex`,
@@ -988,44 +963,10 @@ impl LightNode {
             .headers
             .get(&id)
             .ok_or_else(|| invalid("block not in light-synced history"))?;
-        if proof.merkle_root != header.header.merkle_root {
+        if proof.leaf != header.header.merkle_root {
             return Ok(false);
         }
-        Ok(proof.verify())
-    }
-
-    /// SW-PoA stake proof for a block's authority (SPV).
-    // ------------------------------------------------------------------
-    // SW-PoA SPV verification (stake-weighted PoA)
-    // ------------------------------------------------------------------
-    /// Previously verified an SW-PoA block header with a stake proof.
-    /// Removed: stake/VRF admission was dropped entirely (RFC-POA-Migration §0.7.1).
-    pub fn verify_sw_poa_header(
-        &self,
-        _header_blob: Vec<u8>,
-        _proof_hex: String,
-    ) -> Result<bool, LightNodeError> {
-        Err(invalid("SW-PoA verification removed"))
-    }
-
-    /// Fetch the stake merkle proof for a slot from the node.
-    /// Returns the proof as a hex-encoded bincode blob.
-    pub fn fetch_stake_proof(&self, slot: u64) -> Result<String, LightNodeError> {
-        let node = self.lock();
-        let proof = node.get_stake_proof(slot)?;
-        Ok(hex::encode(bincode::serialize(&proof).unwrap()))
-    }
-
-    /// Fetch the full authority stake set for an epoch.
-    /// Returns lines of "pubkey_hex stake_atoms".
-    pub fn fetch_epoch_authority_set(&self, epoch: u64) -> Result<String, LightNodeError> {
-        let node = self.lock();
-        let set = node.get_epoch_authority_set(epoch)?;
-        let mut out = Vec::new();
-        for (pk, stake) in set {
-            out.push(format!("{} {}", hex::encode(pk.as_bytes()), stake));
-        }
-        Ok(out.join("\n"))
+        Ok(proof.verify() == header.header.merkle_root)
     }
 
     // ------------------------------------------------------------------
@@ -1630,17 +1571,14 @@ fn encode_light_sync(node: &Node, from_id_hex: Option<String>) -> Vec<u8> {
     out.extend_from_slice(&(headers.len() as u32).to_be_bytes());
     for h in &headers {
         encode_header(h, &mut out);
-        match node.block_filter(&h.id, FILTER_K) {
-            Some(f) => encode_filter_into(&f, &mut out),
-            None => encode_filter_into(
-                &kovanica_state::spv::BlockFilter {
-                    k: FILTER_K,
-                    n: 1,
-                    data: Vec::new(),
-                },
-                &mut out,
-            ),
-        }
+        let filter = node
+            .block_filter(&h.id)
+            .unwrap_or_else(|| kovanica_state::spv::BlockFilter {
+                k: FILTER_K,
+                n: 0,
+                data: Vec::new(),
+            });
+        encode_filter_into(&filter, &mut out);
     }
     out
 }
@@ -1756,21 +1694,15 @@ fn encode_filter_into(f: &kovanica_state::spv::BlockFilter, out: &mut Vec<u8>) {
     out.extend_from_slice(&f.data);
 }
 
-fn encode_filter(f: &kovanica_state::spv::BlockFilter) -> Vec<u8> {
-    let mut out = Vec::new();
-    encode_filter_into(f, &mut out);
-    out
-}
-
 fn decode_filter(mut blob: &[u8]) -> Result<kovanica_state::spv::BlockFilter, LightNodeError> {
     (|| {
         if blob.len() < 13 {
             return None;
         }
         let k = blob[0];
-        let n = u64::from_be_bytes(blob[1..9].try_into().ok()?);
-        let len = u32::from_be_bytes(blob[9..13].try_into().ok()?) as usize;
-        blob = blob.get(13..13 + len)?;
+        let n = u32::from_be_bytes(blob[1..5].try_into().ok()?);
+        let len = u32::from_be_bytes(blob[5..9].try_into().ok()?) as usize;
+        blob = blob.get(9..9 + len)?;
         Some(kovanica_state::spv::BlockFilter {
             k,
             n,
@@ -1808,22 +1740,22 @@ fn parse_light_sync(
         let (header, rest) = decode_header(&blob[off..], version).ok_or_else(err)?;
         off = blob.len() - rest.len();
 
-        // Filter: k(1) n(8) len(4) data(len).
-        if blob.len() < off + 13 {
+        // Filter: k(1) n(4) len(4) data(len).
+        if blob.len() < off + 9 {
             return Err(err());
         }
         let k = blob[off];
-        let n = u64::from_be_bytes(blob[off + 1..off + 9].try_into().map_err(|_| err())?);
+        let n = u32::from_be_bytes(blob[off + 1..off + 5].try_into().map_err(|_| err())?);
         let len =
-            u32::from_be_bytes(blob[off + 9..off + 13].try_into().map_err(|_| err())?) as usize;
-        let data_end = off + 13 + len;
+            u32::from_be_bytes(blob[off + 5..off + 9].try_into().map_err(|_| err())?) as usize;
+        let data_end = off + 9 + len;
         if blob.len() < data_end {
             return Err(err());
         }
         let filter = kovanica_state::spv::BlockFilter {
             k,
             n,
-            data: blob[off + 13..data_end].to_vec(),
+            data: blob[off + 9..data_end].to_vec(),
         };
         off = data_end;
         out.push((header, filter));
@@ -1833,14 +1765,12 @@ fn parse_light_sync(
 
 fn encode_proof(p: &kovanica_state::spv::MerkleProof) -> Vec<u8> {
     let mut out = Vec::new();
-    out.extend_from_slice(&p.tx_id);
-    out.extend_from_slice(&p.merkle_root);
+    out.extend_from_slice(&p.leaf);
     out.extend_from_slice(&(p.path.len() as u32).to_be_bytes());
     for s in &p.path {
         out.extend_from_slice(s);
     }
     out.extend_from_slice(&(p.index as u64).to_be_bytes());
-    out.extend_from_slice(&(p.tx_count as u64).to_be_bytes());
     out
 }
 
@@ -1851,22 +1781,19 @@ fn decode_proof(blob: &[u8]) -> Result<kovanica_state::spv::MerkleProof, LightNo
             return None;
         }
         let g32 = |o: usize| <[u8; 32]>::try_from(&blob[o..o + 32]).ok();
-        let path_len = u32::from_be_bytes(blob[64..68].try_into().ok()?) as usize;
-        let fixed_tail = 8 + 8;
-        if blob.len() < 68 + path_len * 32 + fixed_tail {
+        let path_len = u32::from_be_bytes(blob[32..36].try_into().ok()?) as usize;
+        if blob.len() < 36 + path_len * 32 + 8 {
             return None;
         }
         let mut path = Vec::with_capacity(path_len);
         for i in 0..path_len {
-            path.push(g32(68 + i * 32)?);
+            path.push(g32(36 + i * 32)?);
         }
-        let base = 68 + path_len * 32;
+        let base = 36 + path_len * 32;
         Some(kovanica_state::spv::MerkleProof {
-            tx_id: g32(0)?,
-            merkle_root: g32(32)?,
+            leaf: g32(0)?,
             path,
             index: u64::from_be_bytes(blob[base..base + 8].try_into().ok()?) as usize,
-            tx_count: u64::from_be_bytes(blob[base + 8..base + 16].try_into().ok()?) as usize,
         })
     })()
     .ok_or_else(err)

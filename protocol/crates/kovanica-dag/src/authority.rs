@@ -85,9 +85,6 @@ pub struct AuthoritySet {
     authorities: Vec<AuthorityPublicKey>,
     threshold: usize,
     hash: [u8; 32],
-    /// Stake weights for SW-PoA (optional, None = classic PoA equal weight)
-    /// Each entry corresponds to the authority at the same index in `authorities`.
-    stakes: Option<Vec<u64>>,
 }
 
 impl AuthoritySet {
@@ -120,20 +117,6 @@ impl AuthoritySet {
         authorities: Vec<AuthorityPublicKey>,
         threshold: usize,
     ) -> Result<Self, AuthorityError> {
-        Self::new_with_stakes(authorities, threshold, None)
-    }
-
-    /// Build a set with optional stake weights for SW-PoA.
-    ///
-    /// If `stakes` is provided, it must have the same length as `authorities`
-    /// and contain non-zero values. The stakes are used for weighted slot
-    /// assignment in SW-PoA mode. If `None`, classic PoA equal-weight round-robin
-    /// is used.
-    pub fn new_with_stakes(
-        authorities: Vec<AuthorityPublicKey>,
-        threshold: usize,
-        stakes: Option<Vec<u64>>,
-    ) -> Result<Self, AuthorityError> {
         let n = authorities.len();
         if !(MIN_AUTHORITIES..=MAX_AUTHORITIES).contains(&n) {
             return Err(AuthorityError::InvalidAuthorityCount(n));
@@ -141,46 +124,18 @@ impl AuthoritySet {
         if !(MIN_THRESHOLD..=n).contains(&threshold) {
             return Err(AuthorityError::InvalidThreshold(threshold, n));
         }
-        // Validate stakes if provided
-        if let Some(ref stakes) = stakes {
-            if stakes.len() != n {
-                return Err(AuthorityError::InvalidAuthorityCount(n));
-            }
-            if stakes.contains(&0) {
-                return Err(AuthorityError::InvalidAuthorityCount(n)); // Reuse for zero stake
-            }
-        }
         // Canonical order: ascending 32-byte encoding.
-        // We need to sort authorities and stakes together
-        let mut pairs: Vec<(AuthorityPublicKey, Option<u64>)> = if let Some(stakes) = stakes {
-            authorities
-                .into_iter()
-                .zip(stakes.into_iter().map(Some))
-                .collect()
-        } else {
-            authorities.into_iter().map(|pk| (pk, None)).collect()
-        };
-        pairs.sort_unstable_by_key(|(pk, _)| pk.to_bytes());
+        let mut authorities = authorities;
+        authorities.sort_unstable_by_key(|pk| pk.to_bytes());
         // Distinct keys: equal encodings are now necessarily neighbours.
-        if pairs.windows(2).any(|w| w[0].0 == w[1].0) {
+        if authorities.windows(2).any(|w| w[0] == w[1]) {
             return Err(AuthorityError::DuplicateAuthority);
         }
-        let (authorities, stakes): (Vec<_>, Vec<_>) = pairs.into_iter().unzip();
-        let stakes_opt = if stakes.iter().all(|s| s.is_some()) {
-            Some(stakes.into_iter().map(|s| s.unwrap()).collect())
-        } else {
-            None
-        };
-        let hash = blake3::hash(&Self::canonical_bytes_of(
-            &authorities,
-            threshold,
-            stakes_opt.as_deref(),
-        ));
+        let hash = blake3::hash(&Self::canonical_bytes_of(&authorities, threshold, None));
         Ok(Self {
             authorities,
             threshold,
             hash: *hash.as_bytes(),
-            stakes: stakes_opt,
         })
     }
 
@@ -206,19 +161,6 @@ impl AuthoritySet {
         self.threshold
     }
 
-    /// Get stake weights for SW-PoA (None = classic PoA equal weight).
-    pub fn stakes(&self) -> Option<&[u64]> {
-        self.stakes.as_deref()
-    }
-
-    /// Total stake across all authorities.
-    pub fn total_stake(&self) -> u64 {
-        self.stakes
-            .as_ref()
-            .map(|s| s.iter().sum())
-            .unwrap_or(self.authorities.len() as u64)
-    }
-
     /// The set's identity: BLAKE3 of the canonical encoding. This is what the
     /// on-chain `KVA1` Authority UTXO commits to.
     pub fn hash(&self) -> [u8; 32] {
@@ -227,26 +169,9 @@ impl AuthoritySet {
 
     /// The authority scheduled to produce the block for `slot`.
     ///
-    /// - Classic PoA (no stakes): `authorities[slot % len]` — deterministic round-robin.
-    /// - SW-PoA (with stakes): weighted by stake, deterministic.
+    /// Classic PoA: `authorities[slot % len]` — deterministic round-robin.
     pub fn active_authority(&self, slot: u64) -> &AuthorityPublicKey {
-        if let Some(stakes) = &self.stakes {
-            // Weighted round-robin: slot * total_stake % total_stake gives target
-            let total: u64 = stakes.iter().sum();
-            let target = (slot as u128 * total as u128 % total as u128) as u64;
-            let mut acc = 0u64;
-            for (i, &stake) in stakes.iter().enumerate() {
-                acc += stake;
-                if target < acc {
-                    return &self.authorities[i];
-                }
-            }
-            // Fallback (should never happen if stakes are valid)
-            &self.authorities[0]
-        } else {
-            // Classic PoA: simple round-robin
-            &self.authorities[slot as usize % self.authorities.len()]
-        }
+        &self.authorities[slot as usize % self.authorities.len()]
     }
 
     /// Verify a 64-byte Ed25519 `sig` over `message` against the authority
@@ -304,10 +229,10 @@ impl AuthoritySet {
     }
 
     /// Canonical byte encoding: `threshold (u64 LE) || count (u64 LE) ||
-    /// pk_1 (32) || … || pk_n (32) || [stake_1 (u64 LE) || … || stake_n (u64 LE)]`.
+    /// pk_1 (32) || … || pk_n (32)`.
     /// The hash is BLAKE3 of exactly this.
     pub fn to_bytes(&self) -> Vec<u8> {
-        Self::canonical_bytes_of(&self.authorities, self.threshold, self.stakes.as_deref())
+        Self::canonical_bytes_of(&self.authorities, self.threshold, None)
     }
 
     /// Decode a set from its canonical byte encoding.
@@ -318,11 +243,7 @@ impl AuthoritySet {
         let threshold = u64::from_le_bytes(bytes[..8].try_into().unwrap()) as usize;
         let count = u64::from_le_bytes(bytes[8..16].try_into().unwrap()) as usize;
         let expected_len = 16 + count * 32;
-        let has_stakes = bytes.len() > expected_len;
-        if has_stakes && bytes.len() != expected_len + count * 8 {
-            return Err(AuthorityError::MalformedEncoding);
-        }
-        if !has_stakes && bytes.len() != expected_len {
+        if bytes.len() != expected_len {
             return Err(AuthorityError::MalformedEncoding);
         }
         let mut authorities = Vec::with_capacity(count);
@@ -334,157 +255,21 @@ impl AuthoritySet {
                 .map_err(|_| AuthorityError::MalformedEncoding)?;
             authorities.push(pk);
         }
-        let stakes = if has_stakes {
-            let mut stakes = Vec::with_capacity(count);
-            let stake_start = expected_len;
-            for i in 0..count {
-                let stake = u64::from_le_bytes(
-                    bytes[stake_start + i * 8..stake_start + (i + 1) * 8]
-                        .try_into()
-                        .map_err(|_| AuthorityError::MalformedEncoding)?,
-                );
-                stakes.push(stake);
-            }
-            Some(stakes)
-        } else {
-            None
-        };
-        Self::new_with_stakes(authorities, threshold, stakes)
+        Self::new(authorities, threshold)
     }
 
     fn canonical_bytes_of(
         authorities: &[AuthorityPublicKey],
         threshold: usize,
-        stakes: Option<&[u64]>,
+        _stakes: Option<&[u64]>,
     ) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(
-            16 + 32 * authorities.len() + stakes.map(|s| s.len() * 8).unwrap_or(0),
-        );
+        let mut buf = Vec::with_capacity(16 + 32 * authorities.len());
         buf.extend_from_slice(&(threshold as u64).to_le_bytes());
         buf.extend_from_slice(&(authorities.len() as u64).to_le_bytes());
         for pk in authorities {
             buf.extend_from_slice(pk.as_bytes());
         }
-        if let Some(stakes) = stakes {
-            for stake in stakes {
-                buf.extend_from_slice(&stake.to_le_bytes());
-            }
-        }
         buf
-    }
-
-    /// Build a merkle tree of (pubkey -> stake) for SPV stake proofs.
-    /// Returns the merkle root (32 bytes).
-    pub fn stake_merkle_root(&self) -> Option<[u8; 32]> {
-        if let Some(stakes) = &self.stakes {
-            let leaves: Vec<[u8; 32]> = self
-                .authorities
-                .iter()
-                .zip(stakes.iter())
-                .map(|(pk, stake)| {
-                    let mut hasher = blake3::Hasher::new();
-                    hasher.update(pk.as_bytes());
-                    hasher.update(&stake.to_le_bytes());
-                    *hasher.finalize().as_bytes()
-                })
-                .collect();
-            Some(Self::merkle_root(&leaves))
-        } else {
-            None
-        }
-    }
-
-    /// Generate a merkle proof for a specific authority's stake.
-    /// Returns None if no stakes or authority not found.
-    pub fn stake_merkle_proof(
-        &self,
-        authority_pubkey: &AuthorityPublicKey,
-    ) -> Option<StakeMerkleProof> {
-        let stakes = self.stakes.as_ref()?;
-        let idx = self
-            .authorities
-            .iter()
-            .position(|pk| pk == authority_pubkey)?;
-
-        let leaves: Vec<[u8; 32]> = self
-            .authorities
-            .iter()
-            .zip(stakes.iter())
-            .map(|(pk, stake)| {
-                let mut hasher = blake3::Hasher::new();
-                hasher.update(pk.as_bytes());
-                hasher.update(&stake.to_le_bytes());
-                *hasher.finalize().as_bytes()
-            })
-            .collect();
-
-        let path = Self::merkle_path(&leaves, idx);
-        Some(StakeMerkleProof {
-            leaf: StakeLeaf {
-                authority_pubkey: authority_pubkey.to_bytes(),
-                stake: stakes[idx],
-                vault_id: 0, // TODO: link to KVP-105 vault
-            },
-            path,
-            index: idx,
-        })
-    }
-
-    /// Compute merkle root from leaves.
-    fn merkle_root(leaves: &[[u8; 32]]) -> [u8; 32] {
-        if leaves.is_empty() {
-            return [0u8; 32];
-        }
-        let mut current = leaves.to_vec();
-        while current.len() > 1 {
-            let mut next = Vec::with_capacity(current.len().div_ceil(2));
-            for i in (0..current.len()).step_by(2) {
-                let left = current[i];
-                let right = if i + 1 < current.len() {
-                    current[i + 1]
-                } else {
-                    left
-                };
-                let mut hasher = blake3::Hasher::new();
-                hasher.update(&left);
-                hasher.update(&right);
-                next.push(*hasher.finalize().as_bytes());
-            }
-            current = next;
-        }
-        current[0]
-    }
-
-    /// Compute merkle path for a leaf at index.
-    fn merkle_path(leaves: &[[u8; 32]], index: usize) -> Vec<[u8; 32]> {
-        let mut path = Vec::new();
-        let mut current = leaves.to_vec();
-        let mut idx = index;
-        while current.len() > 1 {
-            let sibling_idx = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
-            let sibling = if sibling_idx < current.len() {
-                current[sibling_idx]
-            } else {
-                current[idx] // last odd leaf paired with itself
-            };
-            path.push(sibling);
-            let mut next = Vec::with_capacity(current.len().div_ceil(2));
-            for i in (0..current.len()).step_by(2) {
-                let left = current[i];
-                let right = if i + 1 < current.len() {
-                    current[i + 1]
-                } else {
-                    left
-                };
-                let mut hasher = blake3::Hasher::new();
-                hasher.update(&left);
-                hasher.update(&right);
-                next.push(*hasher.finalize().as_bytes());
-            }
-            current = next;
-            idx /= 2;
-        }
-        path
     }
 }
 
@@ -497,46 +282,6 @@ impl fmt::Display for AuthoritySet {
             self.threshold,
             hex::encode(&self.hash[..8])
         )
-    }
-}
-
-/// Merkle proof for an authority's stake weight (SW-PoA SPV).
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct StakeMerkleProof {
-    pub leaf: StakeLeaf,
-    pub path: Vec<[u8; 32]>,
-    pub index: usize,
-}
-
-/// A leaf in the stake merkle tree.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct StakeLeaf {
-    pub authority_pubkey: [u8; 32],
-    pub stake: u64,
-    pub vault_id: u64, // KVP-105 vault ID for slashing
-}
-
-impl StakeMerkleProof {
-    /// Verify the merkle proof against a given root.
-    pub fn verify(&self, root: [u8; 32]) -> bool {
-        let mut hash = {
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&self.leaf.authority_pubkey);
-            hasher.update(&self.leaf.stake.to_le_bytes());
-            *hasher.finalize().as_bytes()
-        };
-        for sibling in &self.path {
-            let (left, right) = if self.index % 2 == 0 {
-                (hash, *sibling)
-            } else {
-                (*sibling, hash)
-            };
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&left);
-            hasher.update(&right);
-            hash = *hasher.finalize().as_bytes();
-        }
-        hash == root
     }
 }
 
@@ -612,19 +357,7 @@ impl AuthorityUpdateTx {
     pub fn signatures(&self) -> &[(AuthorityPublicKey, [u8; 64])] {
         &self.signatures
     }
-}
 
-/// Sign an authority-set update with one authority's signing key.
-/// Returns the 64-byte Ed25519 signature over [`update_payload`].
-pub fn sign_update(sk: &SigningKey, old_set_hash: &[u8; 32], new_set: &AuthoritySet) -> [u8; 64] {
-    let payload = update_payload(old_set_hash, new_set);
-    sk.sign(&payload).to_bytes()
-}
-
-/// On-chain tag for an authority-set update transaction (RFC-POA §1).
-pub const AUTHORITY_UPDATE_TAG: &[u8; 4] = b"KVA2";
-
-impl AuthorityUpdateTx {
     /// Canonical encoding: `old_set_hash (32) || new_set.to_bytes() || sig_count (u8) || (pk 32 || sig 64) * count`.
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut buf =
@@ -688,6 +421,16 @@ impl AuthorityUpdateTx {
         })
     }
 }
+
+/// Sign an authority-set update with one authority's signing key.
+/// Returns the 64-byte Ed25519 signature over [`update_payload`].
+pub fn sign_update(sk: &SigningKey, old_set_hash: &[u8; 32], new_set: &AuthoritySet) -> [u8; 64] {
+    let payload = update_payload(old_set_hash, new_set);
+    sk.sign(&payload).to_bytes()
+}
+
+/// On-chain tag for an authority-set update transaction (RFC-POA §1).
+pub const AUTHORITY_UPDATE_TAG: &[u8; 4] = b"KVA2";
 
 #[cfg(test)]
 mod tests {

@@ -2,9 +2,9 @@
 //!
 //! The mobile app is a **light validating wallet**: it syncs compact block
 //! records over its own transport (the byte-blob API here wraps the exact wire
-//! format full nodes speak), verifies and applies them under the same hybrid
-//! admission rules as everyone else, and — once bonded — produces its own
-//! stake-weighted VRF blocks by signing one hash. No mining rig required.
+//! format full nodes speak), verifies and applies them under the same PoA
+//! admission rules as everyone else, and — when configured with an authority
+//! key — produces its own blocks by signing one hash. No mining rig required.
 //!
 //! Generate language bindings with the bundled helper:
 //!

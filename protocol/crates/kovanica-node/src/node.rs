@@ -17,23 +17,24 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ed25519_dalek::{Signer, SigningKey};
 use kovanica_dag::{
     AuthorityError, AuthorityPublicKey, AuthoritySet, AuthorityUpdateTx, Block, BlockId, Dag,
-    PoAConfig, StakeMerkleProof, POA_NOMINAL_WORK,
+    PoAConfig, POA_NOMINAL_WORK,
 };
 use kovanica_state::multisig::{verify_threshold_signatures, MultisigScript};
 use kovanica_state::{
-    apply_block_at_height, decode_block_payload, encode_block_payload, verify, Address, AssetId,
-    AssetKind, HalvingSchedule, HtlcScript, KeyPair, Ledger, LedgerError, LedgerInsertError,
-    LedgerStore, LogoUri, MetadataUri, OutPoint, Sig, StealthAddress, Transaction, TxId, TxInput,
-    TxOutput, UtxoSet, VaultScript, ASSET_CREATION_FEE, COINBASE_MATURITY, DEFAULT_HALVING_ERA,
-    FEE_PRODUCER_DEN, FEE_PRODUCER_NUM, MAX_MINT_PRICE, MIN_MINT_PRICE,
+    apply_block_at_height, decode_block_payload, encode_block_payload, verify, Address,
+    AssetCreationParams, AssetId, AssetKind, HalvingSchedule, HtlcScript, KeyPair, Ledger,
+    LedgerError, LedgerInsertError, LedgerStore, LogoUri, MetadataUri, OutPoint, Sig,
+    StealthAddress, Transaction, TxId, TxInput, TxOutput, UtxoSet, VaultScript, ASSET_CREATION_FEE,
+    COINBASE_MATURITY, DEFAULT_HALVING_ERA, FEE_PRODUCER_DEN, FEE_PRODUCER_NUM, MAX_MINT_PRICE,
+    MIN_MINT_PRICE,
 };
 use kovanica_types::Hash32;
 use kovanica_wallet::Wallet;
 
 use crate::mempool_v2::{MempoolConfig, MempoolV2};
 use crate::metrics::{
-    record_block_observed, record_block_produced, record_mempool_evicted, record_mempool_promoted,
-    set_mempool_counts,
+    record_block_observed, record_block_produced, record_chain_height, record_mempool_evicted,
+    record_mempool_promoted, set_mempool_counts,
 };
 
 /// How far ahead of the local wall clock a received block's timestamp may sit
@@ -106,6 +107,13 @@ pub enum NodeError {
     /// A PoA `produce_empty` was requested but this node is not the scheduled
     /// authority for the current slot (or holds no authority key at all).
     NotAuthoritySlot,
+    /// A block carrying no authority signature reached a node that requires PoA
+    /// admission (RFC-POA-Migration §0). Because PoA is the *only* admission
+    /// regime, an unsigned block has no valid author under any policy — so this
+    /// is refused rather than treated as an unadmitted legacy block. The
+    /// usual cause is a node that lost its authority set on restart and
+    /// silently fell back to admitting everything.
+    PoARequired,
 }
 
 impl core::fmt::Display for NodeError {
@@ -149,6 +157,10 @@ impl core::fmt::Display for NodeError {
             ),
             NodeError::NotAuthoritySlot => f.write_str(
                 "not the scheduled PoA authority for this slot (or no authority key set)"
+            ),
+            NodeError::PoARequired => f.write_str(
+                "block carries no authority signature but this node requires PoA admission \
+                 (RFC-POA §0) — is the authority set configured?"
             ),
         }
     }
@@ -518,6 +530,15 @@ pub struct Node {
     /// keys so a single node can produce in every slot. Empty on
     /// non-authority nodes, which then never produce under PoA.
     authority_sks: Vec<SigningKey>,
+    /// Whether this node refuses blocks that carry no authority signature.
+    ///
+    /// Defaults to `true` and should stay that way on every real node: PoA is
+    /// the only admission regime (RFC-POA-Migration §0), so an unsigned block
+    /// is never admissible. The `false` opt-out exists only so tests and
+    /// tooling can build *permissionless* DAGs to exercise GHOSTDAG and ledger
+    /// mechanics without standing up an authority set; it must never be set
+    /// on a node that talks to a network.
+    require_poa: bool,
     /// DHT NodeId for peer discovery (optional).
     dht_node_id: Option<crate::dht::NodeId>,
     /// DHT routing table for peer discovery (optional).
@@ -569,6 +590,7 @@ impl Default for Node {
             mempool: MempoolV2::default(),
             clock: Clock::default(),
             authority_sks: Vec::new(),
+            require_poa: true,
             dht_node_id: None,
             dht_routing_table: None,
             log: None,
@@ -610,6 +632,27 @@ impl Node {
         Self::default()
     }
 
+    /// A node that will accept blocks with **no authority signature**.
+    ///
+    /// This is not a supported network configuration under RFC-POA-Migration
+    /// §0 — PoA is the only admission regime, so an unsigned block is never
+    /// admissible. It exists so tests and tooling can build *permissionless*
+    /// DAGs to exercise GHOSTDAG, ledger and wire mechanics without standing
+    /// up an authority set and a key ceremony. Prefer this over
+    /// [`Node::set_require_poa`] so the opt-out is visible at the point the node
+    /// is built and cannot be silently reordered relative to genesis.
+    ///
+    /// Never use this for a node that connects to a network: it removes
+    /// admission control entirely, so any peer can insert arbitrary blocks.
+    ///
+    /// Not `#[cfg(test)]`: integration tests under `tests/` link this crate as
+    /// a normal dependency and never see `cfg(test)` items.
+    pub fn permissionless() -> Self {
+        let mut node = Self::new();
+        node.require_poa = false;
+        node
+    }
+
     /// Create a node with custom mempool configuration.
     pub fn with_mempool_config(config: MempoolConfig) -> Self {
         Self {
@@ -617,6 +660,7 @@ impl Node {
             mempool: MempoolV2::new(config),
             clock: Clock::default(),
             authority_sks: Vec::new(),
+            require_poa: true,
             dht_node_id: None,
             dht_routing_table: None,
             log: None,
@@ -687,7 +731,7 @@ impl Node {
     /// wall-clock now, clamped up to stay strictly after the latest parent
     /// (genesis is at 0). The wall clock makes timestamps meaningful; the clamp
     /// keeps them monotone even if the clock is behind or a parent is ahead, so
-    /// they still satisfy the difficulty layer's "not older than any parent" rule
+    /// they still satisfy the DAG's "not older than any parent" rule
     /// (see [`kovanica_dag::Dag::set_difficulty`]).
     pub fn next_timestamp(&self, dag: &Dag, parents: &[BlockId]) -> u64 {
         let floor = parents
@@ -812,7 +856,7 @@ impl Node {
     ///
     /// The genesis block id changes: it commits to the authority set, so a node
     /// configured with a different set derives a different genesis (a hard fork
-    /// marker). PoA and hybrid admission are mutually exclusive.
+    /// marker). PoA is the only admission regime.
     #[allow(clippy::too_many_arguments)] // genesis wiring takes every chain parameter explicitly
     pub fn genesis_with_poa(
         &mut self,
@@ -1100,40 +1144,22 @@ impl Node {
         self.ledger.as_ref().and_then(Ledger::poa_config)
     }
 
-    /// Get the stake merkle proof for the authority scheduled at `slot`.
-    /// Returns the stake merkle proof for SW-PoA SPV verification.
-    pub fn get_stake_proof(&self, slot: u64) -> Result<StakeMerkleProof, NodeError> {
-        let ledger = self.ledger.as_ref().ok_or(NodeError::NotInitialized)?;
-        let poa = ledger.poa_config().ok_or(NodeError::NotInitialized)?;
-        let authority = poa.authority_set.active_authority(slot);
-        let proof = poa
-            .authority_set
-            .stake_merkle_proof(authority)
-            .ok_or(NodeError::NotInitialized)?;
-        Ok(proof)
+    /// Whether this node refuses unsigned blocks. Defaults to `true`.
+    ///
+    /// Setting this to `false` lets the node accept blocks with no authority
+    /// signature, which is **not** a supported network configuration under
+    /// RFC-POA-Migration §0 — it exists for tests and tooling that build
+    /// permissionless DAGs. On a node that participates in a real network it
+    /// removes admission control entirely: any peer can then insert arbitrary
+    /// blocks, including blocks that would never pass PoA admission.
+    pub fn set_require_poa(&mut self, require: bool) {
+        self.require_poa = require;
     }
 
-    /// Get the full authority stake set for an epoch (for light client caching).
-    /// An epoch is typically 100k slots.
-    pub fn get_epoch_authority_set(
-        &self,
-        _epoch: u64,
-    ) -> Result<Vec<(AuthorityPublicKey, u64)>, NodeError> {
-        let ledger = self.ledger.as_ref().ok_or(NodeError::NotInitialized)?;
-        let poa = ledger.poa_config().ok_or(NodeError::NotInitialized)?;
-        let authorities = poa.authority_set.authorities().to_vec();
-        let stakes = poa
-            .authority_set
-            .stakes()
-            .map(|s| s.to_vec())
-            .unwrap_or_else(|| vec![1u64; authorities.len()]);
-        Ok(authorities
-            .into_iter()
-            .zip(stakes.iter().copied())
-            .collect())
+    /// Whether this node refuses unsigned blocks.
+    pub fn require_poa(&self) -> bool {
+        self.require_poa
     }
-
-    /// Apply an on-chain authority set update (RFC-POA §1, KVP-201).
     ///
     /// Validates the update against the current authority set and replaces
     /// it on success. Returns the new AuthoritySet.
@@ -1205,6 +1231,12 @@ impl Node {
     }
 
     /// The current chain height: the selected tip's blue score.
+    /// ⚠️ **This returns the tip's _blue score_, not a linearized chain
+    /// height**, despite the name. Blue score is the size of the tip's blue
+    /// set, so it outruns chain height by a growing margin. Left as-is
+    /// because callers (notably the unbond maturity gate) depend on the
+    /// existing value, and changing it is consensus-adjacent. For the true
+    /// chain height use `Ledger::chain_height_of`.
     pub fn chain_height(&self) -> Result<u64, NodeError> {
         Ok(self.ledger()?.tip_blue_score())
     }
@@ -1313,7 +1345,8 @@ impl Node {
         let chain_height = self
             .ledger()
             .as_ref()
-            .map(|l| l.tip_blue_score())
+            .ok()
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut owned: Vec<(OutPoint, u64)> = state
@@ -1411,7 +1444,8 @@ impl Node {
         let chain_height = self
             .ledger()
             .as_ref()
-            .map(|l| l.tip_blue_score())
+            .ok()
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut owned: Vec<(OutPoint, u64)> = state
@@ -1549,7 +1583,8 @@ impl Node {
         let chain_height = self
             .ledger()
             .as_ref()
-            .map(|l| l.tip_blue_score())
+            .ok()
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut owned: Vec<(OutPoint, u64)> = state
@@ -1886,7 +1921,8 @@ impl Node {
         let chain_height = self
             .ledger()
             .as_ref()
-            .map(|l| l.tip_blue_score())
+            .ok()
+            .and_then(|l| l.tip_chain_height())
             .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
 
@@ -1915,15 +1951,27 @@ impl Node {
             return Err(NodeError::InsufficientFunds);
         }
 
-        // Output: new asset registration (value = 0 for fungible, 1 for NFT)
-        let initial_value = if kind == AssetKind::NonFungible { 1 } else { 0 };
+        // Output: new asset registration
+        // For fungible: mint at least 1 unit (value > 0 to pass non-zero output check)
+        // For NFT: value = 1
+        let initial_value = 1;
         let mut outputs = vec![TxOutput::new(initial_value, Some(asset_id), from)];
         let change = total - need;
         if change > 0 {
             outputs.push(TxOutput::native(change, from));
         }
+
+        // Build creation params for the tag
+        let creation_params = AssetCreationParams {
+            mint_price_per_unit,
+            logo_uri,
+            metadata_uri,
+            creator: Some(creator_pk),
+        };
+        let tag = creation_params.encode();
+
         let outpoints: Vec<OutPoint> = selected.iter().map(|(op, _)| *op).collect();
-        let tx = Transaction::unsigned(&outpoints, outputs, Vec::new());
+        let tx = Transaction::unsigned(&outpoints, outputs, tag);
         let sighash = tx.sighash();
         Ok(Prepared {
             tx,
@@ -1979,7 +2027,7 @@ impl Node {
             .ok_or(NodeError::InsufficientFunds)?;
 
         let state = ledger.ledger_state();
-        let chain_height = ledger.tip_blue_score();
+        let chain_height = ledger.tip_chain_height().unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
 
         // Select covering UTXOs from `from` (native KVNC only) for the mint fee
@@ -2047,7 +2095,12 @@ impl Node {
 
         let fee = self.min_fee();
         let state = self.ledger()?.ledger_state();
-        let chain_height = self.chain_height().unwrap_or(0);
+        let chain_height = self
+            .ledger()
+            .as_ref()
+            .ok()
+            .and_then(|l| l.tip_chain_height())
+            .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
 
         // Select covering UTXOs from claimant (for fee)
@@ -2159,7 +2212,12 @@ impl Node {
         }
         let fee = self.min_fee();
         let state = self.ledger()?.ledger_state();
-        let chain_height = self.chain_height().unwrap_or(0);
+        let chain_height = self
+            .ledger()
+            .as_ref()
+            .ok()
+            .and_then(|l| l.tip_chain_height())
+            .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
 
         // Collect all inputs and outputs from participants
@@ -2289,7 +2347,12 @@ impl Node {
     /// returned; coinbase outputs whose `creation_height` is still within
     /// `COINBASE_MATURITY` blocks of the tip are filtered out.
     pub fn spendable_utxos_of(&self, owner: &Address) -> Result<Vec<(OutPoint, u64)>, NodeError> {
-        let chain_height = self.chain_height().unwrap_or(0);
+        let chain_height = self
+            .ledger()
+            .as_ref()
+            .ok()
+            .and_then(|l| l.tip_chain_height())
+            .unwrap_or(0);
         let mature_before = chain_height.saturating_sub(COINBASE_MATURITY);
         let mut rows: Vec<(OutPoint, u64)> = self
             .ledger()?
@@ -2823,10 +2886,16 @@ impl Node {
     /// Insert a block immediately on the current tips, PoA-aware: under PoA
     /// the block is signed by the scheduled authority for its slot (erroring
     /// with [`NodeError::NotAuthoritySlot`] when this node is not the
-    /// scheduled authority — an immediate send cannot wait for a later slot);
-    /// otherwise the legacy `ledger.insert` path is used. The shared tail of
-    /// the immediate-send flows (`send_with_asset`, `send_to_script_v2`,
-    /// `send_to_stealth`, the HTLC helpers, and `unbond_with`).
+    /// scheduled authority — an immediate send cannot wait for a later slot).
+    /// The shared tail of the immediate-send flows (`send_with_asset`,
+    /// `send_to_script_v2`, `send_to_stealth`, and the HTLC helpers).
+    ///
+    /// If PoA is *not* enabled the block is inserted unsigned. That is the
+    /// local/test-node shape (genesis-only fixtures, no authority set
+    /// configured), not a second admission regime: RFC-POA-Migration §0 left
+    /// no other regime to fall back to, so this branch carries no consensus
+    /// weight — a PoA network's blocks still have to pass the ledger's
+    /// authority admission on every other node.
     fn insert_immediate_block(
         &mut self,
         parents: Vec<BlockId>,
@@ -2866,11 +2935,18 @@ impl Node {
             ledger
                 .insert_prepared_block(block, txs)
                 .map_err(NodeError::Insert)
-        } else {
+        } else if !self.require_poa {
+            // Permissionless mode (tests/tooling only). Producing a block with
+            // no authority signature is not valid block production under
+            // RFC-POA §0, so it is gated behind the same opt-out.
             let ledger = self.ledger.as_mut().ok_or(NodeError::NotInitialized)?;
             ledger
                 .insert(parents, work, timestamp, nonce, txs)
                 .map_err(NodeError::Insert)
+        } else {
+            // PoA is required but no authority set is configured. Refuse
+            // rather than mint an unadmitted block into the local DAG.
+            Err(NodeError::PoARequired)
         }
     }
 
@@ -3120,7 +3196,7 @@ impl Node {
                 ledger.subsidy(),
                 ledger.ledger_state(),
                 ledger.ledger_state(),
-                ledger.tip_blue_score() + 1,
+                ledger.tip_chain_height().unwrap_or(0) + 1,
             )
         };
         let mut selected = Vec::new();
@@ -3433,22 +3509,6 @@ impl Node {
             .collect()
     }
 
-    /// The compact block filter for a known block: one entry per distinct
-    /// output address in its payload. `k` is the Golomb-Rice parameter (8 is
-    /// the reference choice; higher = denser, larger).
-    pub fn block_filter(&self, id: &BlockId, k: u8) -> Option<kovanica_state::spv::BlockFilter> {
-        let ledger = self.ledger.as_ref()?;
-        let block = ledger.dag().block(id)?;
-        let txs = decode_block_payload(block.payload()).ok()?;
-        let mut addrs: Vec<[u8; 32]> = txs
-            .iter()
-            .flat_map(|tx| tx.outputs().iter().map(|o| *o.owner.payload()))
-            .collect();
-        addrs.sort_unstable();
-        addrs.dedup();
-        Some(kovanica_state::spv::BlockFilter::from_addresses(&addrs, k))
-    }
-
     /// A Merkle-inclusion proof for `tx_id` inside block `id`, for light
     /// clients to verify against the block header's merkle root.
     pub fn merkle_proof(
@@ -3461,6 +3521,24 @@ impl Node {
         let txs = decode_block_payload(block.payload()).ok()?;
         let index = txs.iter().position(|tx| &tx.id() == tx_id)?;
         kovanica_state::spv::generate_merkle_proof(&txs, index)
+    }
+
+    /// Create a Golomb-Rice block filter from the distinct output addresses
+    /// in a block's payload. Returns `None` if the block is not found or
+    /// has no payload.
+    pub fn block_filter(&self, id: &BlockId) -> Option<kovanica_state::spv::BlockFilter> {
+        let ledger = self.ledger.as_ref()?;
+        let block = ledger.dag().block(id)?;
+        let txs = decode_block_payload(block.payload()).ok()?;
+        let mut addresses: Vec<[u8; 32]> = txs
+            .iter()
+            .flat_map(|tx| tx.outputs().iter().map(|o| *o.owner.payload()))
+            .collect();
+        addresses.sort_unstable();
+        addresses.dedup();
+        Some(kovanica_state::spv::BlockFilter::from_addresses(
+            &addresses, 8,
+        ))
     }
 
     /// Reconstruct the transaction history of `owner` by scanning stored
@@ -3794,7 +3872,17 @@ impl Node {
                 payload,
             )
         } else {
-            // Legacy PoW block (no admission) - the id is still well-defined
+            // PoA is the only admission regime (RFC-POA-Migration §0), so an
+            // unsigned block has no valid author. Refuse it at the node
+            // boundary rather than admitting it unvalidated: `Dag::insert`
+            // skips `check_poa` entirely when no authority set is configured,
+            // so a node that lost `KOVANICA_AUTHORITIES` on restart would
+            // otherwise accept arbitrary blocks off the wire.
+            if self.require_poa {
+                return Err(NodeError::PoARequired);
+            }
+            // Permissionless mode (tests/tooling only): the id is still
+            // well-defined, but the block carries no admission proof.
             Block::new(
                 record.parents.clone(),
                 record.work,
@@ -3843,7 +3931,10 @@ impl Node {
 
     /// Write the ledger snapshot to `path`.
     pub fn save(&self, path: &str) -> Result<(), NodeError> {
-        let bytes = self.ledger()?.write_snapshot();
+        let bytes = self
+            .ledger()?
+            .write_snapshot()
+            .map_err(|e| NodeError::Snapshot(e.to_string()))?;
         fs::write(path, bytes).map_err(|e| NodeError::Io(e.to_string()))
     }
 
@@ -3989,6 +4080,7 @@ impl Node {
             mempool: MempoolV2::default(),
             clock: Clock::default(),
             authority_sks: Vec::new(),
+            require_poa: true,
             dht_node_id: None,
             dht_routing_table: None,
             log: Some(store),
@@ -4012,6 +4104,7 @@ impl Node {
             mempool: MempoolV2::default(),
             clock: Clock::default(),
             authority_sks: Vec::new(),
+            require_poa: true,
             dht_node_id: None,
             dht_routing_table: None,
             log: None,
@@ -4082,6 +4175,17 @@ impl Node {
             .map(|g| g.blue_score)
             .unwrap_or(0);
         record_block_observed(score, score);
+        // `record_block_observed` deliberately reports blue score under the
+        // `kovanica_block_height` name, so it cannot double as the chain
+        // height. Publish the real linearized height alongside it, otherwise
+        // an operator has no series that means "how far has the chain
+        // advanced" (see `names::CHAIN_HEIGHT`).
+        let chain_height = self
+            .ledger
+            .as_ref()
+            .and_then(|l| l.tip_chain_height())
+            .unwrap_or(0);
+        record_chain_height(chain_height);
         set_mempool_counts(
             self.mempool.len_pending(),
             self.mempool.len_orphans(),
@@ -4211,8 +4315,10 @@ mod tests {
 
     #[test]
     fn test_node_spv_header_and_export() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         let (genesis, _) = node.genesis(3, 1000, 1000, 1, None).unwrap();
+        // Permissionless node: this test exercises SPV headers, not PoA
+        // admission. Real nodes must never disable this - see
         let sent1 = node.send(1, 100, 2).unwrap();
         let sent2 = node.send(2, 50, 3).unwrap();
 
@@ -4240,8 +4346,10 @@ mod tests {
 
     #[test]
     fn test_node_headers_from() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         let (genesis, _) = node.genesis(3, 1000, 1000, 1, None).unwrap();
+        // Permissionless node: this test exercises header queries, not PoA
+        // admission. Real nodes must never disable this - see
         let sent1 = node.send(1, 100, 2).unwrap();
         let sent2 = node.send(2, 50, 3).unwrap();
 
@@ -4277,8 +4385,10 @@ mod tests {
 
     #[test]
     fn test_node_merkle_block() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         node.genesis(3, 1000, 1000, 1, None).unwrap();
+        // Permissionless node: this test exercises merkle blocks, not PoA
+        // admission. Real nodes must never disable this - see
         let sent = node.send(1, 200, 2).unwrap();
 
         // Matching transaction
@@ -4287,8 +4397,8 @@ mod tests {
         assert!(mb.proof.is_some());
         assert!(mb.matched_tx.is_some());
         let proof = mb.proof.as_ref().unwrap();
-        assert_eq!(proof.tx_id, *sent.tx.as_bytes());
-        assert!(proof.verify());
+        assert_eq!(proof.leaf, *sent.tx.as_bytes());
+        assert!(proof.verify() == mb.merkle_root);
 
         // Non-matching transaction
         let unknown_tx = TxId::from_bytes([99u8; 32]);
@@ -4300,5 +4410,110 @@ mod tests {
         // Non-existent block
         let unknown_block = BlockId::from_bytes([99u8; 32]);
         assert!(node.merkle_block(&unknown_block, &sent.tx).is_err());
+    }
+
+    /// Regression: wallet-facing UTXO selection must measure coinbase maturity
+    /// (RFC-006) in the **linearized chain height**, not the tip's blue score.
+    /// In a purely linear PoA chain the two are equal, which is why the original
+    /// `tip_blue_score() - 100` bound looked correct; this test therefore builds
+    /// a **merge** first, so blue score exceeds chain height and the old bound
+    /// would admit a coinbase that consensus rejects with `CoinbaseImmature`.
+    #[test]
+    fn spendable_coinbases_respect_linearized_maturity_across_a_merge() {
+        // Every authority key is loaded so any slot's scheduled authority is
+        // signable (the RFC-POA admission regime is the only one).
+        let keys: Vec<AuthorityPublicKey> = (1..=3u64)
+            .map(|i| SigningKey::from_bytes(&KeyPair::from_u64(i).seed()).verifying_key())
+            .collect();
+        let set = AuthoritySet::new(keys.clone(), 2).expect("valid authority set");
+        let mut node = Node::permissionless();
+        node.genesis_with_poa(
+            3,
+            2000,
+            2000,
+            1,
+            None,
+            u64::MAX,
+            u64::MAX,
+            u64::MAX,
+            None,
+            set,
+            3000,
+        )
+        .expect("genesis");
+        for i in 1..=3u64 {
+            node.set_authority_signing_key(KeyPair::from_u64(i).seed());
+        }
+
+        // Long enough that a coinbase sits inside the 100-block maturity window.
+        for _ in 0..105 {
+            node.produce_empty().expect("produce empty");
+        }
+
+        // Fork a sibling off the block two below the tip. `produce_empty` takes
+        // `parents = dag().tips()`, so the next produced block merges the fork
+        // and its blue score exceeds its linearized chain height.
+        let (older, fork_ts) = {
+            let ledger = node.ledger().expect("ledger");
+            let tip = ledger.dag().selected_tip();
+            let tip_ts = ledger
+                .dag()
+                .block(&tip)
+                .map(|b| b.timestamp_ms())
+                .unwrap_or(0);
+            let sp = ledger
+                .dag()
+                .ghostdag(&tip)
+                .and_then(|g| g.selected_parent)
+                .expect("tip has a selected parent");
+            let older = ledger
+                .dag()
+                .ghostdag(&sp)
+                .and_then(|g| g.selected_parent)
+                .expect("selected parent has a selected parent");
+            (older, tip_ts + 3_000)
+        };
+        // A PoA block must carry exactly the nominal work, and its slot must not
+        // precede its parent's.
+        node.insert_immediate_block(vec![older], 1u128, fork_ts, 0, &[])
+            .expect("fork sibling");
+        node.produce_empty().expect("merge the fork");
+
+        let ledger = node.ledger().expect("ledger");
+        let tip_chain_height = ledger.tip_chain_height().expect("tip chain height");
+        let tip_blue_score = ledger.tip_blue_score();
+        assert!(
+            tip_blue_score > tip_chain_height,
+            "the merge must make blue score exceed chain height \
+             (blue={tip_blue_score}, chain={tip_chain_height})"
+        );
+
+        let mature_before = tip_chain_height.saturating_sub(COINBASE_MATURITY);
+        let state = ledger.ledger_state();
+        let mut checked = 0usize;
+        for pk in &keys {
+            let owner = Address::p2pk(*pk.as_bytes());
+            for (op, _value) in node.spendable_utxos_of(&owner).expect("spendable") {
+                let entry = state
+                    .get_entry(&op)
+                    .expect("a spendable utxo is in the ledger state");
+                if !entry.is_coinbase || entry.creation_height == 0 {
+                    continue;
+                }
+                checked += 1;
+                assert!(
+                    entry.creation_height <= mature_before,
+                    "wallet offered an immature coinbase: creation_height={} > \
+                     tip_chain_height-COINBASE_MATURITY={} (tip blue score was {})",
+                    entry.creation_height,
+                    mature_before,
+                    tip_blue_score,
+                );
+            }
+        }
+        assert!(
+            checked > 0,
+            "expected at least one spendable coinbase to check"
+        );
     }
 }

@@ -9,7 +9,7 @@ use kovanica_node::{net, p2p::Mesh, Node};
 /// A node with the standard genesis (mints 1000 to actor 1). All nodes in a test
 /// share this genesis, since it is deterministic.
 fn genesis_node() -> Node {
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     node.genesis(3, 1000, 1000, 1, None).unwrap();
     node
 }

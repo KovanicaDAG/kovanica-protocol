@@ -360,29 +360,14 @@ fn run(node: &mut Node, line: &str) -> Result<String, String> {
             Ok("loaded".to_string())
         }
 
-        "get_stake_proof" => {
-            // get_stake_proof <slot>
-            // Returns the stake merkle proof for the authority scheduled at <slot>
-            let [slot] = fixed::<1>(&args)?;
-            let slot = u64_arg(slot)?;
-            let proof = node.get_stake_proof(slot).map_err(|e| e.to_string())?;
-            Ok(hex::encode(bincode::serialize(&proof).unwrap()))
-        }
-
-        "get_epoch_authority_set" => {
-            // get_epoch_authority_set <epoch>
-            // Returns the full authority stake set for an epoch (for light client caching)
-            let [epoch] = fixed::<1>(&args)?;
-            let epoch = u64_arg(epoch)?;
-            let set = node
-                .get_epoch_authority_set(epoch)
-                .map_err(|e| e.to_string())?;
-            let mut out = Vec::new();
-            for (pk, stake) in set {
-                out.push(format!("{} {}", hex::encode(pk), stake));
-            }
-            Ok(out.join("\n"))
-        }
+        // Tombstone for a removed command, kept so an operator or client that
+        // still calls it gets an explicit reason instead of "unknown
+        // command". Stake/VRF admission was dropped entirely
+        // (RFC-POA-Migration §0.7.1), so there is nothing to return.
+        "get_stake_proof" => Err(
+            "get_stake_proof was removed with stake/VRF admission (RFC-POA-Migration §0.7.1)"
+                .to_string(),
+        ),
 
         other => Err(format!("unknown command '{other}' (try help)")),
     }

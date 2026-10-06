@@ -173,7 +173,6 @@ fn authority_update_on_chain_and_spv_proof() {
         kovanica_state::spv::SpvPoAConfig {
             authority_set: set.clone(),
             slot_duration_ms: SLOT_MS,
-            sw_poa: false,
         },
     );
 
@@ -190,11 +189,9 @@ fn authority_update_on_chain_and_spv_proof() {
         )
         .unwrap(),
         merkle: MerkleProof {
-            tx_id: [0u8; 32],
-            merkle_root: [0u8; 32],
+            leaf: [0u8; 32],
             path: Vec::new(),
             index: 0,
-            tx_count: 1,
         },
         height: 10,
     };
@@ -347,7 +344,6 @@ fn spv_sync_under_poa_reorg() {
         kovanica_state::spv::SpvPoAConfig {
             authority_set: set.clone(),
             slot_duration_ms: SLOT_MS,
-            sw_poa: false,
         },
     );
 
@@ -405,7 +401,6 @@ fn spv_sync_under_poa_reorg() {
         kovanica_state::spv::SpvPoAConfig {
             authority_set: set.clone(),
             slot_duration_ms: SLOT_MS,
-            sw_poa: false,
         },
     );
 

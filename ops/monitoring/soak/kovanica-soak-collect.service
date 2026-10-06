@@ -1,0 +1,7 @@
+[Unit]
+Description=Kovanica testnet soak metrics collector
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/kovanica-soak-collect.sh
+Nice=10

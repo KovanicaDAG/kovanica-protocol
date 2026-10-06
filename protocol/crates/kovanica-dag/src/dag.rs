@@ -101,11 +101,18 @@
 //!
 //! ### Insert-time invariant
 //!
-//! When block pruning is enabled, a new block's **selected parent** must be in
-//! `future(P) ∪ {P}` (i.e. `sp == P` or `P` is an ancestor of `sp`); otherwise
-//! the insert is rejected with [`DagError::BuildsOnPrunedHistory`]. This keeps
-//! the evicted set inside the new block's past, so mergeset walks can treat
-//! evicted blocks as boundaries without consulting the oracle for them.
+//! When block pruning is enabled, **every parent and every mergeset candidate**
+//! of a new block must be in `future(P) ∪ {P}` (i.e. `== P` or `P` is an
+//! ancestor); otherwise the insert is rejected with
+//! [`DagError::BuildsOnPrunedHistory`]. Requiring all parents (not only the
+//! selected parent) is RFC-009 design **(A+)**. The parent check alone is *not*
+//! sufficient: an `anticone(P)` block can be an ancestor of a `future(P)` parent
+//! and still surface as a mergeset candidate, and for such a candidate the
+//! `past(P)` blues that eviction removes are *not* inert — (B1) under-counts and
+//! colours it blue where an unpruned node colours it red (the §13 counterexample
+//! and the 344/8000 divergences of §14). Checking the candidates themselves is
+//! the tight condition: (B1) is exact **iff** every candidate lies in
+//! `future(P) ∪ {P}`. See `docs/RFC-009-DESIGN-ANALYSIS.md` §13-§14.
 //!
 //! ### Snapshots
 //!
@@ -567,14 +574,24 @@ impl Dag {
     /// (or will be) evicted, and a new block's selected parent must be in
     /// `future(P) ∪ {P}`.
     pub fn pruning_point(&self) -> BlockId {
-        let threshold = self.block_pruning_score();
+        self.lowest_block_at_or_above(self.block_pruning_score())
+    }
+
+    /// The lowest block on the selected-parent chain with `blue_score >=
+    /// threshold`. Genesis when `threshold == 0` or the chain is not yet deep
+    /// enough.
+    ///
+    /// Blue score strictly decreases going up the selected chain, so the last
+    /// qualifying block seen walking down from the tip is the lowest one. The
+    /// walk stops at an evicted block (everything below it is evicted too).
+    ///
+    /// This is the shared primitive behind [`Dag::pruning_point`] (block
+    /// pruning) and the ledger's finality point (RFC-009 R7), so a pruning node
+    /// and a non-pruning node derive the same point from the same rule.
+    pub fn lowest_block_at_or_above(&self, threshold: u64) -> BlockId {
         if threshold == 0 {
             return self.genesis;
         }
-        // Walk the selected chain from the tip down, tracking the deepest block
-        // with blue_score >= threshold. Blue score strictly decreases going up,
-        // so the last qualifying block seen is the lowest one. Stop at an
-        // evicted block (everything below it is evicted too).
         let mut point = self.genesis;
         let mut cur = Some(self.selected_tip());
         while let Some(id) = cur {
@@ -585,7 +602,7 @@ impl Dag {
                     }
                     cur = node.ghostdag.selected_parent;
                 }
-                None => break, // evicted: the pruning point is the last present block above
+                None => break, // evicted: the point is the last present block above
             }
         }
         point
@@ -612,10 +629,12 @@ impl Dag {
 
         // Walk the selected chain from the pruning point down, collecting each
         // chain block's mergeset and then the chain block itself, until genesis
-        // or an already-evicted block. The newly evicted set is exactly
-        // `past(P_new) \ past(P_old)`: the chain blocks between the old and new
-        // pruning points plus the mergesets of the chain blocks in
-        // `(P_old, P_new]` (mergeset(P_new) included, P_new itself kept).
+        // or an already-evicted block. The newly evicted set is exactly the
+        // blocks of `past(P_new)` still present: the chain blocks below
+        // `P_new` plus the mergesets of the chain blocks walked (mergeset(P_new)
+        // included, P_new itself kept). After a selected-chain reorg `P_old`
+        // need not be an ancestor of `P_new`, so this is stated over the
+        // already-evicted set, not over `past(P_old)`.
         let mut evicted: HashSet<BlockId> = HashSet::new();
         let mut cur = Some(new_point);
         while let Some(c) = cur {
@@ -623,7 +642,10 @@ impl Dag {
             let sp = node.ghostdag.selected_parent;
             // Evict the mergeset of the current chain block: every merged block
             // is in past(c) ⊆ past(P_new) but not in past(sp) ⊇ past(P_old), so
-            // it is newly evicted and still present.
+            // it is newly evicted and still present. This must run even when `sp`
+            // is already evicted: `c` can be the present child of the previous
+            // pruning point, and its mergeset (present blocks merged from off the
+            // old selected chain) is then still present and must be evicted.
             if let Some(sp) = sp {
                 let mergeset = self.mergeset_ordered(sp, node.block.parents());
                 for m in mergeset {
@@ -763,8 +785,12 @@ impl Dag {
                 // without consulting the oracle (which no longer holds it).
                 continue;
             }
-            if x == sp || self.is_ancestor(&x, &sp) {
-                continue; // x ∈ past(sp) ∪ {sp}: boundary
+            if x == sp || x == self.genesis || self.is_ancestor(&x, &sp) {
+                // x ∈ past(sp) ∪ {sp}: boundary. Genesis is always in `past(sp)`
+                // (every block descends from it), and is checked explicitly
+                // because the oracle cannot answer `is_ancestor(genesis, sp)`
+                // once `sp` has itself been evicted by block pruning.
+                continue;
             }
             mergeset.push(x);
             for parent in self.nodes[&x].block.parents() {
@@ -871,8 +897,8 @@ impl Dag {
     ///
     /// Fails if the block is a duplicate, references a missing parent, (for a
     /// non-genesis block) references no parents, is rejected by the installed
-    /// [`BlockValidator`] (if any), or — when difficulty is enforced (see
-    /// [`Dag::set_difficulty`]) — carries the wrong `work` or a timestamp that
+    /// [`BlockValidator`] (if any), or carries a `work` that disagrees with the
+    /// PoA nominal constant, or a timestamp that
     /// precedes a parent's. The structural DAG checks run first, so a validator
     /// only ever sees a block whose parents are present.
     pub fn insert(&mut self, block: Block) -> Result<BlockId, DagError> {
@@ -893,8 +919,10 @@ impl Dag {
 
     /// Like [`insert_with_id`], but skips the block-pruning invariant check
     /// (`BuildsOnPrunedHistory`). Used during log/snapshot replay where the
-    /// block is known-valid history and its selected parent may be in the
-    /// pruned region (e.g., anticone blocks linearized last).
+    /// block is known-valid history and its parents may lie in the pruned
+    /// region (e.g., anticone blocks linearized last). Because this bypasses
+    /// design (A+), a replay must not run with a finite `block_pruning_depth`
+    /// (RFC-009 R8).
     pub fn insert_for_replay(
         &mut self,
         block: Block,
@@ -949,15 +977,47 @@ impl Dag {
             }
         }
 
-        // Block-pruning invariant, if enabled: the new block's selected parent
-        // must be in future(P) ∪ {P} (P = pruning point). This keeps the evicted
-        // set (past(P)) inside the new block's past, so mergeset walks can treat
-        // evicted blocks as boundaries. Checked before the block is wired in, so
-        // a rejected block leaves the DAG unchanged.
+        // Block-pruning invariant, if enabled: **every** parent of the new block
+        // and **every mergeset candidate** must be in future(P) ∪ {P}
+        // (P = pruning point). Checked before the block is wired in, so a rejected
+        // block leaves the DAG unchanged.
+        //
+        // RFC-009 design (A+). Checking only the parents is NOT sufficient: an
+        // `anticone(P)` block can be an *ancestor* of a `future(P)` parent and still
+        // surface as a mergeset candidate. A differential search over DAGs whose
+        // parents are all in `future(P) ∪ {P}` found 344/8000 divergences with the
+        // parent-only check and 0/8000 once candidates are checked too (§14).
+        //
+        // Why candidates are the tight condition: design (B1)'s bounded
+        // `blue_anticone_sizes` drops `past(P)` keys, which is exact exactly when
+        // every candidate `c` lies in `future(P) ∪ {P}` — then every `past(P)` blue
+        // `b` satisfies `b ∈ past(P) ⊆ past(c)` (for `c ∈ future(P)`), so `b` is in
+        // `c`'s past, not its anticone, and `try_colour_blue` treats it as inert.
+        // An `anticone(P)` candidate instead has genuine `past(P)` blues in its
+        // anticone that the drop removes, under-counting it and colouring it blue
+        // where an unpruned node colours it red (the confirmed §13 counterexample).
+        //
+        // The candidate set is `mergeset_blues ∪ mergeset_reds` from the colouring
+        // computed above; it comes from `mergeset_ordered` (reachability), so the
+        // (B1) trim changes only the blue/red split, never the set. The parent loop
+        // additionally pins the selected parent (which is not itself a candidate) to
+        // `future(P) ∪ {P}`, so the inherited map comes from a valid future block.
+        // See `docs/RFC-009-DESIGN-ANALYSIS.md` §13-§14.
         if !skip_pruning_check && self.block_pruning_depth != u64::MAX {
             let p = self.pruning_point();
-            if sp != p && !self.is_ancestor(&p, &sp) {
-                return Err(DagError::BuildsOnPrunedHistory { id });
+            for parent in block.parents() {
+                if *parent != p && !self.is_ancestor(&p, parent) {
+                    return Err(DagError::BuildsOnPrunedHistory { id });
+                }
+            }
+            for c in ghostdag
+                .mergeset_blues
+                .iter()
+                .chain(&ghostdag.mergeset_reds)
+            {
+                if *c != p && !self.is_ancestor(&p, c) {
+                    return Err(DagError::BuildsOnPrunedHistory { id });
+                }
             }
         }
 

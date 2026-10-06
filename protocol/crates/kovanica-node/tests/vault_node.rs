@@ -40,7 +40,7 @@ fn poa_node() -> Node {
         .map(|i| SigningKey::from_bytes(&KeyPair::from_u64(i).seed()).verifying_key())
         .collect();
     let set = AuthoritySet::new(keys, 2).expect("valid authority set");
-    let mut node = Node::new();
+    let mut node = Node::permissionless();
     node.genesis_with_poa(
         3,
         2000,

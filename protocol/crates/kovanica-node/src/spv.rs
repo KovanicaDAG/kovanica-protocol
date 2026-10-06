@@ -6,7 +6,7 @@
 
 use kovanica_dag::BlockId;
 pub use kovanica_state::spv::{
-    generate_merkle_proof, merkle_root, BlockFilter, BlockHeader, MerkleProof, SpvClient, SpvError,
+    generate_merkle_proof, merkle_root, BlockHeader, MerkleProof, SpvClient, SpvError,
 };
 use kovanica_state::TxId;
 
@@ -144,13 +144,13 @@ pub fn verify_merkle_block(client: &SpvClient, mb: &MerkleBlock) -> Result<bool,
         return Ok(false);
     };
 
-    // Check that matched_tx id matches proof tx_id
-    if *matched_tx.id().as_bytes() != proof.tx_id {
+    // Check that matched_tx id matches proof leaf
+    if *matched_tx.id().as_bytes() != proof.leaf {
         return Ok(false);
     }
 
     // Check proof self-consistency and root match
-    if proof.merkle_root != mb.merkle_root || !proof.verify() {
+    if proof.verify() != mb.merkle_root {
         return Ok(false);
     }
 
@@ -184,7 +184,7 @@ mod tests {
 
     #[test]
     fn test_locator_generation() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         node.genesis(3, 1000, 1000, 1, None).unwrap();
         let genesis_hdr = node.spv_header(&node.genesis_id().unwrap()).unwrap();
         let client = SpvClient::new(genesis_hdr.clone());
@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn test_merkle_block_verification() {
-        let mut node = Node::new();
+        let mut node = Node::permissionless();
         node.genesis(3, 1000, 1000, 1, None).unwrap();
         let sent = node.send(1, 200, 2).unwrap();
 

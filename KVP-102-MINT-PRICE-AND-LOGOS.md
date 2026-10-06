@@ -404,37 +404,54 @@ Set activation score in genesis config.
 
 ## 8. Implementation Checklist
 
+> **Status 2026-10-06 — verified against the tree, not copied from the plan.**
+> This work shipped as **KVP-107** (`protocol/docs/KVP-107-MintPriceAndLogos.md`,
+> checkpoint **v11**); every tick below was re-confirmed in code on 2026-10-06.
+> Still open: **Phase 5 node integration tests** (no create→mint→transfer RPC
+> test exists), **Phase 6 `AGENTS.md` constants**, and **Phase 6 explorer logo
+> display** (no UI renders `logo_uri` yet).
+>
+> Two items were implemented at a different site than planned — enforcement
+> lives in the ledger apply path, not `validate_tx_structure`:
+> - URI size/scheme: `LogoUri`/`MetadataUri::new` (256-byte cap) plus the
+>   `asset_logo_activation_score`-gated enforcement inside the apply path
+>   (`ledger.rs`, tests `logo_enforcement_*`).
+> - Mint price bounds: `MIN_MINT_PRICE..=MAX_MINT_PRICE` in `apply_regular`
+>   (`ledger.rs:1514`).
+>
+> Behavior is consensus-enforced either way; only the file location differs.
+
 ### Phase 1: Core Types & Encoding (tx.rs)
-- [ ] Add `LogoUri`, `MetadataUri`, `LogoScheme`, `MetadataScheme`
-- [ ] Extend `AssetRegistryEntry` with new fields
-- [ ] Update `AssetRegistryEntry` constructors
-- [ ] Add serialization/deserialization for new fields (checkpoint format bump)
+- [x] Add `LogoUri`, `MetadataUri`, `LogoScheme`, `MetadataScheme`
+- [x] Extend `AssetRegistryEntry` with new fields
+- [x] Update `AssetRegistryEntry` constructors
+- [x] Add serialization/deserialization for new fields (checkpoint format bump)
 
 ### Phase 2: Ledger Rules (ledger.rs)
-- [ ] Add `MINT_PRICE_ACTIVATION_SCORE`, `ASSET_LOGO_ACTIVATION_SCORE` constants
-- [ ] Add `mint_price_activation_score`, `asset_logo_activation_score` to `Ledger`
-- [ ] Add `InsufficientMintFee` error variant
-- [ ] Implement mint price enforcement in `apply_regular`
-- [ ] Implement asset creation with fee in `apply_coinbase`
-- [ ] Update `apply_block_inner` to pass activation scores
-- [ ] Update `Ledger::apply_new_block` to pass scores
+- [x] Add `MINT_PRICE_ACTIVATION_SCORE`, `ASSET_LOGO_ACTIVATION_SCORE` constants
+- [x] Add `mint_price_activation_score`, `asset_logo_activation_score` to `Ledger`
+- [x] Add `InsufficientMintFee` error variant
+- [x] Implement mint price enforcement in `apply_regular`
+- [x] Implement asset creation with fee in `apply_coinbase`
+- [x] Update `apply_block_inner` to pass activation scores
+- [x] Update `Ledger::apply_new_block` to pass scores
 
 ### Phase 3: Structural Validation (validation.rs)
-- [ ] Validate logo/metadata URI sizes in `validate_tx_structure`
-- [ ] Validate mint price bounds (MIN/MAX)
+- [x] Validate logo/metadata URI sizes in `validate_tx_structure`
+- [x] Validate mint price bounds (MIN/MAX)
 
 ### Phase 4: Node & RPC (node.rs, explorer.rs)
-- [ ] Add `prepare_create_asset` / `prepare_mint_asset` to `Node`
-- [ ] Add RPC handlers in `explorer.rs`
-- [ ] Add FFI bindings in `kovanica-ffi`
+- [x] Add `prepare_create_asset` / `prepare_mint_asset` to `Node`
+- [x] Add RPC handlers in `explorer.rs`
+- [x] Add FFI bindings in `kovanica-ffi`
 
 ### Phase 5: Tests
-- [ ] Unit tests in `tx.rs` and `ledger.rs`
-- [ ] Consensus tests in `native_token_consensus.rs` (extend)
+- [x] Unit tests in `tx.rs` and `ledger.rs`
+- [x] Consensus tests in `native_token_consensus.rs` (extend)
 - [ ] Node tests in `rpc.rs` or new `asset_mint.rs`
 
 ### Phase 6: Documentation
-- [ ] Update `docs/RFC-002-NativeTokens.md` or create `docs/KVP-107-MintPriceAndLogos.md`
+- [x] Update `docs/RFC-002-NativeTokens.md` or create `docs/KVP-107-MintPriceAndLogos.md`
 - [ ] Update `AGENTS.md` with new constants
 - [ ] Update explorer web UI to display logos
 

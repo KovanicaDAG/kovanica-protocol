@@ -271,11 +271,11 @@ impl Reachability {
     /// Preconditions:
     /// - `genesis` is not in `evicted`;
     /// - the evicted set is **downward-closed** in the reachability tree (every
-    ///   tree-descendant of an evicted block is also evicted). This is exactly
-    ///   `past(P) \ {genesis}` for a pruning point `P`, and it guarantees that
-    ///   a present block's nearest remaining tree-ancestor is always `genesis`
-    ///   (a present block cannot have an evicted tree-ancestor other than via
-    ///   the evicted chain, whose root is genesis).
+    ///   tree-ancestor of an evicted block, except `genesis`, is also evicted).
+    ///   This is exactly `past(P) \ {genesis}` for a pruning point `P`, and it
+    ///   guarantees that a present block's nearest remaining tree-ancestor is
+    ///   always `genesis` (a present block cannot have an evicted tree-ancestor
+    ///   other than via the evicted chain, whose root is genesis).
     ///
     /// Because the evicted set is downward-closed, no present block's interval
     /// changes: re-parented children keep their intervals (they already lie

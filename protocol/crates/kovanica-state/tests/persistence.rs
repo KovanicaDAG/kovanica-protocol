@@ -69,7 +69,7 @@ fn build_ledger() -> Ledger {
 #[test]
 fn ledger_roundtrips_through_a_snapshot() {
     let ledger = build_ledger();
-    let bytes = ledger.write_snapshot();
+    let bytes = ledger.write_snapshot().unwrap();
     let restored = Ledger::read_snapshot(&bytes).expect("snapshot decodes");
 
     // Same DAG shape and order.
@@ -99,9 +99,9 @@ fn snapshot_is_stable_across_a_second_roundtrip() {
     // Re-serialising a restored ledger yields identical bytes — the format is
     // canonical (blocks in the deterministic linearized order).
     let ledger = build_ledger();
-    let bytes1 = ledger.write_snapshot();
+    let bytes1 = ledger.write_snapshot().unwrap();
     let restored = Ledger::read_snapshot(&bytes1).unwrap();
-    let bytes2 = restored.write_snapshot();
+    let bytes2 = restored.write_snapshot().unwrap();
     assert_eq!(bytes1, bytes2);
 }
 
@@ -115,7 +115,7 @@ fn bad_magic_is_rejected() {
 
 #[test]
 fn truncated_snapshot_is_rejected() {
-    let bytes = build_ledger().write_snapshot();
+    let bytes = build_ledger().write_snapshot().unwrap();
     assert!(Ledger::read_snapshot(&bytes[..bytes.len() - 1]).is_err());
 }
 

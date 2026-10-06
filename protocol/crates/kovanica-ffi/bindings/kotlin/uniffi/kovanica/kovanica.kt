@@ -707,8 +707,6 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_block_count(
     ): Int
-    external fun uniffi_kovanica_ffi_checksum_method_lightnode_block_filter(
-    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_build_multisig_spend(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_chain_height(
@@ -734,12 +732,6 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync_from(
-    ): Int
-    external fun uniffi_kovanica_ffi_checksum_method_lightnode_fetch_epoch_authority_set(
-    ): Int
-    external fun uniffi_kovanica_ffi_checksum_method_lightnode_fetch_stake_proof(
-    ): Int
-    external fun uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any(
     ): Int
@@ -801,8 +793,6 @@ internal object IntegrityCheckingUniffiLib {
     ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_vault_script_hex(
     ): Int
-    external fun uniffi_kovanica_ffi_checksum_method_lightnode_verify_sw_poa_header(
-    ): Int
     external fun uniffi_kovanica_ffi_checksum_method_lightnode_verify_tx_proof(
     ): Int
     external fun uniffi_kovanica_ffi_checksum_constructor_lightnode_new(
@@ -849,8 +839,6 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_block_count(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
     ): Int
-    external fun uniffi_kovanica_ffi_fn_method_lightnode_block_filter(`ptr`: Long,`blockIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_build_multisig_spend(`ptr`: Long,`address`: RustBuffer.ByValue,`outputs`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_chain_height(`ptr`: Long,uniffi_out_err: UniffiRustCallStatus, 
@@ -877,12 +865,6 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_export_light_sync_from(`ptr`: Long,`fromIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_kovanica_ffi_fn_method_lightnode_fetch_epoch_authority_set(`ptr`: Long,`epoch`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_kovanica_ffi_fn_method_lightnode_fetch_stake_proof(`ptr`: Long,`slot`: Long,uniffi_out_err: UniffiRustCallStatus, 
-    ): RustBuffer.ByValue
-    external fun uniffi_kovanica_ffi_fn_method_lightnode_filter_matches(`ptr`: Long,`filterBlob`: RustBuffer.ByValue,`address`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
     external fun uniffi_kovanica_ffi_fn_method_lightnode_filter_matches_any(`ptr`: Long,`filterBlob`: RustBuffer.ByValue,`addresses`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     external fun uniffi_kovanica_ffi_fn_method_lightnode_history_of(`ptr`: Long,`address`: RustBuffer.ByValue,`maxBlocks`: Int,uniffi_out_err: UniffiRustCallStatus, 
@@ -943,8 +925,6 @@ internal object UniffiLib {
     ): RustBuffer.ByValue
     external fun uniffi_kovanica_ffi_fn_method_lightnode_vault_script_hex(`ptr`: Long,`unlockHeight`: Int,`csv`: Int,`ownerPkHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): RustBuffer.ByValue
-    external fun uniffi_kovanica_ffi_fn_method_lightnode_verify_sw_poa_header(`ptr`: Long,`headerBlob`: RustBuffer.ByValue,`proofHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
-    ): Byte
     external fun uniffi_kovanica_ffi_fn_method_lightnode_verify_tx_proof(`ptr`: Long,`proofBlob`: RustBuffer.ByValue,`blockIdHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
     ): Byte
     external fun uniffi_kovanica_ffi_fn_func_account_from_signing_secret(`signingSecretHex`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus, 
@@ -1133,9 +1113,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_block_count() != 12981) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_block_filter() != 27849) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_build_multisig_spend() != 63072) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1173,15 +1150,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_export_light_sync_from() != 29986) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_fetch_epoch_authority_set() != 57004) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_fetch_stake_proof() != 31241) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches() != 44042) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_filter_matches_any() != 23729) {
@@ -1272,9 +1240,6 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_vault_script_hex() != 26065) {
-        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    }
-    if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_verify_sw_poa_header() != 48076) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_kovanica_ffi_checksum_method_lightnode_verify_tx_proof() != 40302) {
@@ -1736,7 +1701,7 @@ public object FfiConverterByteArray: FfiConverterRustBuffer<ByteArray> {
 
 
 /**
- * A Kovanica light node: ledger + mempool + hybrid validator identity.
+ * A Kovanica light node: ledger + mempool + authority identity.
  *
  * Sync model for mobile: call [`Self::export_blocks`] to hand peers your
  * blocks, feed peer bytes into [`Self::receive_blocks`]. Everything else —
@@ -1799,13 +1764,6 @@ public interface LightNodeInterface {
      * Number of blocks in the DAG, including genesis.
      */
     fun `blockCount`(): kotlin.UInt
-    
-    /**
-     * The compact filter of a known block as a blob
-     * (`k || n || len || data`). Match addresses with
-     * [`Self::filter_matches`].
-     */
-    fun `blockFilter`(`blockIdHex`: kotlin.String): kotlin.ByteArray
     
     /**
      * Build an unsigned multisig spend paying `outputs` from a single UTXO
@@ -1901,24 +1859,6 @@ public interface LightNodeInterface {
      * header chain.
      */
     fun `exportLightSyncFrom`(`fromIdHex`: kotlin.String): kotlin.ByteArray
-    
-    /**
-     * Fetch the full authority stake set for an epoch.
-     * Returns lines of "pubkey_hex stake_atoms".
-     */
-    fun `fetchEpochAuthoritySet`(`epoch`: kotlin.ULong): kotlin.String
-    
-    /**
-     * Fetch the stake merkle proof for a slot from the node.
-     * Returns the proof as a hex-encoded bincode blob.
-     */
-    fun `fetchStakeProof`(`slot`: kotlin.ULong): kotlin.String
-    
-    /**
-     * Whether `address` MIGHT appear in the filtered block (Golomb-Rice
-     * false positives are possible; a miss is definitive).
-     */
-    fun `filterMatches`(`filterBlob`: kotlin.ByteArray, `address`: kotlin.String): kotlin.Boolean
     
     /**
      * Batch form of [`Self::filter_matches`]: does the filter match ANY of
@@ -2147,13 +2087,6 @@ public interface LightNodeInterface {
     fun `vaultScriptHex`(`unlockHeight`: kotlin.UInt, `csv`: kotlin.UInt, `ownerPkHex`: kotlin.String): kotlin.String
     
     /**
-     * SW-PoA stake proof for a block's authority (SPV).
-     * Previously verified an SW-PoA block header with a stake proof.
-     * Removed: stake/VRF admission was dropped entirely (RFC-POA-Migration §0.7.1).
-     */
-    fun `verifySwPoaHeader`(`headerBlob`: kotlin.ByteArray, `proofHex`: kotlin.String): kotlin.Boolean
-    
-    /**
      * Verify an inclusion-proof blob against the light-synced header of
      * `block_id_hex`: the proof must verify internally AND its merkle root
      * must equal the header's root. Unknown block → error.
@@ -2164,7 +2097,7 @@ public interface LightNodeInterface {
 }
 
 /**
- * A Kovanica light node: ledger + mempool + hybrid validator identity.
+ * A Kovanica light node: ledger + mempool + authority identity.
  *
  * Sync model for mobile: call [`Self::export_blocks`] to hand peers your
  * blocks, feed peer bytes into [`Self::receive_blocks`]. Everything else —
@@ -2464,26 +2397,6 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
 
     
     /**
-     * The compact filter of a known block as a blob
-     * (`k || n || len || data`). Match addresses with
-     * [`Self::filter_matches`].
-     */
-    @Throws(LightNodeException::class)override fun `blockFilter`(`blockIdHex`: kotlin.String): kotlin.ByteArray {
-            return FfiConverterByteArray.lift(
-    callWithHandle {
-    uniffiRustCallWithError(LightNodeException) { _status ->
-    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_block_filter(
-        it,
-        
-        FfiConverterString.lower(`blockIdHex`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
      * Build an unsigned multisig spend paying `outputs` from a single UTXO
      * owned by `address`. Returns a transaction blob encoding the unsigned tx
      * with the redeem script attached as `witness[0]`.
@@ -2747,64 +2660,6 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
         it,
         
         FfiConverterString.lower(`fromIdHex`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Fetch the full authority stake set for an epoch.
-     * Returns lines of "pubkey_hex stake_atoms".
-     */
-    @Throws(LightNodeException::class)override fun `fetchEpochAuthoritySet`(`epoch`: kotlin.ULong): kotlin.String {
-            return FfiConverterString.lift(
-    callWithHandle {
-    uniffiRustCallWithError(LightNodeException) { _status ->
-    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_fetch_epoch_authority_set(
-        it,
-        
-        FfiConverterULong.lower(`epoch`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Fetch the stake merkle proof for a slot from the node.
-     * Returns the proof as a hex-encoded bincode blob.
-     */
-    @Throws(LightNodeException::class)override fun `fetchStakeProof`(`slot`: kotlin.ULong): kotlin.String {
-            return FfiConverterString.lift(
-    callWithHandle {
-    uniffiRustCallWithError(LightNodeException) { _status ->
-    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_fetch_stake_proof(
-        it,
-        
-        FfiConverterULong.lower(`slot`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * Whether `address` MIGHT appear in the filtered block (Golomb-Rice
-     * false positives are possible; a miss is definitive).
-     */
-    @Throws(LightNodeException::class)override fun `filterMatches`(`filterBlob`: kotlin.ByteArray, `address`: kotlin.String): kotlin.Boolean {
-            return FfiConverterBoolean.lift(
-    callWithHandle {
-    uniffiRustCallWithError(LightNodeException) { _status ->
-    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_filter_matches(
-        it,
-        
-        FfiConverterByteArray.lower(`filterBlob`),
-        FfiConverterString.lower(`address`),_status)
 }
     }
     )
@@ -3457,27 +3312,6 @@ open class LightNode: Disposable, AutoCloseable, LightNodeInterface
         FfiConverterUInt.lower(`unlockHeight`),
         FfiConverterUInt.lower(`csv`),
         FfiConverterString.lower(`ownerPkHex`),_status)
-}
-    }
-    )
-    }
-    
-
-    
-    /**
-     * SW-PoA stake proof for a block's authority (SPV).
-     * Previously verified an SW-PoA block header with a stake proof.
-     * Removed: stake/VRF admission was dropped entirely (RFC-POA-Migration §0.7.1).
-     */
-    @Throws(LightNodeException::class)override fun `verifySwPoaHeader`(`headerBlob`: kotlin.ByteArray, `proofHex`: kotlin.String): kotlin.Boolean {
-            return FfiConverterBoolean.lift(
-    callWithHandle {
-    uniffiRustCallWithError(LightNodeException) { _status ->
-    UniffiLib.uniffi_kovanica_ffi_fn_method_lightnode_verify_sw_poa_header(
-        it,
-        
-        FfiConverterByteArray.lower(`headerBlob`),
-        FfiConverterString.lower(`proofHex`),_status)
 }
     }
     )

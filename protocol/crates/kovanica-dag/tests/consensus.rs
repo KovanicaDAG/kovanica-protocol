@@ -52,15 +52,16 @@ fn assert_topological(dag: &Dag, order: &[BlockId]) {
 }
 
 /// The k-cluster invariant: for every block, every entry in its blue anticone
-/// map is `<= k`, and the map covers exactly `blue_score` blocks.
+/// map is `<= k`, and the map covers at most `blue_score` blocks (sparse, RFC-009 R6).
 fn assert_k_cluster_invariant(dag: &Dag, order: &[BlockId]) {
     let k = dag.k();
     for id in order {
         let gd = dag.ghostdag(id).unwrap();
-        assert_eq!(
-            gd.blue_anticone_sizes.len() as u64,
-            gd.blue_score,
-            "blue map size must equal blue score for {id}"
+        // The map is sparse (RFC-009 R6): it stores only the entries this block
+        // sets or bumps, so it covers *at most* `blue_score` blues — never more.
+        assert!(
+            gd.blue_anticone_sizes.len() as u64 <= gd.blue_score,
+            "blue map size must not exceed blue score for {id}"
         );
         for (&blue, &size) in &gd.blue_anticone_sizes {
             assert!(
@@ -273,8 +274,9 @@ fn blue_anticone_sizes_are_exact() {
     let m = add(&mut dag, &[p, q], "m");
 
     let sizes = &dag.ghostdag(&m).unwrap().blue_anticone_sizes;
-    assert_eq!(sizes.len(), 3);
-    assert_eq!(sizes[&genesis], 0);
+    // The map is sparse (RFC-009 R6): only the entries this block sets or bumps
+    // are stored, so `genesis` — never bumped — may be absent and reads as 0.
+    assert_eq!(sizes.get(&genesis).copied().unwrap_or(0), 0);
     assert_eq!(sizes[&p], 1);
     assert_eq!(sizes[&q], 1);
 }
@@ -319,9 +321,20 @@ fn colouring_check_b_reds_candidate_against_saturated_blue() {
     let b = add(&mut dag, &[u, c], "b");
     let gd_b = dag.ghostdag(&b).unwrap();
 
-    let anticone_blues = gd_b
-        .blue_anticone_sizes
-        .keys()
+    // Enumerate b's blue set the way the sparse colouring does: b's own mergeset
+    // blues plus, for each block on its selected-parent chain, the chain block
+    // and its mergeset blues (RFC-009 R6). The sparse `blue_anticone_sizes` map
+    // only holds the entries b itself set or bumped, so it cannot be used here.
+    let mut blues = gd_b.mergeset_blues.clone();
+    let mut cur = gd_b.selected_parent;
+    while let Some(chain) = cur {
+        let cg = dag.ghostdag(&chain).unwrap();
+        blues.push(chain);
+        blues.extend(cg.mergeset_blues.iter().copied());
+        cur = cg.selected_parent;
+    }
+    let anticone_blues = blues
+        .iter()
         .filter(|blue| dag.in_anticone(blue, &c))
         .count();
     assert_eq!(

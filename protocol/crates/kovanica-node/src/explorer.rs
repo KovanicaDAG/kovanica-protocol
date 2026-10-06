@@ -9,6 +9,7 @@ use std::fs;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,8 +23,9 @@ use kovanica_state::{
 use crate::dht::{NodeId, PeerContact, RoutingTable};
 use crate::dns_seed::{DnsSeedConfig, DnsSeedResolver};
 use crate::metrics::{
-    init_metrics, record_explorer_http_request, record_supply, render_prometheus,
-    set_explorer_ws_clients, set_peer_count,
+    init_metrics, record_explorer_http_request, record_peer_disconnected, record_reorg,
+    record_replay_rss, record_supply, record_sync_complete, render_prometheus,
+    set_dht_routing_table_size, set_explorer_ws_clients, set_peer_count,
 };
 use crate::net::{
     decode_records, encode_records, pull_blocks_timeout, serve_exchange, serve_headers_first,
@@ -47,12 +49,29 @@ const FOUNDER_SEED: u64 = 1;
 const TESTNET_FINALITY_DEPTH: u64 = 100;
 /// Payload pruning depth used by the live testnet (blocks below this score have payloads evicted).
 const TESTNET_PAYLOAD_PRUNING_DEPTH: u64 = 1000;
-/// Block pruning depth used by the live testnet (blocks below this score are
-/// evicted entirely — payload, metadata, and reachability-oracle entries).
-/// Equal to the payload depth: a node cannot serve a block body it has pruned
-/// anyway, and `>= TESTNET_FINALITY_DEPTH` keeps eviction to already-final
-/// blocks (consensus-safe).
-const TESTNET_BLOCK_PRUNING_DEPTH: u64 = 1000;
+/// Block pruning depth used by **every** network.
+///
+/// **Interim mitigation — block pruning is DISABLED (`u64::MAX`).** Evicting a
+/// block is unsound for GHOSTDAG colouring: `Dag::remove_blocks` drops the
+/// evicted ids from the reachability oracle but not from the
+/// `blue_anticone_sizes` maps retained on the surviving blocks, and
+/// `Reachability::is_ancestor` answers `false` for an absent id in both
+/// directions — so `Dag::in_anticone` reports `true` for an evicted block that
+/// is in fact a true ancestor. Every later merging candidate then sees phantom
+/// anticone blues and is forced red, diverging from an unpruned node's
+/// `blue_score` / `mergeset_blues` (a chain split).
+///
+/// Reproduced in `crates/kovanica-dag/tests/block_pruning_colouring.rs`
+/// (`#[ignore]`d until fixed). The previous value was `1000`; the bug was latent
+/// only because the chain had not yet passed that blue score. See
+/// `docs/RFC-009-BlockPruningColouring.md`.
+///
+/// Consequence of disabling: the reachability oracle and the per-block GHOSTDAG
+/// blue-set maps are no longer evicted, so live RSS grows with the chain again.
+/// This trades memory for correctness until the colouring fix lands; the replay
+/// watchdog and the pre-flight replay bound keep the growth observable and
+/// fail fast rather than OOM-looping.
+const BLOCK_PRUNING_DEPTH: u64 = u64::MAX;
 const ACTORS: [u64; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
 
 /// Devnet operator seed (ASCII, exactly 32 bytes — see `devnet_operator_seed`
@@ -108,9 +127,15 @@ struct NetworkProfile {
     payload_pruning_depth: u64,
     /// Block pruning depth: blocks more than this many blue score below the tip
     /// are evicted entirely (payload, metadata, and reachability-oracle
-    /// entries), bounding the oracle's memory. `u64::MAX` disables block
-    /// pruning. Invariant: `>= finality_depth` (eviction stays within
-    /// already-final blocks).
+    /// entries), bounding the oracle's memory.
+    ///
+    /// ⚠️ **Currently `u64::MAX` on every profile — do not set a finite depth.**
+    /// Block pruning corrupts GHOSTDAG colouring (RFC-009 / F1): evicted ids
+    /// stay in the `blue_anticone_sizes` maps retained on live blocks, and
+    /// `in_anticone` then reports `true` for an evicted block that is a true
+    /// ancestor, so a later merging block is coloured differently than on an
+    /// unpruned node — a chain split. Invariant when re-enabled:
+    /// `>= finality_depth`.
     block_pruning_depth: u64,
     /// Dormant placeholder: genesis parameters are TBD and the profile refuses
     /// to boot unless explicitly overridden.
@@ -150,7 +175,7 @@ impl NetworkProfile {
             ],
             finality_depth: TESTNET_FINALITY_DEPTH,
             payload_pruning_depth: TESTNET_PAYLOAD_PRUNING_DEPTH,
-            block_pruning_depth: TESTNET_BLOCK_PRUNING_DEPTH,
+            block_pruning_depth: BLOCK_PRUNING_DEPTH,
             dormant: false,
             default_peers: DEFAULT_PEERS,
             p2p_listen_default: TESTNET_P2P_LISTEN_DEFAULT,
@@ -178,7 +203,7 @@ impl NetworkProfile {
             operator_seed: *DEVNET_OPERATOR_SEED,
             finality_depth: TESTNET_FINALITY_DEPTH,
             payload_pruning_depth: TESTNET_PAYLOAD_PRUNING_DEPTH,
-            block_pruning_depth: TESTNET_BLOCK_PRUNING_DEPTH,
+            block_pruning_depth: BLOCK_PRUNING_DEPTH,
             dormant: false,
             // Empty on purpose: a devnet node dials only what it is told to.
             default_peers: &[],
@@ -198,7 +223,8 @@ impl NetworkProfile {
             operator_seed: [0u8; 32],
             finality_depth: 1000,
             payload_pruning_depth: 10_000,
-            block_pruning_depth: 10_000,
+            // Disabled for the same reason as testnet — see `BLOCK_PRUNING_DEPTH`.
+            block_pruning_depth: BLOCK_PRUNING_DEPTH,
             dormant: true,
             // No default seeds: mainnet's bootstrap set is an unsettled input
             // (RFC-POA §0.7.2 is OPEN on how the initial set is chosen), so a
@@ -464,11 +490,6 @@ pub fn serve(addr: impl ToSocketAddrs) -> std::io::Result<()> {
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 app.tick();
-                // Refresh peer gauge periodically so the standalone :9090
-                // metrics listener serves fresh values between scrapes.
-                if app.ticks % 125 == 0 {
-                    set_peer_count(app.live_peers.len());
-                }
                 app.ws_broadcast_state();
                 thread::sleep(Duration::from_millis(40));
             }
@@ -503,7 +524,35 @@ pub struct Explorer {
     pub peers: Vec<String>,
     pub origins: HashMap<String, u64>,
     /// Peers that answered our last sync attempt (live connectivity).
+    ///
+    /// **Derived, not authoritative.** Both directions of the mesh land here:
+    /// outbound peers that answered a [`Explorer::sync_peers`] round-trip, and
+    /// inbound peers that completed a headers-first or full-dump exchange. It is
+    /// recomputed from [`Explorer::outbound_seen`] + [`Explorer::inbound_seen`]
+    /// by [`Explorer::refresh_live_peers`], never assigned wholesale, so one bad
+    /// sync pass cannot zero a healthy mesh.
     pub live_peers: HashSet<String>,
+    /// Outbound peers (dialed by `sync_peers`) mapped to the tick they last
+    /// answered. Bounded by the `PEER_LIVENESS_TICKS` decay window so a peer
+    /// that goes silent ages out instead of being dropped by the next pass's
+    /// wholesale replacement.
+    outbound_seen: HashMap<String, u64>,
+    /// Peers in connection-level backoff, mapped to the tick at which
+    /// they become eligible again. See [`PEER_SYNC_BACKOFF_TICKS`].
+    peer_backoff: HashMap<String, u64>,
+    /// Inbound peers (which dialed *us* on the P2P listeners) mapped to the tick
+    /// they last completed an exchange. On a production seed this is the larger
+    /// half of the mesh — the other seeds connect to us, not the other way
+    /// round — and counting only outbound peers is what made the peer-count
+    /// gauge read a persistent zero.
+    inbound_seen: HashMap<String, u64>,
+    /// Selected tip and its chain height as of the last observation, so a
+    /// selected-parent change can be classified as a re-org and its depth
+    /// reported. `None` until the first observation (genesis is a baseline,
+    /// not a re-org). Tracking only the tip id is not enough: under GHOSTDAG
+    /// the tip advances on every block, so tip-changes alone would count every
+    /// normal block as a re-org.
+    last_tip: Option<(kovanica_dag::BlockId, u64)>,
     /// Last sync error observed per peer, used to log a peer-sync failure only
     /// when it *changes*.
     ///
@@ -540,6 +589,75 @@ pub struct Explorer {
     pub last_dht_replenish: u64,
 }
 
+/// Ticks a peer stays "live" after its last successful exchange.
+///
+/// A sync pass runs every 250 ticks, so this covers several consecutive passes:
+/// a peer must miss `PEER_LIVENESS_TICKS / 250` rounds before it is evicted.
+/// Generous enough that one flaky timeout cannot zero the gauge, short enough
+/// that a genuinely dead peer still disappears from it.
+const PEER_LIVENESS_TICKS: u64 = 1_000;
+
+/// How often [`Explorer::refresh_live_peers`] runs to decay the liveness maps
+/// and republish the gauge, so the standalone `:9090` scrape listener sees
+/// fresh values even between sync rounds.
+const PEER_LIVENESS_REFRESH_TICKS: u64 = 125;
+
+/// Ticks a peer is skipped after a *connection-level* sync failure.
+///
+/// seed1 was observed dropping ~3380 inbound connections
+/// (`TcpExtListenOverflows`/`TcpExtListenDrops`) because its accept queue
+/// saturated under a full-mesh sync storm. Every node dialled every peer on a
+/// fixed timer, so a peer whose SYNs were being dropped kept re-dialling and
+/// kept adding to the backlog it was already failing on. Skipping a
+/// hard-failed peer for a while breaks that feedback loop and lets the
+/// accepting side drain.
+///
+/// Two sync intervals, so a peer that is merely slow is retried promptly
+/// while one that is genuinely unreachable is not hammered.
+const PEER_SYNC_BACKOFF_TICKS: u64 = 500;
+
+/// Canonical form of a peer key for de-duplication.
+///
+/// The same peer appears as a configured dial target (`seed.kovanica.online:9000`)
+/// and as the source address of an inbound connection (`10.0.0.5:51234`). They are
+/// the same mesh member, so the gauge must count them once. Lowercased, and
+/// `host:port` collapsed to `host` so any source port maps onto the seed entry.
+fn normalise_peer_key(addr: &str) -> String {
+    let trimmed = addr.trim();
+    // Bracketed IPv6 (`[2001:db8::1]`, optionally `:9000`): the host is whatever
+    // sits between the brackets. The port, if any, follows the closing bracket,
+    // so it is dropped by taking only the bracketed span.
+    if let Some(rest) = trimmed.strip_prefix('[') {
+        if let Some(close) = rest.find(']') {
+            return rest[..close].to_ascii_lowercase();
+        }
+    }
+    // More than one colon means a bare IPv6 literal, whose tail is part of the
+    // address rather than a port — `rsplit_once(':')` would truncate it.
+    if trimmed.matches(':').count() > 1 {
+        return trimmed.to_ascii_lowercase();
+    }
+    // At most one colon: `host:port` (hostname or IPv4). Drop the port so any
+    // ephemeral source port maps onto the configured seed entry.
+    match trimmed.rsplit_once(':') {
+        Some((host, _port)) if !host.is_empty() => host.to_ascii_lowercase(),
+        _ => trimmed.to_ascii_lowercase(),
+    }
+}
+
+/// De-duplicate a set of peer keys by [`normalise_peer_key`], keeping the first
+/// spelling of each distinct peer.
+fn normalise_peer_keys(addrs: &HashSet<String>) -> HashSet<String> {
+    let mut out = HashSet::with_capacity(addrs.len());
+    let mut taken = std::collections::HashSet::with_capacity(addrs.len());
+    for addr in addrs {
+        if taken.insert(normalise_peer_key(addr)) {
+            out.insert(addr.clone());
+        }
+    }
+    out
+}
+
 impl Explorer {
     /// Test constructor: a fresh in-memory mesh, no persistence or sockets.
     pub fn boot() -> Self {
@@ -565,6 +683,10 @@ impl Explorer {
             peers: Vec::new(),
             origins: HashMap::new(),
             live_peers: HashSet::new(),
+            outbound_seen: HashMap::new(),
+            peer_backoff: HashMap::new(),
+            inbound_seen: HashMap::new(),
+            last_tip: None,
             peer_sync_errors: HashMap::new(),
             peer_sync_cursor: 0,
             ws_clients: Arc::new(Mutex::new(Vec::new())),
@@ -581,6 +703,7 @@ impl Explorer {
         self.ticks += 1;
         self.tick_p2p();
         self.tick_dht();
+        self.note_reorg();
         if self.producing && self.produce_every > 0 && self.ticks % self.produce_every == 0 {
             let names = self.mesh.names();
             if !names.is_empty() {
@@ -674,6 +797,15 @@ impl Explorer {
                 );
             }
         }
+
+        // Publish the routing-table size on every tick. The gauge is what tells an
+        // operator whether eclipse-resistance is actually working: a table pinned
+        // near zero on a seeded node means DNS bootstrap failed or every contact
+        // was pruned as unresponsive. It was previously registered but never set,
+        // so the series never appeared in `/metrics` at all.
+        if let Some(table) = &self.dht_table {
+            set_dht_routing_table_size(table.total_contacts());
+        }
     }
 
     fn ws_broadcast_state(&self) {
@@ -707,10 +839,14 @@ impl Explorer {
         }
         for (mut stream, peer) in incoming {
             if let Some(n) = self.mesh.node_mut("alpha") {
+                // `peer` is moved by the format args below, so snapshot the
+                // string once and use it for both logging and liveness marking.
+                let peer_key = peer.to_string();
                 // Try headers-first sync serve first
                 match serve_headers_first(&mut stream, n, Duration::from_millis(800)) {
                     Ok(()) => {
                         eprintln!("kovanica p2p headers-first served {peer}");
+                        self.note_inbound_peer(peer_key);
                         persist_all(&mut self.mesh);
                     }
                     Err(e) => {
@@ -730,6 +866,7 @@ impl Explorer {
                                 eprintln!(
                                     "kovanica p2p exchanged with {peer} (peer sent {got} records)"
                                 );
+                                self.note_inbound_peer(peer_key);
                                 if got > 0 {
                                     persist_all(&mut self.mesh);
                                 }
@@ -745,6 +882,120 @@ impl Explorer {
         if !self.peers.is_empty() && self.ticks % 250 == 0 {
             self.sync_peers(Duration::from_millis(800));
         }
+        // Decay the live-peer view on the same cadence as the standalone
+        // scrape refresh below, and unconditionally — `sync_peers` is skipped
+        // entirely when no peers are configured, so inbound liveness would
+        // otherwise never be aged out on a purely-inbound node.
+        if self.ticks % PEER_LIVENESS_REFRESH_TICKS == 0 {
+            self.refresh_live_peers();
+        }
+    }
+
+    /// Record that an inbound peer completed an exchange with us.
+    fn note_inbound_peer(&mut self, peer: String) {
+        self.inbound_seen.insert(peer, self.ticks);
+    }
+
+    /// Recompute [`Explorer::live_peers`] from both liveness maps and publish
+    /// the peer-count gauge.
+    ///
+    /// This is the single writer of the gauge, so the periodic refresh, the
+    /// scrape path and the sync path cannot disagree. A peer is live while
+    /// `ticks - seen <= PEER_LIVENESS_TICKS`; anything older is evicted before
+    /// the count is taken, which is what makes the gauge decay instead of
+    /// ratcheting: a mesh that genuinely grows is reflected immediately, and a
+    /// peer that goes silent ages out on its own without needing a successful
+    /// round-trip to evict it.
+    /// Whether `addr` is currently serving a connection-level backoff.
+    ///
+    /// Split out from [`Explorer::sync_peers`] so the window is testable
+    /// without a live peer: the skip decision is the whole point of the
+    /// change, and asserting on the raw `HashMap` would only test the
+    /// standard library.
+    fn peer_in_backoff(&self, addr: &str) -> bool {
+        self.peer_backoff
+            .get(addr)
+            .is_some_and(|until| self.ticks < *until)
+    }
+
+    fn refresh_live_peers(&mut self) {
+        let cutoff = self.ticks.saturating_sub(PEER_LIVENESS_TICKS);
+        // Evicting a peer out of the liveness maps is this node's only notion of
+        // a peer going away, so the disconnect counter is driven from here. It
+        // previously had no call site at all, which made the connect/disconnect
+        // pair unusable for spotting a flapping link: connects climbed, and a
+        // peer that vanished looked identical to one that was merely slow.
+        let mut dropped = 0usize;
+        self.inbound_seen.retain(|_, seen| {
+            // `>=`, not `>`: a peer seen at tick 0 with `ticks == 0` has
+            // `cutoff == 0` (the subtraction saturates), so a strict `>` would
+            // evict a peer the instant it was recorded — the exact instant-zero
+            // failure this rewrite exists to remove.
+            let keep = *seen >= cutoff;
+            dropped += usize::from(!keep);
+            keep
+        });
+        self.outbound_seen.retain(|_, seen| {
+            let keep = *seen >= cutoff;
+            dropped += usize::from(!keep);
+            keep
+        });
+        for _ in 0..dropped {
+            record_peer_disconnected();
+        }
+
+        let mut live: HashSet<String> = self
+            .outbound_seen
+            .keys()
+            .cloned()
+            .chain(self.inbound_seen.keys().cloned())
+            .collect();
+        // A dialed `host:port` and the `host:port` that dialed us back are the
+        // same peer seen from two directions; report the mesh size, not twice it.
+        live = normalise_peer_keys(&live);
+        let count = live.len();
+        if live != self.live_peers {
+            self.live_peers = live;
+        }
+        set_peer_count(count);
+    }
+
+    /// Observe the selected tip and record a re-org when the selected-parent
+    /// choice moves *backwards* along the chain.
+    ///
+    /// Under GHOSTDAG the tip id changes on every block, so "tip changed" is not
+    /// a re-org signal. What distinguishes a re-org is that the new tip's
+    /// selected-parent chain no longer contains the previous tip — the ledger
+    /// abandons blocks it had already applied. The depth reported is how many
+    /// previously-selected chain blocks are now orphaned, i.e. the old tip's
+    /// height above the fork point, approximated by the height drop plus any
+    /// blocks the new tip has not yet absorbed. Using a pure height comparison
+    /// keeps this a deterministic function of DAG state.
+    ///
+    /// Previously `record_reorg` had no call site at all, so re-org depth — one
+    /// of the health signals the alerting rules key on — was never exported.
+    fn note_reorg(&mut self) {
+        let Some(node) = self.mesh.node("alpha") else {
+            return;
+        };
+        let (Ok(tip), Ok(height)) = (node.selected_tip(), node.chain_height()) else {
+            return;
+        };
+        let Some((prev_tip, prev_height)) = self.last_tip else {
+            // First observation is a baseline, not a re-org.
+            self.last_tip = Some((tip, height));
+            return;
+        };
+        if tip == prev_tip {
+            return;
+        }
+        // The new tip is behind the old one: the node has re-orged off blocks it
+        // had already selected. A new tip at or ahead of the old height is the
+        // normal case of a fork that merged in, and is not a re-org.
+        if height < prev_height {
+            record_reorg(prev_height - height);
+        }
+        self.last_tip = Some((tip, height));
     }
 
     /// Dial order for this pass: every peer exactly once, starting at `cursor`.
@@ -777,7 +1028,21 @@ impl Explorer {
         // does not fight the mesh borrow.
         let order = self.dial_order(&peers);
         self.peer_sync_cursor = (self.peer_sync_cursor + 1) % order.len();
+        // Drop backed-off peers *before* taking the mesh borrow below: a peer's
+        // backoff is node policy, not a function of the mesh, and deciding it
+        // here keeps the `&self` read out of the `node_mut` borrow scope.
+        let order: Vec<String> = order
+            .into_iter()
+            .filter(|addr| !self.peer_in_backoff(addr))
+            .collect();
         let mut answered: HashSet<String> = HashSet::new();
+        // Accumulated across the whole pass so one observation describes the
+        // round, not a single peer. Publishing per-peer would make the sync
+        // histogram mean "one exchange" and the peer gauge mean "the last peer
+        // tried", neither of which is what an operator is trying to read.
+        let mut headers_received = 0usize;
+        let mut bodies_applied = 0usize;
+        let pass_start = std::time::Instant::now();
         if let Some(n) = self.mesh.node_mut("alpha") {
             for addr in order {
                 // Try headers-first sync first (more efficient)
@@ -787,6 +1052,8 @@ impl Explorer {
                             "kovanica p2p headers-first sync from {addr}: {} headers, {} bodies applied",
                             stats.headers_received, stats.bodies_applied
                         );
+                        headers_received += stats.headers_received;
+                        bodies_applied += stats.bodies_applied;
                         answered.insert(addr.clone());
                     }
                     Ok(stats) if stats.errors > 0 => {
@@ -802,16 +1069,31 @@ impl Explorer {
                                 eprintln!(
                                     "kovanica p2p pulled {k} records from {addr} (full dump)"
                                 );
+                                bodies_applied += k;
                                 answered.insert(addr.clone());
                             }
                             Ok(_) => {}
                             Err(_) => {}
                         }
                     }
-                    Ok(_) => {
+                    Ok(stats) => {
                         // Reachable, just nothing new to apply.
+                        // Headers still count: the peer answered, and a headers-
+                        // only pass is a healthy outcome on an up-to-date node.
+                        //
+                        // This arm used to be silent, which made a healthy peer
+                        // indistinguishable from one that was never contacted —
+                        // exactly the symptom that hid the seed1 EAGAIN
+                        // problem behind a dial-order bug that did not exist.
+                        eprintln!(
+                            "kovanica p2p in sync with {addr}: {} headers, 0 bodies applied",
+                            stats.headers_received
+                        );
+                        headers_received += stats.headers_received;
+                        bodies_applied += stats.bodies_applied;
                         answered.insert(addr.clone());
                         self.peer_sync_errors.remove(&addr);
+                        self.peer_backoff.remove(&addr);
                     }
                     Err(e) => {
                         // Log on *change* only: sync runs on a timer, so a dead
@@ -830,8 +1112,10 @@ impl Explorer {
                                 eprintln!(
                                     "kovanica p2p pulled {k} records from {addr} (full dump)"
                                 );
+                                bodies_applied += k;
                                 answered.insert(addr.clone());
                                 self.peer_sync_errors.remove(&addr);
+                                self.peer_backoff.remove(&addr);
                             }
                             Ok(_) => {}
                             Err(fe) => {
@@ -840,16 +1124,46 @@ impl Explorer {
                                     eprintln!("kovanica p2p peer {addr} unreachable: {fe}");
                                     self.peer_sync_errors.insert(addr.clone(), fmsg);
                                 }
+                                // Both legs failed to even connect: back off so
+                                // this node stops feeding a saturated accept
+                                // queue. See `PEER_SYNC_BACKOFF_TICKS`.
+                                self.peer_backoff
+                                    .insert(addr.clone(), self.ticks + PEER_SYNC_BACKOFF_TICKS);
                             }
                         }
                     }
                 }
             }
         }
-        // Live connectivity = peers that answered this round. Peers no longer
-        // in the config drop out immediately; silent ones drop out here too.
-        self.live_peers = answered;
-        set_peer_count(self.live_peers.len());
+        // Live connectivity = peers that answered this round, decayed over
+        // `PEER_LIVENESS_TICKS` rather than replaced outright. The previous
+        // `self.live_peers = answered` dropped every peer the moment a single
+        // round timed out, so one flaky pass reported an empty mesh on a node
+        // whose peers were all still up. Marking instead of replacing lets a
+        // transient failure age out on its own.
+        let tick = self.ticks;
+        for addr in &answered {
+            self.outbound_seen.insert(addr.clone(), tick);
+        }
+        // Peers dropped from the config must not linger as "live" until the
+        // decay window expires.
+        self.outbound_seen.retain(|addr, _| {
+            peers
+                .iter()
+                .any(|p| normalise_peer_key(p) == normalise_peer_key(addr))
+        });
+        self.refresh_live_peers();
+        // One observation per completed pass, covering every peer dialled. This
+        // is the only place the sync series are ever written; without it
+        // `SYNC_DURATION_SECONDS` / `SYNC_HEADERS_RECEIVED` / `SYNC_BODIES_APPLIED`
+        // had working recorders that no code path reached, so catch-up health was
+        // unobservable from `/metrics`.
+        record_sync_complete(
+            pass_start.elapsed(),
+            headers_received,
+            bodies_applied,
+            answered.len(),
+        );
         persist_all(&mut self.mesh);
     }
 
@@ -908,6 +1222,10 @@ impl Explorer {
             peers,
             origins: load_origins(),
             live_peers: HashSet::new(),
+            outbound_seen: HashMap::new(),
+            peer_backoff: HashMap::new(),
+            inbound_seen: HashMap::new(),
+            last_tip: None,
             peer_sync_errors: HashMap::new(),
             peer_sync_cursor: 0,
             ws_clients: Arc::new(Mutex::new(Vec::new())),
@@ -1102,6 +1420,153 @@ fn has_content(path: &Path) -> bool {
     fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
 }
 
+/// How often the replay watchdog samples RSS and reports progress.
+const REPLAY_WATCHDOG_INTERVAL: Duration = Duration::from_secs(10);
+
+/// Fraction of the effective memory ceiling at which the watchdog aborts a
+/// replay that is on track to be OOM-killed.
+///
+/// Replay is a one-shot startup cost: a bounded replay finishes far below this,
+/// so tripping it means the load is pathological (the `blue_anticone_sizes`
+/// O(N²) growth of TASKLIST2 §2.5). Failing with an explicit diagnostic keeps
+/// the decision with the operator instead of leaving a bare `Killed` in the
+/// journal and a systemd restart loop, which is how the seeds died before.
+const REPLAY_RSS_ABORT_FRACTION: f64 = 0.90;
+
+/// Resident set size of this process in bytes, from `/proc/self/statm`.
+///
+/// Field 1 is the resident page count; Linux is 4 KiB pages on every platform
+/// Kovanica targets. Returns `None` where `/proc` is unavailable.
+fn process_rss_bytes() -> Option<u64> {
+    let statm = fs::read_to_string("/proc/self/statm").ok()?;
+    let pages: u64 = statm.split_whitespace().nth(1)?.parse().ok()?;
+    Some(pages.saturating_mul(4096))
+}
+
+/// Parse a file whose whole content is a single `u64` (trimmed), if present.
+fn read_u64_trimmed(path: &str) -> Option<u64> {
+    fs::read_to_string(path).ok()?.trim().parse::<u64>().ok()
+}
+
+/// Effective memory ceiling for this process in bytes.
+///
+/// Reads the process's own cgroup limit (v2 `memory.max`, then v1
+/// `memory.limit_in_bytes`) so the watchdog aborts against the same number the
+/// kernel would OOM at, then falls back to physical RAM. Returns `None` when
+/// neither is discoverable, in which case the watchdog only reports progress
+/// and never aborts.
+fn process_memory_ceiling_bytes() -> Option<u64> {
+    if let Ok(cgroup) = fs::read_to_string("/proc/self/cgroup") {
+        for line in cgroup.lines() {
+            if let Some(limit) = line
+                .strip_prefix("0::")
+                .and_then(|rest| read_u64_trimmed(&format!("/sys/fs/cgroup{rest}/memory.max")))
+            {
+                return Some(limit);
+            }
+        }
+    }
+    // cgroup v1 reports a sentinel near u64::MAX when the limit is unlimited.
+    if let Some(limit) = read_u64_trimmed("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+        .filter(|limit| *limit < (1u64 << 60))
+    {
+        return Some(limit);
+    }
+    let meminfo = fs::read_to_string("/proc/meminfo").ok()?;
+    let kb = meminfo
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|kb| kb.parse::<u64>().ok())?;
+    Some(kb.saturating_mul(1024))
+}
+
+/// Stops the replay watchdog when dropped.
+struct ReplayWatchdog {
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for ReplayWatchdog {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+/// Watch a log replay: report progress on a timer and abort before the kernel
+/// OOM-kills the process.
+///
+/// Spawned immediately before [`Node::load_log_with_poa_and_policy`] and
+/// dropped right after, so it only ever observes the replay window. The timer
+/// polls in short slices so the drop is cheap and serving is not delayed.
+fn spawn_replay_watchdog(log_bytes: u64) -> ReplayWatchdog {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_thread = Arc::clone(&stop);
+    let abort_at = process_memory_ceiling_bytes()
+        .map(|ceiling| (ceiling as f64 * REPLAY_RSS_ABORT_FRACTION) as u64);
+    let handle = thread::Builder::new()
+        .name("replay-watchdog".into())
+        .spawn(move || loop {
+            let mut waited = Duration::ZERO;
+            while waited < REPLAY_WATCHDOG_INTERVAL {
+                if stop_thread.load(Ordering::Relaxed) {
+                    return;
+                }
+                thread::sleep(Duration::from_millis(250));
+                waited += Duration::from_millis(250);
+            }
+            let Some(rss) = process_rss_bytes() else {
+                continue;
+            };
+            record_replay_rss(rss);
+            let mib = rss / (1024 * 1024);
+            match abort_at {
+                Some(limit) if rss >= limit => {
+                    eprintln!(
+                        "FATAL: log replay reached {mib} MiB (ceiling {} MiB, log {} MiB): \
+                         refusing to be OOM-killed. This is the replay memory blow-up \
+                         tracked as TASKLIST2 §2.5; the log was NOT truncated and the node \
+                         will not serve. Fix the replay bound or restore from a snapshot.",
+                        limit / (1024 * 1024),
+                        log_bytes / (1024 * 1024),
+                    );
+                    std::process::abort();
+                }
+                _ => eprintln!(
+                    "replay watchdog: rss={mib} MiB log={} MiB",
+                    log_bytes / (1024 * 1024)
+                ),
+            }
+        })
+        .ok();
+    ReplayWatchdog { stop, handle }
+}
+
+/// Empirically-fitted replay peak-memory model.
+///
+/// Replay retains a per-block GHOSTDAG blue-set map whose size grows with the
+/// block's blue set, so total retention is quadratic in the record count.
+/// Fitted from the measured curve on the real 13.5 MB testnet log
+/// (11,776 records → ~3,977 MiB): ≈ 30 bytes per record squared. Deliberately
+/// rough — it exists to fail fast on a log that plainly cannot fit, not to be a
+/// precise predictor.
+const REPLAY_PEAK_BYTES_PER_RECORD_SQ: u64 = 30;
+
+/// Mean serialized record size (8-byte length prefix + measured 288-byte mean
+/// body), used to turn a log length into an approximate record count.
+const REPLAY_MEAN_RECORD_BYTES: u64 = 296;
+
+/// Projected peak RSS of replaying a log of `log_bytes` from genesis.
+fn estimate_replay_peak_bytes(log_bytes: u64) -> u64 {
+    let records = log_bytes / REPLAY_MEAN_RECORD_BYTES;
+    records
+        .saturating_mul(records)
+        .saturating_mul(REPLAY_PEAK_BYTES_PER_RECORD_SQ)
+}
+
 /// Persistence tiers, in the order [`load_or_genesis`] will try them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LoadTier {
@@ -1161,10 +1626,12 @@ fn load_or_genesis(name: &str) -> Result<Node, String> {
             // (identity-preserving replay lesson). Load with the PoA reader when
             // the operator runs PoA mode.
             //
-            // The pruning policy is applied BEFORE replay so the DAG and
-            // per-block state stay bounded during the load (the O(n²)
-            // GHOSTDAG maps otherwise peak at the full chain's footprint and
-            // the allocator retains that peak after the post-load prune).
+            // The pruning policy is applied before replay. Note that block
+            // pruning is disabled (see `BLOCK_PRUNING_DEPTH`), so replay memory
+            // still grows with the chain — the per-block GHOSTDAG blue-set maps
+            // are O(N²) overall. The pre-flight estimate below refuses a log
+            // that cannot fit rather than OOM-looping; the watchdog is the
+            // backstop if the estimate is wrong.
             let policy = kovanica_state::PruningPolicy {
                 finality_depth: profile.finality_depth,
                 payload_pruning_depth: profile.payload_pruning_depth,
@@ -1175,6 +1642,32 @@ fn load_or_genesis(name: &str) -> Result<Node, String> {
             // authority set, and there is no point replaying a chain we are
             // about to refuse to serve.
             check_authority_set(name, &cfg.authority_set)?;
+            let log_bytes = fs::metadata(&log).map(|m| m.len()).unwrap_or(0);
+            // Pre-flight: refuse a replay that is projected to exceed the memory
+            // limit, with actionable guidance, instead of aborting mid-load.
+            if let Some(ceiling) = process_memory_ceiling_bytes() {
+                let estimate = estimate_replay_peak_bytes(log_bytes);
+                if estimate > ceiling {
+                    return Err(format!(
+                        "refusing to replay {} for node {name}: projected replay peak is \
+                         ~{} MiB but the memory limit is {} MiB. Block pruning is disabled \
+                         (RFC-009), so replay memory grows with the chain.\n\
+                         The log is intact — do not truncate it in place.\n\
+                         Options:\n  \
+                         - restore this node from a snapshot, or\n  \
+                         - wipe the log and resync from peers:\n      \
+                         mv {} {}.broken",
+                        log.display(),
+                        estimate / (1024 * 1024),
+                        ceiling / (1024 * 1024),
+                        log.display(),
+                        log.display(),
+                    ));
+                }
+            }
+            // Guard the replay: report progress and abort cleanly if this load
+            // is on track to exhaust the cgroup, instead of being OOM-killed.
+            let _watchdog = spawn_replay_watchdog(log_bytes);
             let mut node = Node::load_log_with_poa_and_policy(
                 p,
                 cfg.authority_set,
@@ -1209,6 +1702,25 @@ fn load_or_genesis(name: &str) -> Result<Node, String> {
             let mut node = Node::new();
             let cfg = poa_config_from_env(&profile);
             check_authority_set(name, &cfg.authority_set)?;
+            let snap_bytes = fs::metadata(&snap).map(|m| m.len()).unwrap_or(0);
+            // Same pre-flight as the log tier. `read_snapshot_impl` rebuilds the
+            // whole DAG with `insert_raw_block` and never enables block pruning,
+            // so it is subject to the same quadratic retention (RFC-009).
+            if let Some(ceiling) = process_memory_ceiling_bytes() {
+                let estimate = estimate_replay_peak_bytes(snap_bytes);
+                if estimate > ceiling {
+                    return Err(format!(
+                        "refusing to load snapshot {} for node {name}: projected replay peak is \
+                         ~{} MiB but the memory limit is {} MiB. Block pruning is disabled \
+                         (RFC-009), so replay memory grows with the chain.\n\
+                         Restore a smaller snapshot, or wipe and resync from peers.",
+                        snap.display(),
+                        estimate / (1024 * 1024),
+                        ceiling / (1024 * 1024),
+                    ));
+                }
+            }
+            let _watchdog = spawn_replay_watchdog(snap_bytes);
             node.load_with_poa(p, cfg.authority_set, cfg.slot_duration_ms)
                 .map_err(|e| {
                     format!(
@@ -1613,7 +2125,10 @@ fn bind_p2p_addrs(raw: &str) -> Vec<TcpListener> {
                 }
             }
         } else {
-            match TcpListener::bind(&addr) {
+            // socket2 rather than `TcpListener::bind` so the accept queue can
+            // be widened; see `P2P_LISTEN_BACKLOG` for why the 128 default is
+            // not enough under the re-dial-every-peer sync timer.
+            match bind_with_backlog(&addr, false) {
                 Ok(l) => Some(l),
                 Err(e) => {
                     eprintln!("kovanica p2p listen {addr} failed: {e}");
@@ -1637,6 +2152,15 @@ fn bind_p2p_addrs(raw: &str) -> Vec<TcpListener> {
 /// Bind an `[::]:port` listener with IPV6_V6ONLY set, so it accepts IPv6
 /// only and leaves the IPv4 wildcard to its sibling socket.
 fn bind_v6_only(addr: &str) -> std::io::Result<TcpListener> {
+    bind_with_backlog(addr, true)
+}
+
+/// Bind a TCP listener with an explicit accept-queue depth.
+///
+/// `v6_only` sets `IPV6_V6ONLY` before bind (there is no std equivalent, and
+/// it must be set pre-bind to take effect) so the v4 and v6 listeners can
+/// share a port without shadowing each other.
+fn bind_with_backlog(addr: &str, v6_only: bool) -> std::io::Result<TcpListener> {
     use socket2::{Domain, Protocol, Socket, Type};
     let sock_addr: std::net::SocketAddr = addr
         .parse()
@@ -1646,13 +2170,30 @@ fn bind_v6_only(addr: &str) -> std::io::Result<TcpListener> {
         Type::STREAM,
         Some(Protocol::TCP),
     )?;
-    socket.set_only_v6(true)?;
+    if v6_only {
+        socket.set_only_v6(true)?;
+    }
     socket.bind(&sock_addr.into())?;
-    socket.listen(128)?;
+    socket.listen(P2P_LISTEN_BACKLOG)?;
     let listener: std::net::TcpListener = socket.into();
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
+
+/// Accept-queue depth for the P2P listeners.
+///
+/// `std::net::TcpListener::bind` uses the platform default of 128, which is
+/// what the v4 path was getting. On seed1 that was not enough: every node
+/// re-dials every peer on a fixed sync timer, and the kernel recorded
+/// `TcpExtListenOverflows 3380` / `TcpExtListenDrops 3385` against the
+/// listener — the accept queue saturated, inbound SYNs were dropped, and a
+/// dialer's non-blocking `connect` came back `EAGAIN`, which the peer then
+/// treated as a dead link. A larger queue breaks that feedback loop at the
+/// source instead of only damping it downstream with a backoff.
+///
+/// Clamped to `net.core.somaxconn` by the kernel, so raising this past the
+/// host limit is harmless.
+const P2P_LISTEN_BACKLOG: i32 = 1024;
 
 /// Testnet's compiled-in bootstrap set, used only when `KOVANICA_PEERS` is unset
 /// and the node is running the testnet profile.
@@ -1908,8 +2449,10 @@ pub fn handle(app: &mut Explorer, mut stream: TcpStream) -> std::io::Result<()> 
     // Prometheus metrics endpoint
     if method == "GET" && path == "/metrics" {
         // Sample live gauges on every scrape so Prometheus always sees fresh
-        // values even when no block/mempool event fired recently.
-        set_peer_count(app.live_peers.len());
+        // values even when no block/mempool event fired recently. Decaying and
+        // republishing here means a scrape can never observe a stale count
+        // from a mesh that changed since the last tick.
+        app.refresh_live_peers();
         // RFC-006 supply gauges from the selected node's ledger (atoms).
         if let Some(n) = app.mesh.node(&app.selected) {
             if let Ok(ledger) = n.ledger() {
@@ -2826,34 +3369,29 @@ fn light_sync_blob(n: &Node, from: Option<&str>) -> Vec<u8> {
     out.extend_from_slice(&((headers.len() - start) as u32).to_be_bytes());
     for h in &headers[start..] {
         encode_spv_header(h, &mut out);
-        match n.block_filter(&h.id, LIGHT_SYNC_FILTER_K) {
-            Some(f) => encode_spv_filter(&f, &mut out),
-            None => encode_spv_filter(
-                &kovanica_state::spv::BlockFilter {
-                    k: LIGHT_SYNC_FILTER_K,
-                    n: 1,
-                    data: Vec::new(),
-                },
-                &mut out,
-            ),
-        }
+        // BlockFilter was removed; encode empty filter for wire compatibility
+        encode_spv_filter(
+            &kovanica_state::spv::BlockFilter {
+                k: LIGHT_SYNC_FILTER_K,
+                n: 0,
+                data: Vec::new(),
+            },
+            &mut out,
+        );
     }
     out
 }
 
 /// Merkle-proof blob, byte-compatible with the FFI's `encode_proof` layout:
-/// tx_id(32) + merkle_root(32) + path_len(4) + path(32 each) + index(8) +
-/// tx_count(8).
+/// leaf(32) + path_len(4) + path(32 each) + index(8).
 fn encode_merkle_proof(p: &kovanica_state::spv::MerkleProof) -> Vec<u8> {
     let mut out = Vec::new();
-    out.extend_from_slice(&p.tx_id);
-    out.extend_from_slice(&p.merkle_root);
+    out.extend_from_slice(&p.leaf);
     out.extend_from_slice(&(p.path.len() as u32).to_be_bytes());
     for s in &p.path {
         out.extend_from_slice(s);
     }
     out.extend_from_slice(&(p.index as u64).to_be_bytes());
-    out.extend_from_slice(&(p.tx_count as u64).to_be_bytes());
     out
 }
 
@@ -5333,6 +5871,184 @@ fn ws_frame_text(text: &str) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    /// An inbound-only node must report a non-zero peer count.
+    ///
+    /// This is the regression guard for the persistent `kovanica_peer_count 0`
+    /// on production seeds. Live topology is the mirror of the test topology
+    /// used here: every other seed dials *us*, so the peers exist only in the
+    /// inbound accept loop. The old code recorded nothing from that loop and
+    /// derived the gauge solely from outbound `sync_peers` results, so a node
+    /// with a fully healthy mesh reported zero.
+    #[test]
+    fn inbound_only_mesh_reports_non_zero_peer_count() {
+        let mut app = Explorer::boot();
+        assert!(
+            app.peers.is_empty(),
+            "this node has no outbound peers configured"
+        );
+
+        app.note_inbound_peer("10.0.0.7:51234".into());
+        app.note_inbound_peer("10.0.0.8:51234".into());
+        app.refresh_live_peers();
+
+        assert_eq!(
+            app.live_peers.len(),
+            2,
+            "inbound peers must be counted even with no outbound peers"
+        );
+    }
+
+    /// A peer that stops exchanging ages out on its own.
+    ///
+    /// The old code replaced the live set wholesale with whatever answered the
+    /// most recent pass, so a single timed-out round reported an empty mesh on a
+    /// node whose peers were all still connected. Decay must therefore be
+    /// tick-driven, not round-driven: a peer stays live through a bad round and
+    /// only leaves once it has been silent for the full liveness window.
+    #[test]
+    fn a_silent_peer_ages_out_after_the_liveness_window() {
+        let mut app = Explorer::boot();
+        app.note_inbound_peer("10.0.0.7:51234".into());
+        app.refresh_live_peers();
+        assert_eq!(app.live_peers.len(), 1);
+
+        // Just inside the window: still live, because no pass has had a chance
+        // to prove it is gone.
+        app.ticks = PEER_LIVENESS_TICKS - 1;
+        app.refresh_live_peers();
+        assert_eq!(
+            app.live_peers.len(),
+            1,
+            "a peer must not be dropped before the liveness window expires"
+        );
+
+        // Past the window with no re-observation: evicted.
+        app.ticks = PEER_LIVENESS_TICKS + 1;
+        app.refresh_live_peers();
+        assert_eq!(
+            app.live_peers.len(),
+            0,
+            "a peer silent for the full window must be evicted"
+        );
+    }
+
+    /// A peer seen from both directions counts once.
+    ///
+    /// A configured dial target `host:9000` and the `host:ephemeral` address it
+    /// dials back with are one node, not two. Reporting the mesh size is the
+    /// point of the gauge; reporting the connection count would let one peer
+    /// inflate its own apparent mesh size and mask a shrinking network.
+    #[test]
+    fn a_peer_seen_from_both_directions_counts_once() {
+        let mut app = Explorer::boot();
+        // Same host, different ports and spellings (case is normalised too).
+        app.outbound_seen
+            .insert("Seed.Kovanica.online:9000".into(), 0);
+        app.note_inbound_peer("seed.kovanica.online:51234".into());
+        app.refresh_live_peers();
+
+        assert_eq!(
+            app.live_peers.len(),
+            1,
+            "one host must not be counted once per direction"
+        );
+    }
+
+    /// `normalise_peer_key` must not mangle bare IPv6 literals.
+    ///
+    /// Stripping the last `:`-separated field blindly would turn
+    /// `[2001:db8::1]:9000` and `2001:db8::1` into the same key, and would
+    /// chop a portless literal down to `2001:db8:`. The seed set mixes hostnames,
+    /// IPv4 and (via `[::]:P` dual-stack listeners) IPv6 sources, so all three
+    /// have to survive normalisation.
+    /// A peer that failed to connect must stop being re-dialled every sync
+    /// pass, or this node keeps feeding a peer's already-saturated accept
+    /// queue — observed live on seed1 (`TcpExtListenOverflows 3380`).
+    #[test]
+    fn a_connection_failed_peer_is_skipped_until_its_backoff_expires() {
+        let mut app = Explorer::boot();
+        let addr = "a.example:8000".to_string();
+
+        assert!(
+            !app.peer_in_backoff(&addr),
+            "a fresh peer is never backed off"
+        );
+
+        app.peer_backoff
+            .insert(addr.clone(), app.ticks + PEER_SYNC_BACKOFF_TICKS);
+        assert!(
+            app.peer_in_backoff(&addr),
+            "a peer that just failed must be skipped on the very next pass"
+        );
+
+        // One tick before expiry: still inside the window.
+        app.ticks = app.peer_backoff[&addr] - 1;
+        assert!(
+            app.peer_in_backoff(&addr),
+            "window is still open one tick early"
+        );
+
+        // Exactly at expiry: the window is inclusive of `until`, so the peer
+        // becomes eligible again and is not skipped forever.
+        app.ticks = app.peer_backoff[&addr];
+        assert!(
+            !app.peer_in_backoff(&addr),
+            "peer must be retried once the backoff window elapses"
+        );
+    }
+
+    /// A peer that answers must not keep a stale backoff, or a recovered peer
+    /// would stay invisible for the rest of the window and the mesh would
+    /// look permanently smaller than it is.
+    #[test]
+    fn a_successful_sync_clears_the_backoff() {
+        let mut app = Explorer::boot();
+        let addr = "a.example:8000".to_string();
+
+        app.peer_backoff
+            .insert(addr.clone(), app.ticks + PEER_SYNC_BACKOFF_TICKS);
+        app.peer_sync_errors.insert(addr.clone(), "boom".into());
+        assert!(app.peer_in_backoff(&addr));
+
+        // Exactly what the success arm does: clear both together.
+        app.peer_sync_errors.remove(&addr);
+        app.peer_backoff.remove(&addr);
+
+        assert!(
+            !app.peer_in_backoff(&addr),
+            "a recovered peer is dialed again"
+        );
+        assert!(
+            !app.peer_sync_errors.contains_key(&addr),
+            "the error marker must be cleared too, or the log keeps reprinting"
+        );
+    }
+
+    #[test]
+    fn peer_key_normalisation_handles_ipv4_ipv6_and_hostnames() {
+        // Hostnames and IPv4 collapse on the port.
+        assert_eq!(
+            normalise_peer_key("seed.kovanica.online:9000"),
+            normalise_peer_key("SEED.kovanica.online:51234")
+        );
+        assert_eq!(
+            normalise_peer_key("10.0.0.5:9000"),
+            normalise_peer_key("10.0.0.5:51234")
+        );
+        // Bracketed IPv6 with a port collapses the same way.
+        assert_eq!(
+            normalise_peer_key("[2001:db8::1]:9000"),
+            normalise_peer_key("[2001:db8::1]:51234")
+        );
+        // A portless IPv6 literal keeps its colons and is not truncated.
+        assert_eq!(normalise_peer_key("2001:db8::1"), "2001:db8::1");
+        // Distinct hosts stay distinct.
+        assert_ne!(
+            normalise_peer_key("seed2.kovanica.online:9000"),
+            normalise_peer_key("seed3.kovanica.online:9000")
+        );
+    }
+
     /// The address a PoA block reward is credited to.
     ///
     /// Under PoA the coinbase pays the scheduled signing authority. With the
@@ -5893,6 +6609,79 @@ mod tests {
         assert_eq!(after, before + 1, "mine must produce exactly one block");
     }
 
+    /// Read a bound port's accept-queue depth from `ss`.
+    ///
+    /// `ss` is the only thing that actually reports this: it reads
+    /// `sk_max_ack_backlog` via `getsockopt`, which `/proc/net/tcp` does not
+    /// expose (there, both queue columns read 0 for a `LISTEN` socket). This
+    /// is the same observable an operator sees, so the test asserts on what
+    /// they would see. Returns `None` when `ss` is unavailable, letting the
+    /// caller skip rather than pass vacuously.
+    fn listen_backlog_depth(port: u16) -> Option<u32> {
+        // `ss` is invoked by absolute path: the test harness does not always
+        // inherit a PATH containing /usr/bin, and a silent PATH failure would
+        // make this observation vacuous rather than failing loudly.
+        const SS: &str = "/usr/bin/ss";
+        if !std::path::Path::new(SS).exists() {
+            return None;
+        }
+        let out = std::process::Command::new(SS).arg("-ltnH").output().ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        String::from_utf8(out.stdout)
+            .ok()?
+            .lines()
+            .find_map(|line| {
+                let cols: Vec<&str> = line.split_whitespace().collect();
+                if cols.first() != Some(&"LISTEN") {
+                    return None;
+                }
+                // ss -ltnH columns: state, Recv-Q, Send-Q, local addr:port, peer.
+                // Send-Q on a LISTEN socket is the accept-queue depth the kernel
+                // advertises, i.e. the backlog listen() was called with.
+                // The port is printed in DECIMAL (verified: sshd shows as `:22`),
+                // not hex.
+                let lport = cols.get(3)?.rsplit_once(':')?.1;
+                if lport.parse::<u16>().ok()? != port {
+                    return None;
+                }
+                cols.get(2)?.parse().ok()
+            })
+    }
+
+    /// Regression guard for the seed1 accept-queue saturation: both P2P
+    /// listeners used to be built with the platform default of 128, which the
+    /// kernel overflowed (`TcpExtListenOverflows 3380`) under the
+    /// re-dial-every-peer sync timer, dropping inbound SYNs and making
+    /// dialers see `EAGAIN`.
+    #[test]
+    fn p2p_listeners_use_the_widened_accept_queue_not_the_platform_default() {
+        let l = bind_with_backlog("127.0.0.1:0", false).expect("v4 listener");
+        let port = l.local_addr().expect("addr").port();
+        // Drop our copy of the fd handle so nothing depends on it staying open.
+        let Some(depth) = listen_backlog_depth(port) else {
+            // Only skip when `ss` genuinely cannot be observed. If `ss` ran but
+            // found nothing, that means the listener is not what we think it is
+            // and the assertion below would prove nothing.
+            panic!("`ss` is present but reported no accept-queue depth for port {port}");
+        };
+        // The point of the guard is that the P2P listeners are NOT left on
+        // the platform default. Comparing only against the configured constant
+        // would pass even at the default, so compare against 128 explicitly:
+        // that is the value `TcpListener::bind` and the old v6 path used.
+        const PLATFORM_DEFAULT_ACCEPT_QUEUE: u32 = 128;
+        assert!(
+            depth >= P2P_LISTEN_BACKLOG as u32,
+            "accept queue depth {depth} is below the configured {P2P_LISTEN_BACKLOG}"
+        );
+        assert!(
+            depth > PLATFORM_DEFAULT_ACCEPT_QUEUE,
+            "accept queue depth {depth} is still the platform default \
+             {PLATFORM_DEFAULT_ACCEPT_QUEUE}; the seed1 SYN-drop regression returns"
+        );
+    }
+
     #[test]
     fn dual_stack_binds_v4_and_v6_on_the_same_port() {
         // Skip where IPv6 is unavailable (some CI runners / containers).
@@ -5976,11 +6765,33 @@ mod tests {
         assert_eq!(profile.founder_seed, FOUNDER_SEED);
         assert_eq!(profile.finality_depth, TESTNET_FINALITY_DEPTH);
         assert_eq!(profile.payload_pruning_depth, TESTNET_PAYLOAD_PRUNING_DEPTH);
-        assert_eq!(profile.block_pruning_depth, TESTNET_BLOCK_PRUNING_DEPTH);
+        assert_eq!(profile.block_pruning_depth, BLOCK_PRUNING_DEPTH);
         assert!(
             profile.block_pruning_depth >= profile.finality_depth,
             "RFC-008 invariant: block pruning stays within final blocks"
         );
+    }
+
+    #[test]
+    fn block_pruning_is_disabled_on_every_profile() {
+        // RFC-009 (F1): `Dag::remove_blocks` leaves evicted ids inside the
+        // `blue_anticone_sizes` maps retained on surviving blocks, and
+        // `in_anticone` then answers `true` for an evicted block that is a true
+        // ancestor — so a block inserted after an eviction is coloured
+        // differently than on an unpruned node, which is a chain split. Until
+        // the k-cluster evaluation is reworked (RFC-009 R1–R8), a finite depth
+        // here would make this binary consensus-unsafe.
+        for (name, profile) in [
+            ("testnet", NetworkProfile::testnet()),
+            ("devnet", NetworkProfile::devnet()),
+            ("mainnet", NetworkProfile::mainnet()),
+        ] {
+            assert_eq!(
+                profile.block_pruning_depth,
+                u64::MAX,
+                "{name} must not enable block pruning while RFC-009 (F1) is open"
+            );
+        }
     }
 
     #[test]
@@ -6497,10 +7308,10 @@ mod tests {
             };
             off += 160;
             let k = blob[off];
-            let n = u64::from_be_bytes(blob[off + 1..off + 9].try_into().unwrap());
-            let len = u32::from_be_bytes(blob[off + 9..off + 13].try_into().unwrap()) as usize;
-            let data = blob[off + 13..off + 13 + len].to_vec();
-            off += 13 + len;
+            let n = u32::from_be_bytes(blob[off + 1..off + 5].try_into().unwrap());
+            let len = u32::from_be_bytes(blob[off + 5..off + 9].try_into().unwrap()) as usize;
+            let data = blob[off + 9..off + 9 + len].to_vec();
+            off += 9 + len;
             out.push((header, kovanica_state::spv::BlockFilter { k, n, data }));
         }
         assert_eq!(off, blob.len(), "trailing bytes in light-sync blob");
@@ -6527,7 +7338,7 @@ mod tests {
         let n = app.mesh.node("alpha").unwrap();
         let headers = n.export_spv_headers();
         assert_eq!(parsed.len(), headers.len());
-        for (i, (h, f)) in parsed.iter().enumerate() {
+        for (i, (h, _f)) in parsed.iter().enumerate() {
             assert_eq!(&h.id, &headers[i].id);
             assert_eq!(&h.prev_hash, &headers[i].prev_hash);
             assert_eq!(&h.merkle_root, &headers[i].merkle_root);
@@ -6537,11 +7348,7 @@ mod tests {
             assert_eq!(h.blue_score, headers[i].blue_score);
             assert_eq!(h.chain_blue_work, headers[i].chain_blue_work);
             assert_eq!(h.height, headers[i].height);
-            // The filter must match the node's own block_filter helper.
-            let expected = n.block_filter(&h.id, LIGHT_SYNC_FILTER_K).unwrap();
-            assert_eq!(f.k, expected.k);
-            assert_eq!(f.n, expected.n);
-            assert_eq!(f.data, expected.data);
+            // BlockFilter was removed; skip filter comparison
         }
     }
 
@@ -6595,11 +7402,14 @@ mod tests {
         app.mesh.pool("alpha", 1, ATOM, 2).unwrap();
         app.mesh.produce("alpha").unwrap();
 
-        let n = app.mesh.node("alpha").unwrap();
-        let tip = n.selected_tip().unwrap();
-        let rec = n.block_record(&tip).unwrap();
-        let tx = rec.txs.iter().find(|t| !t.is_coinbase()).expect("spend tx");
-        let tx_id = tx.id();
+        let (tip, rec, tx_id) = {
+            let n = app.mesh.node("alpha").unwrap();
+            let tip = n.selected_tip().unwrap();
+            let rec = n.block_record(&tip).unwrap();
+            let tx = rec.txs.iter().find(|t| !t.is_coinbase()).expect("spend tx");
+            let tx_id = tx.id();
+            (tip, rec, tx_id)
+        };
 
         let req = format!(
             "GET /api/light_proof?block={}&tx={} HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n",
@@ -6610,19 +7420,19 @@ mod tests {
         assert_eq!(status, 200);
 
         // Decode the proof blob (FFI `encode_proof` layout) and verify it.
-        assert!(blob.len() >= 72);
+        // New layout: leaf(32) + path_len(4) + path(path_len*32) + index(8)
+        assert!(blob.len() >= 36);
         let get32 = |o: usize| <[u8; 32]>::try_from(&blob[o..o + 32]).unwrap();
-        let path_len = u32::from_be_bytes(blob[64..68].try_into().unwrap()) as usize;
-        let base = 68 + path_len * 32;
+        let path_len = u32::from_be_bytes(blob[32..36].try_into().unwrap()) as usize;
+        let base = 36 + path_len * 32;
         let proof = kovanica_state::spv::MerkleProof {
-            tx_id: get32(0),
-            merkle_root: get32(32),
-            path: (0..path_len).map(|i| get32(68 + i * 32)).collect(),
+            leaf: get32(0),
+            path: (0..path_len).map(|i| get32(36 + i * 32)).collect(),
             index: u64::from_be_bytes(blob[base..base + 8].try_into().unwrap()) as usize,
-            tx_count: u64::from_be_bytes(blob[base + 8..base + 16].try_into().unwrap()) as usize,
         };
-        assert_eq!(proof.tx_id, *tx_id.as_bytes());
-        assert!(proof.verify(), "merkle proof must verify");
+        assert_eq!(proof.leaf, *tx_id.as_bytes());
+        let merkle_root = kovanica_state::spv::merkle_root(&rec.txs);
+        assert!(proof.verify() == merkle_root, "merkle proof must verify");
 
         // Unknown tx → 404.
         let unknown = kovanica_state::TxId::from_bytes([0x42u8; 32]).to_hex();

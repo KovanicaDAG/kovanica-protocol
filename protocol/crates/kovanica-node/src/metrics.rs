@@ -166,6 +166,46 @@ pub mod names {
     pub const SUPPLY_MINTED: &str = "kovanica_supply_minted";
     pub const SUPPLY_BURNED: &str = "kovanica_supply_burned";
     pub const SUPPLY_MAX: &str = "kovanica_supply_max";
+
+    /// The **linearized chain height** of the selected tip.
+    ///
+    /// ⚠️ Do not confuse this with [`Self::BLOCK_HEIGHT`], which despite its
+    /// name carries the block's **blue score** (the size of its blue set),
+    /// not a chain height. The two differ by a wide and growing margin, which
+    /// is exactly why this series was added: an operator comparing
+    /// `kovanica_block_height` against `GET /api/head`'s `blocks` field had no
+    /// way to tell which was the chain height.
+    ///
+    /// For the record, the three easily-confused quantities are:
+    /// - `kovanica_chain_height` — linearized chain height (this one).
+    /// - `kovanica_block_height` — cumulative blue score; unbounded, and it
+    ///   keeps climbing after payload pruning because every block retains its
+    ///   ancestors' scores.
+    /// - `GET /api/head` `blocks` — `Dag::len()`, i.e. the number of blocks
+    ///   still retained in memory, which sits near `block_pruning_depth`.
+    pub const CHAIN_HEIGHT: &str = "kovanica_chain_height";
+
+    /// Resident set size of this process during log replay, in bytes.
+    ///
+    /// Replay is the one phase whose memory is not yet bounded by the live
+    /// finality window (see the replay watchdog in `explorer`), so this is the
+    /// series to graph to catch a replay that is on track to exhaust its cgroup.
+    pub const REPLAY_RSS_BYTES: &str = "kovanica_replay_rss_bytes";
+}
+
+/// Record the process RSS observed by the replay watchdog.
+pub fn record_replay_rss(bytes: u64) {
+    gauge!(names::REPLAY_RSS_BYTES).set(bytes as f64);
+}
+
+/// Record the linearized chain height of the selected tip.
+///
+/// This is the series to graph for "how far has the chain advanced". It is
+/// deliberately separate from [`record_block_observed`], which sets
+/// `kovanica_block_height` from blue score — see [`names::CHAIN_HEIGHT`] for
+/// why the distinction matters.
+pub fn record_chain_height(height: u64) {
+    gauge!(names::CHAIN_HEIGHT).set(height as f64);
 }
 
 /// Record a produced (or mined) block.
@@ -403,6 +443,38 @@ pub fn rpc_span(method: &str) -> tracing::Span {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `kovanica_block_height` carries **blue score**, which is not a chain
+    /// height. That mismatch is what made seed1's metrics look 32x wrong
+    /// against `/api/head`, so pin both series to prove they are independent
+    /// and that the honest one exists.
+    #[test]
+    fn chain_height_is_distinct_from_the_blue_score_named_block_height() {
+        init_metrics("127.0.0.1:0").expect("recorder");
+        record_block_observed(9_000, 9_000); // observed passes blue score twice
+        record_chain_height(12);
+
+        let body = render_prometheus();
+        let value = |name: &str| -> f64 {
+            body.lines()
+                .find(|l| l.starts_with(name) && !l.starts_with(&format!("{name}_bucket")))
+                .and_then(|l| l.rsplit(' ').next())
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| panic!("{name} not rendered:\n{body}"))
+        };
+
+        assert_eq!(value(names::CHAIN_HEIGHT), 12.0, "real chain height");
+        assert_eq!(
+            value(names::BLOCK_HEIGHT),
+            9_000.0,
+            "block_height keeps its blue-score meaning for dashboard compat"
+        );
+        assert_ne!(
+            value(names::CHAIN_HEIGHT),
+            value(names::BLOCK_HEIGHT),
+            "the two series must not be aliases of each other"
+        );
+    }
 
     #[test]
     fn records_and_renders_prometheus_payload() {

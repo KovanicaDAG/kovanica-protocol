@@ -100,9 +100,9 @@ pub use spv::{
 };
 pub use store::{LedgerStore, PruningPolicy, StoreError};
 pub use tx::{
-    decode_block_payload, derive_rwa_asset_id, encode_block_payload, AssetId, AssetKind,
-    AssetRegistryEntry, DecodeError, LogoScheme, LogoUri, MetadataScheme, MetadataUri, OutPoint,
-    Sig, StealthExt, Transaction, TxId, TxInput, TxOutput,
+    decode_block_payload, derive_rwa_asset_id, encode_block_payload, AssetCreationParams, AssetId,
+    AssetKind, AssetRegistryEntry, DecodeError, LogoScheme, LogoUri, MetadataScheme, MetadataUri,
+    OutPoint, Sig, StealthExt, Transaction, TxId, TxInput, TxOutput,
 };
 pub use utxo::UtxoSet;
 pub use validation::{
