@@ -5,14 +5,16 @@ RFC-POA-Migration §0.6 makes the reset mandatory: the genesis block id commits
 to the authority set, so a PoA node derives a different genesis than the
 existing PoW-era chain.
 
-> Status: **NOT READY — soak window in progress.** All three §3.1 blockers are
-> cleared or running: (1) the testnet authority set is **ratified** (2026-10-05),
-> (2) the reset runbook's blast radius and order are **signed off** (2026-10-05),
-> (3) the **24h multi-validator soak started 2026-10-05T20:56:41Z** and closes
-> 2026-10-06T20:56:41Z if no SEV-1 occurs. §3.2, §3.3 and the deploy-side §3.4
-> invariants are satisfied and verified live; the remaining §3.4/§3.2 items are
-> reset-window or post-reset by nature. Once the soak closes, the reset may be
-> executed per `TESTNET-RESET-POLICY.md` §3.2 (seed1 first).
+> Status: **NOT READY — soak #1 FAILED (SEV-2); window restarting.** Two of the
+> three §3.1 blockers are cleared: (1) the testnet authority set is **ratified**
+> (2026-10-05), (2) the reset runbook's blast radius and order are **signed off**
+> (2026-10-05). (3) The **24h multi-validator soak** ran 2026-10-05T20:56:41Z →
+> 2026-10-06 and **failed** (SEV-2: seed2 OOM → replay-refusal crash loop,
+> `NRestarts=651`); the clock restarts on a fresh window. §3.2, §3.3 and the
+> deploy-side §3.4 invariants are satisfied and verified live; the remaining
+> §3.4/§3.2 items are reset-window or post-reset by nature. The reset must **not**
+> be executed until a soak window closes clean per `TESTNET-RESET-POLICY.md`
+> §3.2 (seed1 first).
 
 ## 3.1 Blocking — must clear before any reset
 - [x] **Authority keys exist and are distributed — RATIFIED 2026-10-05.** The
@@ -36,8 +38,8 @@ existing PoW-era chain.
       `block_pruning_depth == u64::MAX` safety rule; §5 gained a 2026-10-05 row.
       The blast radius (§3.1) and the order of operations (§3.2, seed1 first)
       carry explicit maintainer sign-off dated 2026-10-05.
-- [◐] **24h multi-validator soak — STARTED 2026-10-05T20:56:41Z** (closes
-      2026-10-06T20:56:41Z if no SEV-1). Baseline recorded in
+- [◐] **24h multi-validator soak — STARTED 2026-10-05T20:56:41Z; #1 FAILED
+      2026-10-06 (SEV-2), clock restarted.** Baseline recorded in
       `TESTNET-RESET-POLICY.md` §0.2 gate 2: all three seeds `active`,
       `NRestarts=0`, `block_pruning_depth = u64::MAX`, same genesis; seed1/seed2
       blue 2251 / blocks 2821 / 2 peers, seed3 blue 1742 / blocks 1880 / 2 peers
@@ -45,6 +47,11 @@ existing PoW-era chain.
       (TASKLIST2 §2.5 / RFC-009), so this soak is evidence for authority
       liveness and slot-clock stability, **not** for cross-validator state
       agreement — a consensus-parity soak requires the post-reset chain.
+      **UPDATE 2026-10-06 (SEV-2, do not tick):** seed2 OOM-killed 12:37:33Z and
+      has refused to replay since 12:38:03Z (`NRestarts=651`) — with block
+      pruning disabled (RFC-009) the O(N²) replay peak (~3368 MiB) exceeds the
+      `MemoryMax=3G` cap (3072 MiB); seed1 runs the same cap and is on the same
+      trajectory. Details in `protocol/docs/TESTNET-SOAK.md` §"Soak #1 Result".
 
 ## 3.2 Infrastructure — should clear first
 - [x] All three seeds running, `NRestarts=0`.

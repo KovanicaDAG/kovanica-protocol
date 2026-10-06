@@ -1,9 +1,24 @@
 # Kovanica Testnet Soak Plan
 
-**Status**: 🔴 **ACTIVE** — **PoA soak restarted 2026-10-05T20:56:41Z** (closes 2026-10-06T20:56:41Z if no SEV-1). The original Day 0 (2026-09-20) predates the PoA-only migration; its record is retained below as history.  
+**Status**: ⚠️ **RESET — soak #1 FAILED (SEV-2).** PoA soak #1 ran 2026-10-05T20:56:41Z → **2026-10-06T18:05Z** and was aborted: **seed2 OOM-killed at 2026-10-06T12:37:33Z**, then entered an unrecoverable replay-refusal crash loop (see *Soak #1 Result* below). The 24h clock **restarts** on a fresh window once seed2 is recovered. The original Day 0 (2026-09-20) predates the PoA-only migration; its record is retained below as history.  
 **Goal**: Run 24/7 testnet with multiple independent seeds for ≥30 days, collect operational metrics, validate mainnet readiness.
 
-### Current Status (2026-10-05T20:56:41Z)
+### Soak #1 Result (2026-10-06) — ❌ **FAILED (SEV-2)**
+
+**Verdict: FAIL.** The 24h window never completed and a gate-failing event occurred. Per POST-SOAK-PROMPT §7, TASKLIST3 §3.1 is **not** ticked and the reset is **not** authorised on this evidence (`TESTNET-RESET-POLICY.md` §0.2 gate 2 remains open).
+
+| Node | Unit state (2026-10-06T18:05Z) | `NRestarts` | Height | Notes |
+|------|-------------------------------|-------------|--------|-------|
+| seed1 | **active** | 0 | blocks 12661 / chain 8140 | produced 5724 monotonic, `stall=0`, pruning `u64::MAX`; **at risk** (see below) |
+| seed2 | **activating (auto-restart)** | **651** | — | OOM → replay-refusal loop since 12:38:03Z |
+| seed3 | **active** | 0 | blocks 7861 | not converged (pre-reset divergence, expected) |
+
+- **Severity: SEV-2 (Major Degradation)** per §5 — a validator was down >4h, so the clock pauses; there was **no** consensus halt (2-of-3 threshold held on seed1+seed3), so this is not SEV-1.
+- **Root cause (seed2):** the pre-reset chain has block pruning **disabled** (RFC-009), so replay retention is O(N²). `MemoryMax=3G` caps the cgroup at 3072 MiB, but `estimate_replay_peak_bytes(alpha.log=3,212,068 B)` projects ~3368 MiB, so the node now **refuses to replay** on every restart (`explorer.rs` pre-flight). It OOM-killed first (anon-rss ~3.1 GB) and cannot come back without a wipe/snapshot or a larger memory cap.
+- **seed1 risk:** seed1 runs the same `MemoryMax=3G` and its RSS climbed ~0.49 GB → ~2.0 GB over the window — it is one OOM away from the identical unrecoverable state. The reset (RFC-009, `block_pruning_depth=1000`) is what removes this failure mode.
+- **Clock:** restarts at the next fresh window after seed2 recovery; the start timestamp will be recorded here.
+
+### Soak #1 Baseline (2026-10-05T20:56:41Z)
 - ✅ **seed1**: `145.223.116.178`, unit `kovanica-testnet-seed@1.service`, **active**, `NRestarts=0` — blue 2251 / blocks 2821 / 2 peers
 - ✅ **seed2**: `76.13.250.65`, unit `kovanica-testnet-seed@2.service`, **active**, `NRestarts=0` — blue 2251 / blocks 2821 / 2 peers
 - ✅ **seed3**: `187.7.27.139`, unit `kovanica-testnet-seed@3.service`, **active**, `NRestarts=0` — blue 1742 / blocks 1880 / 2 peers (catching up)
@@ -145,6 +160,7 @@
 ### SEV-2 (Major Degradation)
 - **Action**: On-call investigates, applies workaround
 - **Clock**: Continues if resolved < 4h; pauses if > 4h
+- **Occurred**: soak #1 — seed2 OOM → replay-refusal loop, 2026-10-06 (see *Soak #1 Result*). Clock paused / restarted.
 
 ### SEV-3 (Minor)
 - **Action**: Ticket created, fixed in next deploy
@@ -175,7 +191,7 @@
 4. [x] Verify all 3 seeds peering, metrics flowing, `peer_count` metric fixed — done (TASKLIST2 §2.3; each seed reports 2–3 peers)
 5. [x] Fix `kovanica_peer_count` metric — done (TASKLIST2 §2.4; single gauge writer, reports real counts)
 6. [ ] Enable DHT/reorg/sync/validation metrics emission
-7. [x] Start Day 1 clock — done **2026-10-05T20:56:41Z** (PoA soak restart; baseline in *Current Status*)
+7. [x] Start Day 1 clock — started **2026-10-05T20:56:41Z** (PoA soak #1); **soak #1 FAILED 2026-10-06 (SEV-2)** — clock restarts on a fresh window (see *Soak #1 Result*)
 8. [ ] Weekly ops reviews in Discord ops channel
 9. [ ] Day 30: compile report, Go/No-Go
 
