@@ -32,11 +32,6 @@ api.kovanica.online {
 	reverse_proxy 127.0.0.1:3000
 }
 
-# Faucet
-faucet.testnet.kovanica.online {
-	reverse_proxy 127.0.0.1:3000
-}
-
 # Legacy explorer domain — redirect to testnet
 explorer.kovanica.online {
 	redir https://testnet.kovanica.online{uri} permanent
