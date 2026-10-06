@@ -45,11 +45,13 @@ Kaspa-style **sparse** map (per-block O(k × mergeset)) — a follow-up, not a
 soundness requirement. Until that lands, **mainnet depth 10,000 is infeasible**;
 use 1000 (== finality) or finish the sparse map first.
 
-> **Provenance / to ratify at A2.** The `1000` / `10,000` figures come from
-> `RFC-009-FIX-BRIEF.md` §7 open question 3; they were **not** re-verified
-> against RFC-008 (not present at `docs/RFC-008-OraclePruning.md`). Treat them
-> as a proposal, not a decision — the depth is a consensus-adjacent parameter
-> and must be fixed before A3.
+> **Decision (A2, ratified 2026-10-06).** Testnet activates at **1000**.
+> Mainnet activates at **1000** too; raising it to **10,000** is gated on landing
+> the Kaspa-style sparse map (the R6 follow-up), not on this RFC. The original
+> `1000` / `10,000` figures came from `RFC-009-FIX-BRIEF.md` §7 open question 3
+> and were **not** re-verified against RFC-008 (not present at
+> `docs/RFC-008-OraclePruning.md`); this note supersedes them as the recorded
+> decision.
 
 ---
 
@@ -59,7 +61,7 @@ use 1000 (== finality) or finish the sparse map first.
 |---|---|---|
 | A0 | RFC-009 code merged on `consensus/poa-only-migration` | R1-R8 tests green; full suite 944/0/7; clippy 0/0 ✅ |
 | A1 | 24h soak window closes | no SEV-1 (closes 2026-10-06T20:56:41Z) |
-| A2 | Depth decision recorded | testnet 1000; mainnet 1000-or-sparse |
+| A2 | Depth decision recorded | ✅ testnet 1000; mainnet 1000 (10,000 gated on the sparse map) — ratified 2026-10-06 |
 | A3 | Testnet reset | `TESTNET-RESET-POLICY.md` §3.2 followed; seed1 first; new genesis |
 | A4 | RFC-009 binaries on all seeds | `/api/bootstrap` shows the new genesis **and** `block_pruning_depth=1000` on all three |
 | A5 | Post-activation soak (testnet, 72h) | `/api/head` height monotone; no `BuildsOnPrunedHistory` in logs; RSS bounded; no stall |

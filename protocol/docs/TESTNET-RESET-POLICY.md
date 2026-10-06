@@ -210,7 +210,9 @@ testnet reset. This section is the testnet-scoped ratification record.
 8. **Start seed2.** Confirm the same genesis and convergence on seed1.
 9. **Start seed3.** Confirm the same genesis and 3-way convergence.
 10. **Verify supply** (§3.5): `subsidy == 1000000000` atoms, minted starts at 0,
-    `max_supply == 9020000000000000`.
+    `max_supply == 9020000000000000`. Also confirm **`block_pruning_depth == 1000`**
+    on every seed — the RFC-009 A4 activation check (`RFC-009-ACTIVATION-PLAN.md`);
+    a pre-reset node reports `u64::MAX`.
 11. **Update** `protocol/TESTNET-RFC006.md` + `OPERATIONS.md` genesis hash and
     reset date in the same commit as the reset, and add a §5 history row.
 
@@ -247,6 +249,10 @@ new-genesis write:
   `SLOT_DURATION_MS` clock).
 - `subsidy == 1000000000` atoms, minted starts at 0, `max_supply == 9020000000000000`
   (RFC-006 is unchanged by a reset).
+- **`block_pruning_depth == 1000`** on every seed (RFC-009 A4). A pre-reset node
+  reports `18446744073709551615` (`u64::MAX`); after the reset the seeds run the
+  ratified depth of 1000. Any other value means the RFC-009 binary did not start
+  with the intended policy.
 - A pristine clone cold-bootstraps to the same tip using
   `KOVANICA_PEERS=seed.kovanica.online:8000,seed2.kovanica.online:8000`
   (**testnet is TCP 8000**, not 9000).
@@ -260,12 +266,21 @@ new-genesis write:
 - The public explorer never runs `KOVANICA_ALLOW_RESET=1`.
 - No open faucet on public-facing nodes without explicit isolation and
   documentation (AGENTS.md rule 7).
-- **Block pruning must remain disabled** — every node must report
-  `block_pruning_depth == 18446744073709551615` (`u64::MAX`) on `/api/head`.
-  A finite depth makes the binary **consensus-unsafe**: `Dag::remove_blocks`
-  leaves evicted ids in the retained GHOSTDAG blue-set maps, so a block inserted
-  after an eviction is coloured differently than on an unpruned node — a chain
-  split. See `RFC-009-BlockPruning-Colouring.md`; the pre-flight check is in §3.0.
+- **Block pruning stays disabled until the RFC-009 reset.** On the live
+  pre-reset network every node must report
+  `block_pruning_depth == 18446744073709551615` (`u64::MAX`) on `/api/head`
+  (pre-flight check in §3.0). RFC-009 fixed the eviction/colouring defects that
+  originally made a finite depth unsafe — R1–R8 now hold with tests
+  (`RFC-009-DESIGN-ANALYSIS.md` §12–§16) — but RFC-009 also introduces the
+  **(A+) admission rule**, a consensus-rule change that rejects blocks the
+  pre-RFC-009 binary accepted. Because that rule is gated on a finite
+  `finality_depth` (already 100 on testnet), it activates the moment the
+  RFC-009 binary runs, so **the RFC-009 code and the reset are the same event**:
+  the code must not be deployed to the live chain before the reset. After the
+  reset the seeds run `block_pruning_depth = 1000` (`RFC-009-ACTIVATION-PLAN.md`
+  A4). Rolling eviction back is a `u64::MAX` change and is non-forking, but
+  (A+) cannot be un-activated without reverting to the previous binary **and**
+  resetting.
 - After a reset, the faucet cap and fee floor are re-verified against
   `/api/bootstrap` before announcing.
 
@@ -276,3 +291,4 @@ new-genesis write:
 | RFC-006 activation | Consensus fork (tokenomics) | `9565fc20…` | All pre-RFC-006 balances wiped; see `TESTNET-RFC006.md` |
 | 2026-09-26 | Gate 3 closed (decision recorded) | — | Gate 3 reworded from "CPU/RAM-vs-PoW" to a PoA resource-footprint measurement and closed with the baseline **112.7 us/block, +7.4 KiB/block RSS**. PoA-vs-PoW ratio formally unrecoverable. Gate 4 re-scoped as a *mainnet* gate. **Authorised by the maintainer; execution of the reset itself is still not authorised below.** |
 | 2026-10-05 | Mitigation deployed to all three seeds | unchanged (`1a635915…`) | Block pruning disabled network-wide (`block_pruning_depth == u64::MAX`) pending RFC-009 R1-R8; replay pre-flight + watchdog deployed. Faucet disabled on all public seeds (`faucet == false`). §3 rewritten as a PoA runbook (hosts, order, blast radius, key holders, rollback). **No reset performed** — gates 1 and 2 in §0.2 remain open. |
+| 2026-10-06 | RFC-009 R1–R8 complete; activation plan + depth decision recorded | unchanged (`1a635915…`) | Block-pruning correctness landed on `consensus/poa-only-migration` (eviction fix `734db6d`, (A+) candidate check `e3cb561`, R6/R7 `4bf7a8b`, R8 `43b7557`, activation plan `112cde8`); suite 944/0/7, clippy 0/0. (A+) is a reset-gated consensus rule; depth ratified — testnet **1000**, mainnet **1000** (10,000 gated on the sparse map). §4 reconciled with RFC-009. **Planning only — no reset performed.** |
