@@ -50,6 +50,10 @@ apps/desktop-node/data/
 *.log
 .dev.log
 
+# Python bytecode (archived standalone dashboard backend, ops scripts)
+__pycache__/
+*.pyc
+
 # PoA authority private keys (mode 0600). authorities.conf next to these is
 # PUBLIC (64-hex pubkeys + threshold) and is deliberately tracked — every node
 # must agree on the set. Never add a secret to it.
