@@ -4,10 +4,11 @@
 //! Before RFC-009, each block's `blue_anticone_sizes` map held one entry per blue
 //! block in its full historical blue set, so a DAG of `N` blocks retained O(N²)
 //! colouring entries — ~461 KB/block at N=11,776, extrapolating to tens of GB on
-//! the real log. Design (B1) trims every key in `past(P)` when a pruning point
-//! `P` exists, so the map is bounded by the window above `P`. This test pins the
-//! key consequence: **growing the chain while holding the pruning depth fixed
-//! does not grow the retained colouring state at all.**
+//! the real log. The map is now **sparse** (RFC-009 R6): it stores only the
+//! entries the block itself sets or bumps, so per-block state is O(k) regardless
+//! of depth or chain length. This test pins the key consequence: **growing the
+//! chain while holding the pruning depth fixed does not grow the retained
+//! colouring state at all**, and the per-block map stays O(k).
 
 use kovanica_dag::{Block, BlockId, Dag};
 
@@ -75,27 +76,29 @@ fn retained_colouring_state_is_bounded_by_pruning_depth_not_chain_length() {
          N=4000 -> {r_large} blocks / {t_large} entries / max {m_large}"
     );
 
-    // Both the number of retained blocks and the per-block map are bounded by the
-    // pruning window (not the 4000-block chain).
+    // The number of retained blocks is bounded by the pruning window (not the
+    // 4000-block chain), and — with the sparse map (RFC-009 R6) — the per-block
+    // map is O(k), independent of both the window and the chain.
     assert!(
         r_large as u64 <= depth + 2,
         "retained blocks {r_large} exceed the pruning window {depth}"
     );
     assert!(
-        m_large <= depth + 2,
-        "per-block colouring map {m_large} exceeds the pruning window {depth}"
+        m_large <= 8,
+        "per-block colouring map {m_large} is not O(k) (k=3): the sparse map regressed"
     );
 }
 
 #[test]
 fn retained_colouring_state_grows_with_pruning_depth() {
     // Sanity check that the bound tracks `depth` (and is not trivially zero):
-    // deeper windows retain more state, but always ~O(depth²) total, never O(N²).
+    // deeper windows retain more blocks, but the total is ~O(k × depth) with the
+    // sparse map, never O(N²).
     let (r5, t5, _) = measure(2000, 5);
     let (r80, t80, _) = measure(2000, 80);
     assert!(r80 > r5, "deeper pruning must retain more blocks");
     assert!(t80 > t5, "deeper pruning must retain more colouring state");
-    // Quadratic in depth: t80 / t5 ≈ (80/5)² = 256, comfortably under 400.
+    // Linear-ish in depth now (sparse map): t80 / t5 ≈ 80/5 = 16, under 400.
     assert!(
         t80 <= t5 * 400,
         "colouring state grew faster than the pruning window: t5={t5}, t80={t80}"
