@@ -54,7 +54,7 @@ start until it does. Run **once**, on a host that will not itself be a seed:
 ```bash
 cd protocol
 cargo run --release --example generate_authority_keys -- \
-    --out-dir /root/kovanica-mainnet/authority-keys
+    --out-dir /root/kovanica-secrets/mainnet-authority-keys
 ```
 
 Produces `authority-1.env`, `authority-2.env`, `authority-3.env` at mode 0600

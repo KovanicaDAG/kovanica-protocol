@@ -33,7 +33,7 @@ M1.6 (genesis reset) → M1.7 (baseline re-capture) → M2.1 (bodies) + M2.4 (CL
 ## Gate Dependencies (Verified)
 
 - Gate 2 (soak): [CLOSED] — seed1/seed2/seed3 running; 24h complete
-- Gate 4 (ceremony): [CLOSED] — 3 keys at `/root/kovanica-mainnet/authority-keys/`; threshold=2
+- Gate 4 (ceremony): [CLOSED] — 3 keys at `/root/kovanica-secrets/mainnet-authority-keys/`; threshold=2
 - No remaining blocking dependencies for Phase 2 entry.
 
 ---
@@ -57,4 +57,4 @@ M1.6 (genesis reset) → M1.7 (baseline re-capture) → M2.1 (bodies) + M2.4 (CL
 
 ---
 
-Next action: Execute M1.6 (testnet genesis reset with new PoA authority set from `/root/kovanica-mainnet/authority-keys/`) to unblock M1.7 and M2.6.
+Next action: Execute M1.6 (testnet genesis reset with new PoA authority set from `/root/kovanica-secrets/mainnet-authority-keys/`) to unblock M1.7 and M2.6.

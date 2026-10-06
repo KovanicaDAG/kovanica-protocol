@@ -444,7 +444,7 @@ curl -s http://127.0.0.1:18081/api/head | jq .genesis
 
 --- UPDATE 2026-10-02 (GATE CLOSURES) ---
 - [GATE 2 CLOSED] Multi-validator soak: seed3 (187.7.27.139) now running (pid 10021); all 3 seeds active; DNS grey-cloud re-pointed; 24h soak complete.
-- [GATE 4 CLOSED] Mainnet key ceremony: 3 authority keys at /root/kovanica-mainnet/authority-keys/ (threshold 2, 0600 env); treasury env file present; ceremony completed.
+- [GATE 4 CLOSED] Mainnet key ceremony: 3 authority keys at /root/kovanica-secrets/mainnet-authority-keys/ (threshold 2, 0600 env); treasury env file present; ceremony completed.
 - [PHASE 1 COMPLETE] All 3 tracks delivered: governance RFC (KVP-202), adversarial harness (6 vectors), code cleanup verified; cargo check/test/clippy/bench pass.
 - Consensus impact: governance RFC = consensus-breaking (genesis reset required); harness + cleanup = ledger-safe/client-only.
 
