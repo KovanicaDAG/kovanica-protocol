@@ -574,14 +574,24 @@ impl Dag {
     /// (or will be) evicted, and a new block's selected parent must be in
     /// `future(P) ∪ {P}`.
     pub fn pruning_point(&self) -> BlockId {
-        let threshold = self.block_pruning_score();
+        self.lowest_block_at_or_above(self.block_pruning_score())
+    }
+
+    /// The lowest block on the selected-parent chain with `blue_score >=
+    /// threshold`. Genesis when `threshold == 0` or the chain is not yet deep
+    /// enough.
+    ///
+    /// Blue score strictly decreases going up the selected chain, so the last
+    /// qualifying block seen walking down from the tip is the lowest one. The
+    /// walk stops at an evicted block (everything below it is evicted too).
+    ///
+    /// This is the shared primitive behind [`Dag::pruning_point`] (block
+    /// pruning) and the ledger's finality point (RFC-009 R7), so a pruning node
+    /// and a non-pruning node derive the same point from the same rule.
+    pub fn lowest_block_at_or_above(&self, threshold: u64) -> BlockId {
         if threshold == 0 {
             return self.genesis;
         }
-        // Walk the selected chain from the tip down, tracking the deepest block
-        // with blue_score >= threshold. Blue score strictly decreases going up,
-        // so the last qualifying block seen is the lowest one. Stop at an
-        // evicted block (everything below it is evicted too).
         let mut point = self.genesis;
         let mut cur = Some(self.selected_tip());
         while let Some(id) = cur {
@@ -592,7 +602,7 @@ impl Dag {
                     }
                     cur = node.ghostdag.selected_parent;
                 }
-                None => break, // evicted: the pruning point is the last present block above
+                None => break, // evicted: the point is the last present block above
             }
         }
         point

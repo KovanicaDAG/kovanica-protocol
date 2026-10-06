@@ -579,4 +579,101 @@ disabled** network-wide until R7 (rejection equivalence) is established and the
 full differential gate is green — the evidence above is a finite search, not a
 proof. (A+) is a consensus-rule change (it rejects blocks the current code
 accepts), so it needs a reset or activation-height gate before pruning is
-re-enabled. R6 (the total memory bound) also still needs separate verification.
+re-enabled.
+
+## 15. R6 (memory bound) and R7 (rejection equivalence)
+
+### R6 — retained colouring state is bounded by the pruning window
+
+With (B1)+(A+) the per-block map is *exact*. The R6 question is whether the
+*retained* state is bounded by the pruning depth rather than the chain length.
+`crates/kovanica-dag/tests/rfc009_memory_bound.rs` measures it directly (retained
+blocks, total `blue_anticone_sizes` entries, max per-block map) on a chain with a
+side fork merged every four steps.
+
+At depth 50 the result is **identical for every chain length**:
+
+| N (chain length) | retained | total entries | max map |
+|---|---|---|---|
+| 100 | 52 | 2601 | 51 |
+| 400 | 52 | 2601 | 51 |
+| 1600 | 52 | 2601 | 51 |
+| 6400 | 52 | 2601 | 51 |
+
+So the retained colouring state is a function of the pruning depth, not of the
+chain length — the O(N) per-block map that made the brief's ~461 KB/block
+estimate is gone. Scaling in the depth (chain, width 1):
+
+| depth | retained | total | max map |
+|---|---|---|---|
+| 5 | 7 | 36 | 6 |
+| 10 | 12 | 121 | 11 |
+| 20 | 22 | 441 | 21 |
+| 40 | 42 | 1681 | 41 |
+| 80 | 82 | 6561 | 81 |
+| 160 | 162 | 25921 | 161 |
+
+i.e. `retained ≈ depth`, `max map ≈ depth`, and `total ≈ depth²`. Widening the
+DAG keeps `max map ≈ depth` and grows the retained set only slowly (depth 50:
+width 2 → 52/2601/51, width 8 → 68/3384/54). The essential requirement — the
+per-block map is O(D) not O(N), and the total is bounded by the pruning window —
+holds. The exact shape is `O(D²)` for a chain-like DAG because O(D) live blocks
+each retain an O(D) map; a strict `O(D × width)` *total* would need a Kaspa-style
+sparse map (each block storing only the `k × mergeset` entries it affects). That
+is a memory optimisation, not a soundness requirement, and is left as follow-up.
+
+### R7 — pruning and non-pruning nodes accept the same blocks
+
+The ledger's live-admission finality check originally tested **only the selected
+parent** (`parent_score < finality_score && sp != genesis`). The DAG's pruning
+rejection, however, fires for **any** parent (evicted ⇒ `MissingParent`; present
+but outside `future(P) ∪ {P}` ⇒ `BuildsOnPrunedHistory`). A block that merges a
+final/evicted block, or an `anticone(P)` block, was therefore accepted by a
+non-pruning node and rejected by a pruning node. A differential search over
+20000 seeds diverged on **every** seed.
+
+The fix has two parts:
+
+1. **Ledger delta pruning survives eviction.** `reconstruct_state` walked the
+   selected-parent chain through `Dag::ghostdag`, which returns `None` for an
+   evicted block; and `prune()` skipped evicted blocks (their `ghostdag` is
+   `None`), so their deltas leaked. The ledger now keeps its own
+   `selected_parents: HashMap<BlockId, BlockId>` (set at insert, re-anchored when
+   a delta is composed into its child in `prune_one`), `reconstruct_state` walks
+   that map, `prune()` treats an evicted block as stale, and `prune_one` orders
+   by the eviction-independent block height.
+2. **The (A+) predicate is evaluated at admission on both node roles.** After the
+   selected-parent check, the ledger computes the finality point
+   (`Dag::lowest_block_at_or_above(finality_score)`, shared with
+   `Dag::pruning_point`) and rejects a block when **any parent or mergeset
+   candidate** is neither the point nor a descendant of it:
+
+```rust
+if !self.replay_mode {
+    let finality_point = self.dag.lowest_block_at_or_above(finality_score);
+    if finality_point != self.dag.genesis() {
+        for x in block.parents().iter().chain(preview.mergeset.iter()) {
+            if *x != finality_point && !self.dag.is_ancestor(&finality_point, x) {
+                return Err(LedgerInsertError::Finality { parent_score, finality_score });
+            }
+        }
+    }
+}
+```
+
+The rule is a **consensus rule**, not a pruning optimisation: every node must
+evaluate it, anchored at `finality_score`. Block-pruning eviction is only the
+memory optimisation, and it is safe only when the pruning point coincides with or
+is deeper than the finality point — hence the ledger clamps
+`block_pruning_depth >= finality_depth`. After the fix the differential search
+reports **0 / 20000** divergences, and the permanent
+`crates/kovanica-state/tests/rfc009_rejection_equivalence.rs` covers both the
+canonical configuration (eviction depth == finality depth) and an eviction depth
+deeper than finality.
+
+### Status
+
+R6 and R7 now hold on finite-search evidence. R8 still gates: a finite
+`block_pruning_depth` stays disabled network-wide until the whole differential
+suite is green in CI and the change is carried through a reset or
+activation-height gate.

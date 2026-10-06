@@ -2070,6 +2070,13 @@ pub struct Ledger {
     poa: Option<PoAConfig>,
     /// Block heights: `heights[&b]` is the height of block `b` in the selected chain.
     heights: HashMap<BlockId, u64>,
+    /// Selected-parent pointer for every live block, kept independently of the
+    /// DAG so that [`Self::reconstruct_state`] and delta pruning keep working
+    /// after a block has been block-pruned (evicted from the DAG). An absent
+    /// entry means the block's anchor is the empty set: either genesis, or a
+    /// block re-anchored to the root because its ancestors' deltas have been
+    /// folded into it by [`Self::prune_one`].
+    selected_parents: HashMap<BlockId, BlockId>,
     /// Blue score activation threshold for Version 0x01 multisig transactions.
     multisig_activation_score: u64,
     /// Blue score activation threshold for native token transactions.
@@ -2154,6 +2161,7 @@ impl Ledger {
             deltas,
             poa: None,
             heights,
+            selected_parents: HashMap::new(),
             multisig_activation_score: MULTISIG_ACTIVATION_SCORE,
             native_token_activation_score: NATIVE_TOKEN_ACTIVATION_SCORE,
             stealth_activation_score: STEALTH_ACTIVATION_SCORE,
@@ -2708,21 +2716,21 @@ impl Ledger {
     fn reconstruct_state(&self, block: &BlockId) -> Option<UtxoSet> {
         let mut path = vec![*block];
         let mut cur = *block;
-        loop {
-            let gd = self.dag.ghostdag(&cur)?;
-            match gd.selected_parent {
-                None => break,
-                Some(sp) => {
-                    // The parent's delta was pruned, so it was folded into this
-                    // block's delta: the accumulated path below is the whole
-                    // state and we can stop.
-                    if !self.deltas.contains_key(&sp) {
-                        break;
-                    }
-                    path.push(sp);
-                    cur = sp;
-                }
+        // Use the ledger's own selected-parent pointer rather than the DAG:
+        // after block pruning the DAG no longer knows `cur`'s selected parent
+        // (it returns `None` for an evicted block), which is exactly the R7 gap.
+        // An absent entry means `cur` is an anchor — genesis, a re-anchored fold
+        // point, or a restored checkpoint — whose delta is relative to the empty
+        // set.
+        while let Some(sp) = self.selected_parents.get(&cur).copied() {
+            // The parent's delta was pruned, so it was folded into this block's
+            // delta: the accumulated path below is the whole state and we can
+            // stop.
+            if !self.deltas.contains_key(&sp) {
+                break;
             }
+            path.push(sp);
+            cur = sp;
         }
         let mut state = UtxoSet::new();
         for p in path.iter().rev() {
@@ -2865,6 +2873,29 @@ impl Ledger {
             });
         }
 
+        // RFC-009 R7: a block may not build on history behind the finality
+        // point — neither through a parent nor through a mergeset candidate.
+        // This is the ledger-side twin of the DAG's block-pruning rejection
+        // (`BuildsOnPrunedHistory`), evaluated against the finality point rather
+        // than the config-dependent pruning point, so a pruning node and a
+        // non-pruning node accept exactly the same blocks. It is also what makes
+        // the bounded GHOSTDAG colouring exact under pruning (RFC-009 design
+        // (A+), §14): a mergeset candidate in `anticone(P)` would otherwise be
+        // coloured against an incomplete blue map.
+        if !self.replay_mode {
+            let finality_point = self.dag.lowest_block_at_or_above(finality_score);
+            if finality_point != self.dag.genesis() {
+                for x in block.parents().iter().chain(preview.mergeset.iter()) {
+                    if *x != finality_point && !self.dag.is_ancestor(&finality_point, x) {
+                        return Err(LedgerInsertError::Finality {
+                            parent_score,
+                            finality_score,
+                        });
+                    }
+                }
+            }
+        }
+
         let parent_height = self.heights.get(&sp).copied().unwrap_or(0);
         let new_height = parent_height + 1;
         let block_blue_score = parent_score + 1;
@@ -2978,6 +3009,9 @@ impl Ledger {
         let delta = diff_utxo(&state_pre, &state);
         self.deltas.insert(id, delta);
         self.heights.insert(id, new_height);
+        // Keep the selected-parent pointer independently of the DAG so delta
+        // pruning and `reconstruct_state` survive block pruning (R7).
+        self.selected_parents.insert(id, sp);
         // Cumulative view totals (selected-parent chain + mergeset + own).
         self.block_minted.insert(id, view_minted);
         self.block_fees.insert(id, view_fees);
@@ -3024,13 +3058,19 @@ impl Ledger {
             .deltas
             .keys()
             .copied()
+            // A block whose DAG entry is gone has been block-pruned. Block
+            // pruning only ever evicts blocks at or below the finality point
+            // (`block_pruning_depth >= finality_depth`), so such a block is
+            // certainly final: treat it as stale. Without this, the evicted
+            // block's delta would leak and `reconstruct_state` would walk into
+            // a DAG entry that no longer exists (RFC-009 R7).
             .filter(|id| {
                 self.dag
                     .ghostdag(id)
-                    .is_some_and(|g| g.blue_score < threshold)
+                    .map_or(true, |g| g.blue_score < threshold)
             })
             .collect();
-        self.sort_by_blue_score(&mut stale);
+        self.sort_by_height(&mut stale);
         for id in stale {
             self.prune_one(id);
         }
@@ -3069,18 +3109,23 @@ impl Ledger {
                         .is_some_and(|g| g.blue_score < threshold)
             })
             .collect();
-        self.sort_by_blue_score(&mut stale);
+        self.sort_by_height(&mut stale);
         for id in stale {
             self.prune_one(id);
         }
     }
 
-    /// Order ids deepest-first (blue score ascending) so a chain of prunable
-    /// blocks composes its accumulated delta up to the first block that is
-    /// kept, rather than each block folding into a child that is itself about
-    /// to be dropped.
-    fn sort_by_blue_score(&self, ids: &mut [BlockId]) {
-        ids.sort_by_key(|id| self.dag.ghostdag(id).map_or(0, |g| g.blue_score));
+    /// Order ids deepest-first (height ascending) so a chain of prunable blocks
+    /// composes its accumulated delta up to the first block that is kept, rather
+    /// than each block folding into a child that is itself about to be dropped.
+    ///
+    /// Height is used rather than blue score because a block-pruned (evicted)
+    /// block has no DAG entry to read a blue score from, and is exactly the kind
+    /// of block [`Self::prune`] must now order correctly. Heights are monotone
+    /// along selected-parent edges (parent height < child height), which is the
+    /// only property the deepest-first ordering needs.
+    fn sort_by_height(&self, ids: &mut [BlockId]) {
+        ids.sort_by_key(|id| self.heights.get(id).copied().unwrap_or(0));
     }
 
     /// Drop one block's delta, first composing it into every block that selects
@@ -3094,19 +3139,29 @@ impl Ledger {
         let Some(delta) = self.deltas.remove(&id) else {
             return;
         };
+        // `id`'s own anchor: where its delta was relative to. Children are found
+        // via the ledger's selected-parent pointer, not the DAG, because `id`
+        // may already be block-pruned (RFC-009 R7).
+        let anchor = self.selected_parents.remove(&id);
         let children: Vec<BlockId> = self
             .deltas
             .keys()
             .copied()
-            .filter(|c| {
-                self.dag
-                    .ghostdag(c)
-                    .is_some_and(|g| g.selected_parent == Some(id))
-            })
+            .filter(|c| self.selected_parents.get(c) == Some(&id))
             .collect();
         for c in children {
             let child_delta = self.deltas.get_mut(&c).expect("child has a delta");
             *child_delta = compose_delta(&delta, child_delta);
+            // `c`'s delta now includes `id`'s, so it is relative to `id`'s own
+            // anchor: re-point (or clear) the pointer to keep it complete.
+            match anchor {
+                Some(a) => {
+                    self.selected_parents.insert(c, a);
+                }
+                None => {
+                    self.selected_parents.remove(&c);
+                }
+            }
         }
         self.heights.remove(&id);
     }
@@ -3623,6 +3678,7 @@ impl Ledger {
             deltas: HashMap::new(),
             poa: None,
             heights: HashMap::new(),
+            selected_parents: HashMap::new(),
             multisig_activation_score: MULTISIG_ACTIVATION_SCORE,
             native_token_activation_score: NATIVE_TOKEN_ACTIVATION_SCORE,
             stealth_activation_score: STEALTH_ACTIVATION_SCORE,

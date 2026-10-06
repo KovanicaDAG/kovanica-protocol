@@ -111,9 +111,21 @@ There is an `#[ignore]`d regression test waiting to be un-ignored:
 - **R6 — Memory bound restored.** With block pruning at depth `D`, retained
   colouring state must be ~O(D × width), not O(chain_length × width). The O(N²)
   map must not be retained on live blocks.
+  *(2026-10-06: **met** on finite-search evidence — the retained state is
+  identical for N = 100…6400 at depth 50; the per-block map is O(D), not O(N).
+  See `RFC-009-DESIGN-ANALYSIS.md` §15 and
+  `crates/kovanica-dag/tests/rfc009_memory_bound.rs`. A strict O(D × width)
+  *total* would need a Kaspa-style sparse map — follow-up, not a soundness
+  requirement.)*
 - **R7 — Rejection equivalence preserved.** `BuildsOnPrunedHistory` must fire
   exactly where the ledger's finality check would already reject (RFC-008 Test
   plan item 2), so a pruning node and a non-pruning node accept the same blocks.
+  *(2026-10-06: **met** — the ledger keeps its own `selected_parents` map so delta
+  pruning survives eviction, and evaluates the (A+) predicate at admission
+  against the finality point on both node roles. A 20000-seed differential search
+  goes from 20000/20000 divergences to **0/20000**; permanent test
+  `crates/kovanica-state/tests/rfc009_rejection_equivalence.rs`. See
+  `RFC-009-DESIGN-ANALYSIS.md` §15.)*
 - **R8 — Load paths guarded.** No replay/snapshot/checkpoint path may re-enable
   block pruning until R1-R7 hold. Resolve the snapshot tier's missing
   `block_pruning_depth` handling in the same change (see §7).
