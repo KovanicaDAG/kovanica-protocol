@@ -35,7 +35,7 @@ seed2 and seed3 run on their own machines.
 The Rust node serves `/api/*` on `127.0.0.1:8080` (systemd `kovanica-explorer`).
 Caddy proxies `/api/*` to the node; all other paths go to the web app.
 
-Kovanica owns `127.0.0.1:3000` (web), `127.0.0.1:8080` (node API),
+Kovanica owns `127.0.0.1:3010` (web app), `127.0.0.1:3001` (node API),
 `0.0.0.0:9000` (P2P). Leave dashboard / trader / postgres / docker alone.
 
 ## Dashboard (`dash.kovanica.online`)
@@ -148,7 +148,7 @@ mkdir -p /root/kovanica-web/.output
 rsync -a --delete .output/ /root/kovanica-web/.output/
 pm2 delete kovanica-web
 cd /root/kovanica-web
-HOST=127.0.0.1 PORT=3000 pm2 start .output/server/index.mjs --name kovanica-web
+HOST=127.0.0.1 PORT=3010 pm2 start .output/server/index.mjs --name kovanica-web
 pm2 save
 ```
 
