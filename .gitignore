@@ -1,0 +1,16 @@
+# Secrets and key material — never commit
+*.dat
+*.key
+*.pem
+*.keystore
+keystore/
+**/validators/
+**/node-data/
+p2p_node.key
+.env
+.env.*
+*.redb
+*.snapshot
+
+# Build output
+target/

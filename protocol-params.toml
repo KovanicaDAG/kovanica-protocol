@@ -1,0 +1,770 @@
+# Kovanica protocol parameters — public draft
+#
+# This file is the single machine-readable source of published protocol
+# parameters. Every entry cites the implementation it was read from.
+#
+# status = "frozen"  -> treated as stable for the public testnet.
+# status = "pending" -> explicitly expected to change before mainnet; the
+#                       entry carries `pending_reason`.
+#
+# A change to a `frozen` value is a protocol change and must be recorded in
+# PROTOCOL-CHANGES.md.
+#
+# Sources are cited as "path:line@<commit>". All citations below were read from
+# the kovanica node at commit 5567bdfe3163e253c10dc63c736426815d891c4c.
+
+schema = 1
+protocol_version = "0.1.0-draft"
+
+# ============================================================================
+# Chain identity
+# ============================================================================
+
+[chain.mainnet]
+name = "mainnet"
+chain_id = 1
+value = 1
+unit = "u64"
+source = "crates/kovanica-types/src/signing.rs:13@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[chain.testnet]
+name = "testnet (chain 4)"
+chain_id = 4
+value = 4
+unit = "u64"
+source = "crates/kovanica-types/src/signing.rs:21@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Chain 4 reset in progress; the public testnet chain id is not yet frozen."
+
+[chain.testnet_legacy]
+name = "testnet (chain 2, legacy)"
+chain_id = 2
+value = 2
+unit = "u64"
+source = "crates/kovanica-types/src/signing.rs:15@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Chain 2 is being retired in the chain 4 reset; kept only so old clients are rejected explicitly."
+
+[chain.devnet]
+name = "devnet"
+chain_id = 3
+value = 3
+unit = "u64"
+source = "crates/kovanica-types/src/signing.rs:17@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Internal development network; not part of the public testnet."
+
+[chain.local]
+name = "local"
+chain_id = 1337
+value = 1337
+unit = "u64"
+source = "crates/kovanica-types/src/signing.rs:19@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+# ============================================================================
+# Native asset / tokenomics
+# ============================================================================
+
+[token.ticker]
+value = "KUNA"
+source = "crates/kovanica-staking/src/lib.rs:37@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[token.decimals]
+value = 9
+unit = "decimal places"
+source = "crates/kovanica-staking/src/lib.rs:40@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[token.base_unit]
+name = "one KUNA in atoms"
+value = 1000000000
+unit = "atoms"
+source = "crates/kovanica-staking/src/lib.rs:41@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[token.total_supply]
+value = 90200000
+unit = "KUNA"
+atoms = 90200000000000000
+source = "crates/kovanica-staking/src/lib.rs:44@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "Total supply is also the hard maximum; there is no separate symbol in code."
+
+[token.founder_premine]
+value = 200000
+unit = "KUNA"
+atoms = 200000000000000
+source = "crates/kovanica-staking/src/lib.rs:47@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[token.genesis_validator_allocation]
+value = 1000000
+unit = "KUNA"
+atoms = 1000000000000000
+source = "crates/kovanica-staking/src/lib.rs:55@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[token.treasury_total]
+value = 8000000
+unit = "KUNA"
+atoms = 8000000000000000
+source = "crates/kovanica-staking/src/lib.rs:58@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[token.treasury_annual]
+value = 1000000
+unit = "KUNA"
+atoms = 1000000000000000
+source = "crates/kovanica-staking/src/lib.rs:59@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[token.treasury_years]
+value = 8
+unit = "years"
+source = "crates/kovanica-staking/src/lib.rs:60@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[token.mining_subsidy_budget]
+value = 81000000
+unit = "KUNA"
+atoms = 81000000000000000
+source = "crates/kovanica-staking/src/lib.rs:76@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "Derived: total_supply - founder_premine - treasury_total - genesis_validator_allocation."
+
+[emission.initial_block_reward]
+name = "s0"
+value = 2.5
+unit = "KUNA"
+atoms = 2500000000
+source = "crates/kovanica-staking/src/lib.rs:82@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[emission.subsidy_era_blocks]
+value = 8100000
+unit = "committed leader blocks"
+source = "crates/kovanica-staking/src/lib.rs:87@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[emission.decay_numerator]
+value = 3
+unit = "ratio numerator"
+source = "crates/kovanica-staking/src/lib.rs:90@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[emission.decay_denominator]
+value = 4
+unit = "ratio denominator"
+source = "crates/kovanica-staking/src/lib.rs:91@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "Per-era decay factor is decay_numerator / decay_denominator (3/4)."
+
+[emission.light_reward_bps]
+value = 2000
+unit = "basis points of block_reward"
+source = "crates/kovanica-staking/src/light.rs:22@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[fees.burn_split]
+value = "pending"
+unit = "percent burned / percent to producer"
+source = "crates/kovanica-mempool/src/lib.rs:786@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "No fee burn / producer split constant exists in the current code; only a node-local minimum fee rate (default 0) is configured."
+
+[fees.min_fee_rate]
+value = 0
+unit = "atoms per byte (node-local default)"
+source = "crates/kovanica-mempool/src/lib.rs:786@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Node-local configuration (env KOVANICA_MEMPOOL_MIN_FEE_RATE), not yet a network rule or consensus constant."
+
+[fees.coinbase_maturity]
+value = "pending"
+unit = "blocks"
+source = "crates/kovanica-staking/src/lib.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "No coinbase maturity constant is present in the current implementation."
+
+# ============================================================================
+# Validators / staking
+# ============================================================================
+
+[staking.min_validator_stake]
+value = 50000
+unit = "KUNA"
+atoms = 50000000000000
+source = "crates/kovanica-staking/src/lib.rs:98@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[staking.min_active_validators]
+value = 15
+unit = "validators"
+source = "crates/kovanica-staking/src/lib.rs:104@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[staking.max_active_validators]
+value = 21
+unit = "validators"
+source = "crates/kovanica-staking/src/lib.rs:107@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[staking.unbonding_rounds]
+value = 100000
+unit = "rounds"
+source = "crates/kovanica-staking/src/lib.rs:112@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[staking.epoch_rounds]
+value = 7200
+unit = "leader rounds"
+source = "crates/kovanica-types/src/lib.rs:67@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "Re-exported from kovanica-types by kovanica-staking (crates/kovanica-staking/src/lib.rs:123). The epoch unit itself (epoch_for_round + EPOCH_ROUNDS) is stable, but the boot-committee VRF-key issue (B3) is still open and does not change this value."
+
+[staking.max_missed_leaders_before_offline]
+value = 100
+unit = "consecutive missed leader rounds"
+source = "crates/kovanica-staking/src/lib.rs:129@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[staking.commission_change_cooldown]
+value = 7200
+unit = "committed leader blocks"
+source = "crates/kovanica-staking/src/lib.rs:135@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "Equals epoch_rounds."
+
+[staking.slash_pct_bps]
+value = 500
+unit = "basis points"
+source = "crates/kovanica-staking/src/lib.rs:360@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Slashing is a skeleton (test-only, no signed evidence, no jail); percentage and destination still open."
+
+[staking.max_commission_bps]
+value = 10000
+unit = "basis points"
+source = "crates/kovanica-staking/src/lib.rs:471@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Enforced as an inline literal in several places rather than a single named constant; the bound itself is stable but not yet exported."
+
+[staking.min_delegation]
+value = "pending"
+unit = "KUNA"
+source = "crates/kovanica-staking/src/lib.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "No minimum delegation constant exists yet (Toni decision pending)."
+
+# ============================================================================
+# Consensus
+# ============================================================================
+
+[consensus.wave_length]
+value = 3
+unit = "rounds"
+source = "crates/kovanica-types/src/lib.rs:56@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[consensus.round_duration_ms]
+value = 4000
+unit = "milliseconds"
+source = "crates/kovanica-consensus/src/engine.rs:262@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "Env override lock on chains 1/4 is still open (F13)."
+
+[transport.gossip_max_transmit_size]
+value = 1048576
+unit = "bytes (1 MiB)"
+source = "crates/kovanica-network/src/behaviour.rs:13@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Transport/gossip frame cap (1 MiB) is not yet frozen (F21)."
+
+[transport.block_sync_max_response_bytes]
+value = 1048576
+unit = "bytes (1 MiB)"
+source = "crates/kovanica-network/src/block_sync.rs:43@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Block-sync response cap (1 MiB) is not yet frozen (F21)."
+
+[transport.mempool_max_tx_size]
+value = 1048576
+unit = "bytes (1 MiB)"
+source = "crates/kovanica-mempool/src/lib.rs:783@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Node policy (config default), not a consensus rule; not yet frozen (F21)."
+
+[transport.state_sync_max_response_bytes]
+value = 10485760
+unit = "bytes (10 MiB)"
+source = "crates/kovanica-network/src/state_sync.rs:32@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "State-sync response cap (10 MiB) is not yet frozen (F21)."
+
+[transport.state_sync_max_chunk_bytes]
+value = 1048576
+unit = "bytes (1 MiB)"
+source = "crates/kovanica-network/src/state_sync.rs:40@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "State-sync chunk cap (1 MiB) is not yet frozen (F21)."
+
+[transport.state_sync_max_snapshot_bytes]
+value = 67108864
+unit = "bytes (64 MiB)"
+source = "crates/kovanica-network/src/state_sync.rs:46@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "State-sync snapshot cap (64 MiB) is not yet frozen (F21)."
+
+[consensus.committed_leader_interval_ms]
+value = 12000
+unit = "milliseconds"
+source = "crates/kovanica-consensus/src/engine.rs:262@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "round_duration_ms * wave_length (4 s * 3)."
+
+[consensus.lookahead_rounds]
+value = 3
+unit = "rounds"
+source = "crates/kovanica-consensus/src/engine.rs:263@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[consensus.max_pending_rounds]
+value = 100
+unit = "rounds"
+source = "crates/kovanica-consensus/src/engine.rs:264@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Buffer bound, not a consensus rule; may be retuned without a protocol change."
+
+[consensus.prune_window_waves]
+value = 100
+unit = "waves"
+source = "crates/kovanica-consensus/src/engine.rs:266@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Retention bound, not a consensus rule."
+
+[consensus.leader_timeout_factor]
+value = 2
+unit = "multiple of round_duration_ms"
+source = "crates/kovanica-consensus/src/engine.rs:268@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "Effective leader timeout is round_duration_ms * factor = 8000 ms while leader_timeout_ms is 0."
+
+[consensus.late_vote_window_rounds]
+value = 3
+unit = "rounds"
+source = "crates/kovanica-consensus/src/engine.rs:269@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "Equals wave_length."
+
+[consensus.use_mysticghost]
+value = true
+source = "crates/kovanica-consensus/src/engine.rs:265@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[consensus.use_vrf_leader]
+value = true
+source = "crates/kovanica-consensus/src/engine.rs:270@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "VRF leader election reverted (e0a2729, 20857cf); leaders are round-robin until C1 + RFC 9381 vectors land (C1, F23)."
+
+[consensus.use_min_digest_fork]
+value = true
+source = "crates/kovanica-consensus/src/engine.rs:271@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[consensus.quorum_numerator]
+value = 2
+unit = "ratio numerator (over 3)"
+source = "crates/kovanica-consensus/src/types.rs:105@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "quorum_threshold = total_stake * 2 / 3 + 1."
+
+[consensus.validity_numerator]
+value = 1
+unit = "ratio numerator (over 3)"
+source = "crates/kovanica-consensus/src/types.rs:106@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "validity_threshold = total_stake / 3 + 1."
+
+[consensus.ghostdag_k]
+value = 3
+unit = "parameter k"
+source = "crates/kovanica-consensus/src/mysticghost.rs:24@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[consensus.max_mergeset_blocks]
+value = 2000
+unit = "blocks"
+source = "crates/kovanica-consensus/src/mysticghost.rs:27@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "A scoped-mysticghost bound (also 2000 in committer.rs:709); documentation elsewhere still mentions 1000 and needs reconciling."
+
+[consensus.max_parent_round_gap]
+value = 300
+unit = "rounds"
+source = "crates/kovanica-types/src/lib.rs:57@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[consensus.genesis_round]
+value = 0
+unit = "round"
+source = "crates/kovanica-types/src/lib.rs:52@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[vrf.suite]
+value = "pending"
+source = "crates/kovanica-crypto@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "VRF C1 and RFC 9381 test vectors are still open (C1, F23); the suite is not yet frozen."
+
+[vrf.input_version]
+value = "pending"
+unit = "version"
+source = "crates/kovanica-types/src/light_client.rs:415@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "VRF C1 and RFC 9381 test vectors are still open (C1, F23)."
+
+[vrf.leader_lag]
+value = "pending"
+unit = "rounds"
+source = "crates/kovanica-consensus/src/engine.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "VRF C1 open (C1, F23); the leader VRF lag/threshold is not yet fixed."
+
+[vrf.threshold]
+value = "pending"
+source = "crates/kovanica-consensus/src/engine.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "VRF C1 open (C1, F23); any VRF threshold constant is still subject to change."
+
+[vrf.persistence_schema]
+value = "pending"
+source = "crates/kovanica-storage@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "VRF C1 open (C1, F23); the persisted VRF-key schema is not yet frozen."
+
+# ============================================================================
+# Serialization / consensus DB schema
+# ============================================================================
+
+[serde.statement_block]
+value = "pending"
+source = "crates/kovanica-types/src/block.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "The StatementBlock wire/serialization format is open pending C1; it is not yet frozen."
+
+[consensus.db_schema_marker]
+value = "pending"
+source = "crates/kovanica-storage/src/lib.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "The consensus DB schema marker is open pending C1."
+
+# ============================================================================
+# Gas / execution
+# ============================================================================
+
+[gas.max_tx_gas_limit]
+value = 10000000
+unit = "gas"
+source = "crates/kovanica-types/src/lib.rs:99@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Gas limits (MAX_TX_GAS_LIMIT, gas hardening gate currently off) are not yet frozen (F21)."
+
+[gas.block_gas_budget]
+value = 80000000
+unit = "gas"
+source = "crates/kovanica-dag/src/block_manager.rs:36@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "max_tx_gas_limit * 8."
+
+[gas.max_txs_per_block]
+value = 10000
+unit = "transactions"
+source = "crates/kovanica-types/src/lib.rs:90@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "MAX_TXS_PER_BLOCK marked 'tunable' in code; not yet frozen (F21)."
+
+[gas.gas_per_module_byte]
+value = 8
+unit = "gas per byte"
+source = "crates/kovanica-runtime/src/lib.rs:91@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[gas.randomness_ttl_blocks]
+value = "pending"
+unit = "blocks"
+source = "crates/kovanica-types/src/lib.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Parameter is not yet published as a named constant."
+
+[execution.entry_points]
+value = 16
+unit = "contract entry points"
+source = "crates/kovanica-execution/src/contracts.rs:145@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+names = [
+  "htlc_create", "htlc_claim", "htlc_refund",
+  "vault_create", "vault_claim", "vault_cancel",
+  "multisig_create", "multisig_propose", "multisig_confirm", "multisig_execute",
+  "token_create", "token_transfer", "token_approve", "token_transfer_from",
+  "token_mint", "token_burn",
+]
+
+[execution.gas_hardening_active_from_round]
+value = "pending"
+unit = "round"
+source = "crates/kovanica-types/src/lib.rs:117@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Currently u64::MAX (rule inert on the running testnet); the activation round will be set at the next genesis."
+
+[execution.contract_hardening_active_from_round]
+value = "pending"
+unit = "round"
+source = "crates/kovanica-types/src/lib.rs:157@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Currently u64::MAX (rule inert on the running testnet); the activation round will be set at the next genesis."
+
+# ============================================================================
+# Addresses / keys
+# ============================================================================
+
+[address.prefix]
+value = "kvnc"
+source = "crates/kovanica-types/src/address.rs:9@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[address.suffix]
+value = "dag"
+source = "crates/kovanica-types/src/address.rs:11@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[address.payload_bytes]
+value = 32
+unit = "bytes"
+source = "crates/kovanica-types/src/address.rs:13@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[address.checksum_bytes]
+value = 4
+unit = "bytes (blake3)"
+source = "crates/kovanica-types/src/address.rs:15@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[address.canonical_form]
+value = "kvnc<72-hex>dag"
+source = "crates/kovanica-types/src/address.rs:81@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+note = "64 hex payload (32 bytes) + 8 hex checksum (4 bytes blake3) = 72 hex chars between 'kvnc' and 'dag'. Code agrees: prefix 'kvnc', suffix 'dag', payload 32, checksum 4 blake3. The canonical textual form is final. What is still open is which chains accept the legacy 64-hex form (see address.legacy_hex_acceptance)."
+
+[address.legacy_hex_acceptance]
+value = "accepted on all chains today"
+source = "crates/kovanica-types/src/address.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "F15: to be restricted to chain 4; rejected on chain 1."
+
+[address.funded_accounts]
+value = "pending"
+source = "crates/kovanica-node/src/main.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Which accounts are pre-funded at genesis is still open (F16), and only applies to chain 4."
+
+[limits.tx_max_bytes]
+value = "pending"
+unit = "bytes"
+source = "crates/kovanica-types/src/lib.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Transaction and block byte-size limits are not yet frozen (F21)."
+
+[limits.block_max_bytes]
+value = "pending"
+unit = "bytes"
+source = "crates/kovanica-types/src/lib.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Transaction and block byte-size limits are not yet frozen (F21)."
+
+# ============================================================================
+# Signing / wire domains
+# ============================================================================
+
+[wire.vote_domain]
+value = "KUNA/vote/v1"
+source = "crates/kovanica-types/src/signing.rs:30@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Moving to KUNA/vote/v2 with genesis_hash (106 B) in spec 00d PR5; current v1 = 74 B."
+
+[wire.tx_domain]
+value = "KUNA/tx/v1"
+source = "crates/kovanica-types/src/signing.rs:32@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[wire.commit_domain]
+value = "KUNA/commit/v1"
+source = "crates/kovanica-types/src/signing.rs:37@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[wire.light_vrf_domain]
+value = "KUNA/light-vrf/v1"
+source = "crates/kovanica-types/src/light_client.rs:415@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "VRF C1 and RFC 9381 vectors are open (C1, F23); the light-VRF domain tag is not yet frozen."
+
+[wire.tx_hash_domain_key]
+value = "KUNA-TX-v1"
+source = "crates/kovanica-types/src/hash.rs:32@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14); legacy KVNC-* keyed-hash domain keys are still being migrated."
+
+[wire.block_hash_domain_key]
+value = "KVNC-BLOCK-v1"
+source = "crates/kovanica-types/src/hash.rs:30@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.digest_domain_key]
+value = "KVNC-DIGEST-v1"
+source = "crates/kovanica-types/src/hash.rs:34@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.merkle_domain_key]
+value = "KVNC-MERKLE-v1"
+source = "crates/kovanica-types/src/hash.rs:36@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.header_domain_key]
+value = "KVNC-HEADER-v1"
+source = "crates/kovanica-types/src/hash.rs:38@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.account_domain_key]
+value = "KVNC-ACCOUNT-v1"
+source = "crates/kovanica-types/src/hash.rs:40@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.account_empty_domain_key]
+value = "KVNC-ACCT-EMPTY"
+source = "crates/kovanica-types/src/hash.rs:42@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.smt_domain_key]
+value = "KVNC-SMT-v1"
+source = "crates/kovanica-types/src/hash.rs:44@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.committee_domain_key]
+value = "KVNC-COMMITTEE-v1"
+source = "crates/kovanica-types/src/hash.rs:46@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.genesis_digest_domain_key]
+value = "KVNC-GENESIS-v1"
+source = "crates/kovanica-types/src/hash.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Renamed to KUNA-* in the chain 4 reset (F14); the genesis-digit domain key may also move."
+
+[wire.vote_signature_len]
+value = 74
+unit = "bytes"
+source = "crates/kovanica-types/src/vote.rs:53@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Moving to KUNA/vote/v2 with genesis_hash (106 B) in spec 00d PR5; current v1 = 74 B. Layout v1: tag 16 + chain_id 8 + epoch 8 + voter 2 + leader_round 8 + leader_hash 32."
+
+[wire.vrf_tag]
+value = "KVNC-VRF1"
+source = "crates/kovanica-crypto/src/vrf.rs:136@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "VRF C1 + RFC 9381 vectors open (C1, F23); tag may be renamed to KUNA-* in the chain 4 reset (F14)."
+
+[wire.vrf_input_format]
+value = "KVNC-VRF1-v1:{chain}:{round}:{author}:0"
+source = "crates/kovanica-crypto/src/vrf.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "No literal input-format string exists in code at this commit; the format is specified only (C1, F23) and may be renamed to KUNA-* in the chain 4 reset (F14). The implementable magic today is the VRF output prefix KVNC-VRF1 (crates/kovanica-crypto/src/vrf.rs:140)."
+
+[wire.protocol_identify]
+value = "/kovanica/1.0.0"
+source = "crates/kovanica-network/src/behaviour.rs:16@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Protocol id version naming is open pending spec 09."
+
+[wire.kad_protocol]
+value = "/kovanica/kad/1.0.0"
+source = "crates/kovanica-network/src/behaviour.rs:20@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Protocol id version naming is open pending spec 09."
+
+[wire.block_sync_protocol]
+value = "/kovanica/block-sync/1.1.0"
+source = "crates/kovanica-network/src/block_sync.rs:36@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "1.0.0 removed on chain 4, 1.1.0 only (F17)."
+
+[wire.block_sync_protocol_legacy]
+value = "/kovanica/block-sync/1.0.0"
+source = "crates/kovanica-network/src/block_sync.rs:40@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Legacy name still registered for peering; removed on chain 4 (F17)."
+
+[wire.block_signature_domain]
+value = "none (ed25519 over the raw 32-byte KVNC-BLOCK-v1 digest; no domain tag, no chain_id/epoch)"
+source = "crates/kovanica-dag/src/block_manager.rs:394@5567bdfe3163e253c10dc63c736426815d891c4c, crates/kovanica-types/src/block.rs:56@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "KUNA/block/v2 with chain binding planned in spec 00d PR5."
+
+[wire.state_sync_protocol]
+value = "/kovanica/state-sync/2.0.0"
+source = "crates/kovanica-network/src/state_sync.rs:26@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Protocol id version naming is open pending spec 09."
+
+[wire.gossip_topics]
+value = "blocks, transactions, votes, sync, state_sync, seals"
+source = "crates/kovanica-network/src/topics.rs:6@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "frozen"
+
+[p2p.default_listen_port]
+value = 8000
+unit = "TCP"
+source = "crates/kovanica-network/src/lib.rs:146@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Code default is 8000; external documentation and some deployed nodes still advertise 9000. To be reconciled before mainnet."
+
+[p2p.max_peers]
+value = 50
+unit = "peers"
+source = "crates/kovanica-network/src/lib.rs:150@5567bdfe3163e253c10dc63c736426815d891c4c"
+status = "pending"
+pending_reason = "Operational bound, not a consensus rule."
+
+# ============================================================================
+# Networks / versions
+# ============================================================================
+
+[network.testnet]
+name = "Kovanica public testnet"
+chain_id = 4
+version = "v1.0.0"
+planned_release = "2026-11-25"
+genesis_hash = "pending"
+status = "pending"
+pending_reason = "Genesis hash is not yet published; the network is not audited and parameters may change."
+source = "crates/kovanica-types/src/signing.rs:21@5567bdfe3163e253c10dc63c736426815d891c4c"
+
+[network.mainnet]
+name = "Kovanica mainnet"
+chain_id = 1
+version = "v2.0.0"
+planned_release = "2027-01-01"
+genesis_hash = "pending"
+status = "pending"
+pending_reason = "Genesis hash is not yet published; mainnet is planned and not launched."
+source = "crates/kovanica-types/src/signing.rs:13@5567bdfe3163e253c10dc63c736426815d891c4c"

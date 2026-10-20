@@ -1,0 +1,28 @@
+# gitleaks configuration for the public Kovanica protocol repo.
+#
+# Extends the upstream default ruleset and adds two Kovanica-specific rules:
+#   1. raw 64-hex secret key files (matches the node's on-disk key format);
+#   2. any bare 64/128-hex line that is NOT part of a clearly public field
+#      (public keys, VRF public keys, proofs-of-possession, hashes).
+#
+# This repo contains specification and parameters only. It must never contain
+# private keys, mnemonics, VRF secrets, keystores, or .env material.
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "kovanica-raw-ed25519-secret"
+description = "64-hex secret key file"
+regex = '''(?m)^[0-9a-fA-F]{64}\s*$'''
+path = '''(\.dat|\.key)$'''
+
+[[rules]]
+id = "kovanica-bare-hex-secret"
+description = "64- or 128-hex line that is not a known public field (possible raw key/seed)"
+regex = '''(?m)^[0-9a-fA-F]{64}([0-9a-fA-F]{64})?\s*$'''
+[rules.allowlist]
+description = "Allow public keys, VRF public keys, proofs-of-possession and hashes"
+regexes = [
+  '''(?i)(public[_-]?key|pubkey|vrf[_-]?public[_-]?key|pop|proof|hash|digest|merkle|state[_-]?root|genesis[_-]?hash|committee[_-]?hash|leader[_-]?hash)\s*[:=]''',
+]
