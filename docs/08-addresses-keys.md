@@ -9,20 +9,32 @@ Kovanica uses **Ed25519** keys. A public key is 32 raw bytes; a signature is 64
 bytes. Addresses are derived from the Ed25519 public key — the raw 32-byte
 public key is the address payload (`address.payload_bytes`).
 
-## 2. Canonical address form
+## 2. Canonical address form (PRO-21)
 
-An address renders as:
+A canonical Kovanica address is **64 characters** long (PRO-21, locked in AGENTS.md):
 
 ```
-kvnc<64-hex>dag
+kvnc<57-base32>dag
 ```
 
-where `<64-hex>` is `address.payload_bytes` bytes (the public key) followed by
-`address.checksum_bytes` of a BLAKE3-based checksum. Prefix and suffix are
-`address.prefix` and `address.suffix`.
+where:
+- `address.prefix` is `"kvnc"` (4 chars).
+- `<57-base32>` is 57 lowercase characters using the standard bech32 alphabet (`qpzry9x8gf2tvdw0s3jn54khce6mua7l`), encoding 285 bits: the 32-byte (256-bit) public key concatenated with the first 29 bits of `blake3(key)` (256 + 29 = 285 bits = 57 × 5 bits, exact, zero padding).
+- `address.suffix` is `"dag"` (3 chars).
 
-Per-chain address formats are `pending`: today chain 4 uses the form above; a
-decision on whether chain 1 only uses `kvnc…dag` is pending.
+### Known Answer Tests (KATs)
+
+Canonical KATs implemented in `kovanica-types`:
+- **Zero key** (`[0u8; 32]`):
+  `kvncqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz4k5rcdag`
+- **Sample key** (`[1, 2, ..., 32]`):
+  `kvncqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc07228f2dag`
+
+### Per-chain acceptance rules
+
+- Canonical base32 is standard on every chain, and `FromStr` strictly parses base32.
+- Legacy forms (`kvnc<64-hex>dag` and raw `0x` hex) are accepted via `parse_for_chain` only on testnet/dev chains (chains 4, 3, 1337).
+- Mainnet (chain 1) and all other chain IDs strictly reject legacy hex forms.
 
 ## 3. Signing domains
 
