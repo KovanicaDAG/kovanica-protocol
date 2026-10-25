@@ -533,37 +533,58 @@ pending_reason = "Currently u64::MAX (rule inert on the running testnet); the ac
 
 [address.prefix]
 value = "kvnc"
-source = "crates/kovanica-types/src/address.rs:9@5567bdfe3163e253c10dc63c736426815d891c4c"
+source = "crates/kovanica-types/src/address.rs"
 status = "frozen"
 
 [address.suffix]
 value = "dag"
-source = "crates/kovanica-types/src/address.rs:11@5567bdfe3163e253c10dc63c736426815d891c4c"
+source = "crates/kovanica-types/src/address.rs"
 status = "frozen"
 
 [address.payload_bytes]
 value = 32
 unit = "bytes"
-source = "crates/kovanica-types/src/address.rs:13@5567bdfe3163e253c10dc63c736426815d891c4c"
+source = "crates/kovanica-types/src/address.rs"
 status = "frozen"
 
-[address.checksum_bytes]
-value = 4
-unit = "bytes (blake3)"
-source = "crates/kovanica-types/src/address.rs:15@5567bdfe3163e253c10dc63c736426815d891c4c"
+[address.checksum_bits]
+value = 29
+unit = "bits (first 29 bits of blake3(key))"
+source = "crates/kovanica-types/src/address.rs"
+status = "frozen"
+
+[address.body_chars]
+value = 57
+unit = "chars (base32 bech32 alphabet qpzry9x8gf2tvdw0s3jn54khce6mua7l)"
+source = "crates/kovanica-types/src/address.rs"
+status = "frozen"
+
+[address.canonical_len]
+value = 64
+unit = "chars (kvnc + 57 base32 + dag)"
+source = "crates/kovanica-types/src/address.rs"
 status = "frozen"
 
 [address.canonical_form]
-value = "kvnc<72-hex>dag"
-source = "crates/kovanica-types/src/address.rs:81@5567bdfe3163e253c10dc63c736426815d891c4c"
+value = "kvnc<57-base32>dag"
+source = "crates/kovanica-types/src/address.rs"
 status = "frozen"
-note = "64 hex payload (32 bytes) + 8 hex checksum (4 bytes blake3) = 72 hex chars between 'kvnc' and 'dag'. Code agrees: prefix 'kvnc', suffix 'dag', payload 32, checksum 4 blake3. The canonical textual form is final. What is still open is which chains accept the legacy 64-hex form (see address.legacy_hex_acceptance)."
+note = "Canonical PRO-21 address format: kvnc + 57 base32 chars + dag = 64 characters. Exactly 285 bits: 256 key bits + 29 checksum bits."
+
+[address.kat_zero]
+value = "kvncqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz4k5rcdag"
+source = "crates/kovanica-types/src/address.rs"
+status = "frozen"
+
+[address.kat_sample]
+value = "kvncqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc07228f2dag"
+source = "crates/kovanica-types/src/address.rs"
+status = "frozen"
 
 [address.legacy_hex_acceptance]
-value = "accepted on all chains today"
-source = "crates/kovanica-types/src/address.rs@5567bdfe3163e253c10dc63c736426815d891c4c"
-status = "pending"
-pending_reason = "F15: to be restricted to chain 4; rejected on chain 1."
+value = "accepted on chains 4, 3, 1337 only; rejected on chain 1 and all others"
+source = "crates/kovanica-types/src/address.rs"
+status = "frozen"
 
 [address.funded_accounts]
 value = "pending"
