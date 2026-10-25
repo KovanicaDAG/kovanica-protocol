@@ -10,6 +10,20 @@ must be called out explicitly).
 
 ---
 
+## params-v0.1.0-draft — 2026-10-25
+
+### Decision: Address format v2 (PRO-21, Toni 2026-10-23)
+
+- Canonical address format updated to 64-character base32:
+  `kvnc` (4) + 57 base32 chars (`qpzry9x8gf2tvdw0s3jn54khce6mua7l`) + `dag` (3) = 64 characters.
+- Encodes 32-byte key concatenated with the first 29 bits of `blake3(key)` (285 bits = 57 × 5).
+- Golden vectors published:
+  - `KAT_ZERO`: `kvncqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqz4k5rcdag`
+  - `KAT_SAMPLE`: `kvncqqqsyqcyq5rqwzqfpg9scrgwpugpzysnzs23v9ccrydpk8qarc07228f2dag`
+- Per-chain rules: `FromStr` is base32-only. Legacy hex is accepted only on chains 4, 3, 1337; strictly rejected on chain 1.
+
+---
+
 ## params-v0.1.0-draft — 2026-10-20
 
 Initial draft of the public parameter set and specification.
